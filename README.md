@@ -14,8 +14,16 @@ can read and write.
 npx samemind init --demo      # scaffold a bundle here + the fictional Nova demo content
 npx samemind query list       # see what's in it
 npx samemind gde "where did I write about context budget"   # human-readable search
-# wire the protocol into your agent → docs/snippets/ (CLAUDE.md · AGENTS.md · GEMINI.md)
+npx samemind install --agent claude-code   # wire brief+protocol straight into CLAUDE.md
 ```
+
+`install` supports 12 engines out of the box (`--list` to see them) — Claude
+Code, Cursor, Copilot, Codex, Gemini CLI, opencode, Cline, Roo Code, Windsurf,
+Goose, Kiro, Antigravity — writing into whichever instruction file(s) that
+engine reads. See [Compatibility](#compatibility) and
+[docs/adapters.md](docs/adapters.md) for the full matrix, and
+[`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md) if you're an agent installing
+this for yourself, end to end.
 
 `init` refuses to touch a non-empty directory — run it in a fresh folder, or pass
 a path: `npx samemind init ./my-memory`. Drop `--demo` once you're ready for a real,
@@ -192,15 +200,17 @@ first, voice next, everything else trimmed first with a `truncated — see
 | `samemind brief [--engine <id>] [--budget <n>] [--inject <file>]` | Compact Identity+User+EngineRule digest — see [Identity layer](#identity-layer) |
 | `samemind handoff [--project <path>] [--days N]` | Work-state brief (tasks/plans/decisions/session) — see [docs/compaction-recipe.md](docs/compaction-recipe.md) |
 | `samemind forget <id>` | Soft-deprecate a concept (`deprecated: true` in frontmatter) — never deletes the file. See [Memory hygiene](docs/memory-hygiene.md) |
+| `samemind install --agent <id>\|all [--target <dir>]` | Wire brief+protocol into an engine's instruction file(s), idempotently — see [Compatibility](#compatibility), [docs/adapters.md](docs/adapters.md) |
 | `samemind serve` | MCP stdio server: `memory_search/get/list/write_inbox/handoff/health` — see [MCP](#mcp) |
 | `tools/consolidate.mjs` | Gap map: inbox/mirror → candidates for promotion into the canon, plus a same-type "contradictions" section (dev-mode only, run from a checkout) |
 
-`query`/`recall`/`gde`/`brief`/`handoff`/`forget`/`serve` run against `OKF_ROOT` if set, otherwise your
+`query`/`recall`/`gde`/`brief`/`handoff`/`forget`/`install`/`serve` run against `OKF_ROOT` if set, otherwise your
 current directory — so they operate on your own bundle, not on the samemind package itself.
+`install`'s `--target` is separate: it's where the instruction file(s) get written (defaults to cwd too).
 
 Under the hood: `bin/samemind.mjs` routes to `tools/okf-query.mjs`, `tools/okf-recall.mjs`,
 `tools/gde.mjs`, `tools/init.mjs`, `tools/brief.mjs`, `tools/handoff.mjs`, `tools/forget.mjs`,
-`tools/mcp-server.mjs`. Shared libraries: `tools/lib/` (okf, recall, bm25, hygiene, mcp, injection),
+`tools/install.mjs`, `tools/mcp-server.mjs`. Shared libraries: `tools/lib/` (okf, recall, bm25, hygiene, mcp, injection),
 `lib/` (atomic write, safe paths, mirror sync).
 
 ### Recall modes & env
@@ -272,14 +282,42 @@ if unset — same rule as `query`/`recall`/`gde`).
 
 ## Compatibility
 
-Designed to sit under any agent that can read a folder of markdown and run Node:
+**Zero-level fallback, true for everything below:** the bundle is plain markdown
+on disk. Any agent with a shell can read it via `cat`/`grep`/`find` with no
+adapter at all — MCP and `samemind install` are conveniences on top of a format
+that already works with anything that has a filesystem.
 
-- Claude Code / Cursor / Codex / Gemini CLI / opencode — point at this tree
-- OpenClaw / Hermes / chat orchestrators — same bundle, different engine rules
-- Any OpenAI-compatible embeddings server for recall (LM Studio, Ollama, …)
+`samemind install --agent <id>` wires the identity brief + memory protocol
+straight into the instruction file each engine reads on its own, and `samemind
+serve` exposes the bundle as an MCP server for everything that speaks MCP.
+Checked, current as of 10.07.2026 — full commands and notes in
+[docs/adapters.md](docs/adapters.md):
 
-Adapters that import live memory into `mirror/` are out of scope for this public
-skeleton; the format and tools are ready.
+| Engine | Instruction file | MCP |
+|---|---|---|
+| Claude Code | `CLAUDE.md` | ✅ `claude mcp add` |
+| Cursor | `AGENTS.md` + `.cursor/rules/` | ✅ `.cursor/mcp.json` |
+| GitHub Copilot (agent mode) | `.github/copilot-instructions.md` + `AGENTS.md` | ✅ VS Code `mcp.json` |
+| Codex CLI | `AGENTS.md` | ✅ `codex mcp add` |
+| Gemini CLI | `GEMINI.md` | ✅ `settings.json` |
+| opencode | `AGENTS.md` | ✅ `opencode.json` |
+| Cline | `.clinerules` | ✅ `cline_mcp_settings.json` |
+| Roo Code | `.roo/rules/` | ✅ `.roo/mcp.json` |
+| Windsurf | `.windsurf/rules/` + `AGENTS.md` | ✅ `mcp_config.json` |
+| Goose | `.goosehints` | ✅ native extension |
+| Kiro | `.kiro/steering/` | ✅ `kiro-cli mcp add` |
+| Antigravity | `AGENTS.md` / `GEMINI.md` | ✅ IDE config / Gemini API |
+| Aider | — (`--read` a snippet manually) | ⚠️ community-only, unofficial |
+| OpenClaw / Hermes | — (own `MEMORY.md`/`USER.md`, bootstrap note) | ✅ same MCP shape as any client |
+
+`samemind install --list` prints this table live from the code. `--agent all`
+refreshes whichever of these files already exist in a project, without blindly
+creating all twelve. `INSTALL_FOR_AGENTS.md` is a step-by-step self-install
+protocol written for an agent to run against its own project, no human typing.
+
+Adapters that import *live* engine memory into `mirror/` (e.g. syncing an
+engine's own session notes back into the bundle) are out of scope for this
+public skeleton; the format and tools to build one are ready.
 
 ## Tests & micro-bench
 
