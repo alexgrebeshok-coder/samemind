@@ -31,6 +31,11 @@ name gaps. No synthesis daemon, no API keys. Full steps and a live demo Q→A:
 [docs/memory-protocol.md](docs/memory-protocol.md). Paste-ready rules:
 [docs/snippets/](docs/snippets/).
 
+**Session start:** run `samemind handoff` (or MCP `memory_handoff`) for work state —
+active tasks, last decisions, plans in force — so a new session continues without
+re-explaining. Before `/compact`, flush Decision/Session/Task to inbox first; see
+[docs/compaction-recipe.md](docs/compaction-recipe.md).
+
 <details>
 <summary>Working from a checkout instead (dev mode)</summary>
 
@@ -178,14 +183,15 @@ first, voice next, everything else trimmed first with a `truncated — see
 | `samemind recall "<query>"` | Search: `--mode bm25\|semantic\|auto` (default `auto`). BM25 works zero-dep; semantic needs `OKF_EMBED_URL` + `index`. |
 | `samemind gde "<query>"` | Human search: semantic when an index exists, BM25 fallback otherwise |
 | `samemind brief [--engine <id>] [--budget <n>] [--inject <file>]` | Compact Identity+User+EngineRule digest — see [Identity layer](#identity-layer) |
-| `samemind serve` | MCP stdio server: `memory_search/get/list/write_inbox/health` — see [MCP](#mcp) |
+| `samemind handoff [--project <path>] [--days N]` | Work-state brief (tasks/plans/decisions/session) — see [docs/compaction-recipe.md](docs/compaction-recipe.md) |
+| `samemind serve` | MCP stdio server: `memory_search/get/list/write_inbox/handoff/health` — see [MCP](#mcp) |
 | `tools/consolidate.mjs` | Gap map: inbox/mirror → candidates for promotion into the canon (dev-mode only, run from a checkout) |
 
-`query`/`recall`/`gde`/`brief`/`serve` run against `OKF_ROOT` if set, otherwise your current
+`query`/`recall`/`gde`/`brief`/`handoff`/`serve` run against `OKF_ROOT` if set, otherwise your current
 directory — so they operate on your own bundle, not on the samemind package itself.
 
 Under the hood: `bin/samemind.mjs` routes to `tools/okf-query.mjs`, `tools/okf-recall.mjs`,
-`tools/gde.mjs`, `tools/init.mjs`, `tools/brief.mjs`, `tools/mcp-server.mjs`. Shared libraries:
+`tools/gde.mjs`, `tools/init.mjs`, `tools/brief.mjs`, `tools/handoff.mjs`, `tools/mcp-server.mjs`. Shared libraries:
 `tools/lib/` (okf, recall, bm25, mcp, injection), `lib/` (atomic write, safe paths, mirror sync).
 
 ### Recall modes & env
@@ -235,6 +241,7 @@ if unset — same rule as `query`/`recall`/`gde`).
 | `memory_get` | `{id}` → one concept, full frontmatter + body. |
 | `memory_list` | `{type?, tag?}` → concept ids/titles, optionally filtered. |
 | `memory_write_inbox` | `{content, title?}` → append to `inbox/<agent>.md` — the **only** writable path. |
+| `memory_handoff` | `{project?, days?}` → work-state markdown (active tasks, decisions, plans, last session, open questions). |
 | `memory_health` | `{}` → bundle root, concept count, active search mode, server version. |
 
 ### Security

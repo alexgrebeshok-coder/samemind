@@ -5,6 +5,8 @@
 
 Use the local samemind bundle for owner/project/past context. No cloud memory service.
 
+On session start, run `memory_handoff` (or `samemind handoff`) — work state before re-explaining.
+
 **On questions about the past, people, projects, or decisions:**
 
 1. Search cheaply: `samemind recall "<query>" -k 5` (or MCP `memory_search`).

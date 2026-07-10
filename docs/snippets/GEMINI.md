@@ -5,6 +5,8 @@
 
 You have a local markdown memory (samemind / OKF bundle). Use it for past context.
 
+On session start, run `memory_handoff` (or `samemind handoff`) — work state before re-explaining.
+
 When the user asks about people, projects, decisions, or prior work:
 
 1. Run search first: `samemind recall "<q>" -k 5` or MCP tool `memory_search`.
