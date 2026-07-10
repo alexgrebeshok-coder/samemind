@@ -26,7 +26,7 @@ function replyError(id, code, message) {
 
 async function handleMessage(msg) {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg) || msg.jsonrpc !== '2.0' || !msg.method) {
-    console.error('samemind serve: игнорирую не-JSON-RPC сообщение', msg);
+    console.error('samemind serve: ignoring non-JSON-RPC message', msg);
     return;
   }
   const { id, method, params } = msg;
@@ -42,9 +42,9 @@ async function handleMessage(msg) {
         serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
       });
     } else if (method === 'notifications/initialized' || method === 'initialized') {
-      // notification — по протоколу ответа нет
+      // notification — no reply per protocol
     } else if (method === 'notifications/cancelled') {
-      // no-op: одношаговые инструменты, отменять нечего
+      // no-op: single-step tools, nothing to cancel
     } else if (method === 'ping') {
       if (!isNotification) reply(id, {});
     } else if (method === 'tools/list') {
@@ -56,11 +56,11 @@ async function handleMessage(msg) {
     } else if (!isNotification) {
       replyError(id, -32601, `Method not found: ${method}`);
     } else {
-      console.error(`samemind serve: неизвестная notification ${method}`);
+      console.error(`samemind serve: unknown notification ${method}`);
     }
   } catch (e) {
     if (!isNotification) replyError(id, -32603, e.message);
-    else console.error(`samemind serve: ошибка в notification ${method}:`, e.message);
+    else console.error(`samemind serve: error in notification ${method}:`, e.message);
   }
 }
 
@@ -76,12 +76,12 @@ function main() {
       send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: `Parse error: ${e.message}` } });
       return;
     }
-    handleMessage(msg).catch(e => console.error('samemind serve: необработанная ошибка', e));
+    handleMessage(msg).catch(e => console.error('samemind serve: unhandled error', e));
   });
   rl.on('close', () => process.exit(0));
   process.stdin.on('error', (e) => console.error('samemind serve: stdin error', e.message));
 
-  console.error(`samemind serve: MCP stdio-сервер готов (root ${process.env.OKF_ROOT || process.cwd()}, v${SERVER_VERSION})`);
+  console.error(`samemind serve: MCP stdio server ready (root ${process.env.OKF_ROOT || process.cwd()}, v${SERVER_VERSION})`);
 }
 
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);

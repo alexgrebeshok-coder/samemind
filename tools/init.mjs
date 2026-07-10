@@ -392,13 +392,13 @@ node_modules/
 
 const DASHBOARD_PLACEHOLDER = `# Dashboard
 
-_Пусто — это плейсхолдер._ Сгенерируй канбан из состояния работ (Plan / Task / Decision /
-Session — см. docs/work-discipline.md):
+_Empty — this is a placeholder._ Generate the kanban from work-discipline state (Plan / Task /
+Decision / Session — see docs/work-discipline.md):
 
 \`\`\`sh
-npx samemind board --write        # записать в этот DASHBOARD.md (коммитится в git)
-npx samemind board                # то же в stdout
-npx samemind board --project /projects/<name>.md   # только задачи одного проекта
+npx samemind board --write        # write it into this DASHBOARD.md (committed to git)
+npx samemind board                # same, to stdout
+npx samemind board --project /projects/<name>.md   # only one project's tasks
 \`\`\`
 `;
 
@@ -464,7 +464,7 @@ function initGit(dir) {
   try {
     execFileSync('git', ['--version'], { stdio: 'ignore' });
   } catch {
-    return { ok: false, reason: 'git не найден в PATH — пропускаю git init (структура создана без него)' };
+    return { ok: false, reason: 'git not found in PATH — skipping git init (structure created without it)' };
   }
   try {
     execFileSync('git', ['init'], { cwd: dir, stdio: 'ignore' });
@@ -472,7 +472,7 @@ function initGit(dir) {
     execFileSync('git', ['commit', '-m', 'samemind: initial bundle'], { cwd: dir, stdio: 'ignore' });
     return { ok: true };
   } catch (e) {
-    return { ok: false, reason: `git init/commit не завершились (${e.message.split('\n')[0]}) — файлы на месте, закоммить вручную` };
+    return { ok: false, reason: `git init/commit did not complete (${e.message.split('\n')[0]}) — files are in place, commit manually` };
   }
 }
 
@@ -485,13 +485,13 @@ export function runInit({ targetDir = '.', demo = false, packageRoot = PACKAGE_R
 
   if (existsSync(dir)) {
     if (!statSync(dir).isDirectory()) {
-      return { ok: false, reason: `«${dir}» существует и не является папкой` };
+      return { ok: false, reason: `"${dir}" exists and is not a directory` };
     }
     const entries = readdirSync(dir);
     if (entries.length > 0) {
       return {
         ok: false,
-        reason: `папка «${dir}» не пуста (${entries.length} элементов) — samemind init работает только с пустой папкой, ничего не создаю и не перезаписываю`,
+        reason: `directory "${dir}" is not empty (${entries.length} entries) — samemind init only works on an empty directory, nothing created or overwritten`,
       };
     }
   } else {
@@ -538,14 +538,14 @@ function parseArgs(argv) {
 
 function printNextSteps() {
   console.log('');
-  console.log('Что дальше:');
-  console.log('  1. добавь концепт — скопируй concepts/_template.md → concepts/<name>.md и заполни');
-  console.log('  2. слой личности (кто агент/кто владелец/роль движка) — concepts/_identity-template.md,');
+  console.log('Next steps:');
+  console.log('  1. add a concept — copy concepts/_template.md → concepts/<name>.md and fill it in');
+  console.log('  2. personality layer (who\'s the agent / who\'s the owner / engine role) — concepts/_identity-template.md,');
   console.log('     entities/_user-template.md, concepts/_engine-rule-template.md (docs/identity-layer.md)');
-  console.log('  3. npx samemind query list — посмотреть, что уже в bundle');
-  console.log('  4. npx samemind brief — компактный бриф (identity+owner+engine) для инструкций движка');
-  console.log('  5. npx samemind board --write — канбан состояния работ в DASHBOARD.md');
-  console.log('  6. npx samemind serve — MCP stdio-сервер (claude mcp add samemind -- npx samemind serve)');
+  console.log('  3. npx samemind query list — see what\'s already in the bundle');
+  console.log('  4. npx samemind brief — compact brief (identity+owner+engine) for engine instructions');
+  console.log('  5. npx samemind board --write — work-discipline kanban into DASHBOARD.md');
+  console.log('  6. npx samemind serve — MCP stdio server (claude mcp add samemind -- npx samemind serve)');
 }
 
 async function main() {
@@ -555,9 +555,9 @@ async function main() {
     console.error(`✗ ${result.reason}`);
     process.exit(1);
   }
-  console.log(`✓ bundle создан: ${result.dir}`);
-  if (demo) console.log(`  --demo: скопировано ${result.demoCopied} демо-концептов`);
-  if (result.git.ok) console.log('  git init + первый коммит выполнены');
+  console.log(`✓ bundle created: ${result.dir}`);
+  if (demo) console.log(`  --demo: copied ${result.demoCopied} demo concepts`);
+  if (result.git.ok) console.log('  git init + initial commit done');
   else console.log(`  ⚠ ${result.git.reason}`);
   printNextSteps();
 }
@@ -565,7 +565,7 @@ async function main() {
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
   main().catch(e => {
-    console.error('Ошибка:', e.message);
+    console.error('Error:', e.message);
     process.exit(1);
   });
 }
