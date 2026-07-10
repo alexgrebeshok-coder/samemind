@@ -11,6 +11,8 @@ export const ROOT = resolve(process.env.OKF_ROOT || join(HERE, '../..'));
 export const RESERVED = new Set([
   'index.md', 'log.md', 'README.md', 'DASHBOARD.md', 'LICENSE.md', 'CHANGELOG.md',
   'CONTRIBUTING.md', 'INSTALL_FOR_AGENTS.md',
+  // engine instruction files written by `samemind install` — not graph concepts
+  'CLAUDE.md', 'AGENTS.md', 'GEMINI.md',
 ]);
 
 export function walk(dir = ROOT, { includeSecret = false, includeMirror = false } = {}, acc = []) {

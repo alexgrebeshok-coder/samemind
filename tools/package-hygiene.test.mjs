@@ -44,3 +44,12 @@ describe('package hygiene (N8): validate on the repo checkout itself', () => {
     }
   });
 });
+
+describe('engine instruction files', () => {
+  it('are reserved, not graph concepts', async () => {
+    const { RESERVED } = await import('./lib/okf.mjs');
+    for (const f of ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md']) {
+      assert.ok(RESERVED.has(f), `${f} must be RESERVED`);
+    }
+  });
+});
