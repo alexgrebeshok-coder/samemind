@@ -1,5 +1,7 @@
 # samemind
 
+[![ci](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml/badge.svg)](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml)
+
 **Your personal universal memory for every AI agent. Switch engines. Same mind.**
 
 Git-native, zero-infra, plain markdown. One OKF-shaped bundle that every agent
@@ -239,6 +241,7 @@ if unset — same rule as `query`/`recall`/`gde`).
 
 - **`visibility: secret` is never returned** by any tool — no flag, no parameter, no
   exception. Secret concepts are excluded before the tools ever see them.
+  Perimeter covered by `tools/secret-isolation.test.mjs` (query / recall / gde / MCP / brief).
 - **Path safety**: any `id` passed to `memory_get` is normalized and must resolve
   strictly inside the bundle root; `..`/absolute escapes are refused outright.
 - **Write path is fixed**: `memory_write_inbox` can only ever append to
@@ -261,6 +264,16 @@ Designed to sit under any agent that can read a folder of markdown and run Node:
 
 Adapters that import live memory into `mirror/` are out of scope for this public
 skeleton; the format and tools are ready.
+
+## Tests & micro-bench
+
+```sh
+node --test tools/*.test.mjs          # CI matrix: Node 20 + 22
+OKF_ROOT=demo node tools/bench-recall.mjs   # BM25 vs naive grep on demo goldens
+```
+
+Methodology and current hit@1 / hit@3 numbers: [docs/benchmark.md](docs/benchmark.md).
+Micro-corpus only — not a public IR leaderboard.
 
 ## License
 
