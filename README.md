@@ -12,6 +12,7 @@ can read and write.
 npx samemind init --demo      # scaffold a bundle here + the fictional Nova demo content
 npx samemind query list       # see what's in it
 npx samemind gde "where did I write about context budget"   # human-readable search
+# wire the protocol into your agent → docs/snippets/ (CLAUDE.md · AGENTS.md · GEMINI.md)
 ```
 
 `init` refuses to touch a non-empty directory — run it in a fresh folder, or pass
@@ -20,6 +21,13 @@ empty bundle. It also runs `git init` + a first commit when git is available.
 
 Copy a concept template, fill the frontmatter, link nodes with
 `[title](/path.md)`. Path = identity.
+
+## The protocol
+
+Agents **synthesize** answers themselves — search → read top hits → cite paths →
+name gaps. No synthesis daemon, no API keys. Full steps and a live demo Q→A:
+[docs/memory-protocol.md](docs/memory-protocol.md). Paste-ready rules:
+[docs/snippets/](docs/snippets/).
 
 <details>
 <summary>Working from a checkout instead (dev mode)</summary>
