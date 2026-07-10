@@ -3,6 +3,8 @@
 
 ## samemind memory
 
+On session start, run `memory_handoff` (or `samemind handoff`) — work state before re-explaining.
+
 When a question needs past context (owner, people, projects, decisions):
 
 1. **Search first (cheap):** `samemind recall "<q>" -k 5` or MCP `memory_search`.
