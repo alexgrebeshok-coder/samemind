@@ -1,5 +1,5 @@
 // okf.mjs — общая логика чтения OKF-bundle (используют okf-query и okf-recall).
-import { readdirSync, readFileSync, statSync, lstatSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync, lstatSync, existsSync } from 'node:fs';
 import { join, relative, dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,29 +37,117 @@ export function walk(dir = ROOT, { includeSecret = false, includeMirror = false 
   return acc;
 }
 
-// мини-парсер frontmatter (key: value; tags: [a, b]) — без YAML-зависимости
+/** Scalar or list → string[]. Empty / missing → []. */
+export function asPathList(v) {
+  if (v == null || v === '') return [];
+  if (Array.isArray(v)) return v.map(s => String(s).trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+  return [String(v).trim().replace(/^["']|["']$/g, '')].filter(Boolean);
+}
+
+/**
+ * Normalize SameMind `relations` extension to { type: string[] }.
+ * Edge types are open (no dictionary). Values are bundle-absolute paths or lists of them.
+ */
+export function normalizeRelations(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (!k) continue;
+    out[k] = asPathList(v);
+  }
+  return out;
+}
+
+/** /entities/acme-labs.md → entities/acme-labs */
+export function pathToId(p) {
+  return String(p || '').replace(/^\//, '').replace(/\.md$/, '');
+}
+
+/**
+ * Parse YAML-ish frontmatter lines (mini parser, no dependency).
+ * Supports plain keys, inline lists, and indented `relations:` block.
+ */
+export function parseFrontmatter(yaml) {
+  const fm = {};
+  const lines = yaml.split('\n');
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // relations:  (block with indented edge types)
+    if (/^relations:\s*$/.test(line) || /^relations:\s*\{\s*\}\s*$/.test(line)) {
+      const rel = {};
+      i++;
+      while (i < lines.length) {
+        const rl = lines[i];
+        // stop on non-indented content (next top-level key or blank that breaks indent)
+        if (rl.trim() === '') { i++; continue; }
+        if (!/^\s/.test(rl)) break;
+        const rm = rl.match(/^  ([A-Za-z_][\w-]*):\s*(.*)$/);
+        if (!rm) break;
+        let [, rk, rv] = rm;
+        rv = rv.trim();
+        if (rv === '' || rv === '[]') {
+          // multi-line YAML list under the key
+          const items = [];
+          i++;
+          while (i < lines.length) {
+            const lm = lines[i].match(/^    -\s*(.+)$/);
+            if (!lm) break;
+            items.push(lm[1].trim().replace(/^["']|["']$/g, ''));
+            i++;
+          }
+          rel[rk] = items;
+          continue;
+        }
+        if (rv.startsWith('[') && rv.endsWith(']')) {
+          rel[rk] = rv.slice(1, -1).split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+        } else {
+          rel[rk] = rv.replace(/^["']|["']$/g, '');
+        }
+        i++;
+      }
+      fm.relations = rel;
+      continue;
+    }
+
+    const mm = line.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
+    if (mm) {
+      let [, k, v] = mm;
+      v = v.trim();
+      if (v.startsWith('[') && v.endsWith(']')) {
+        fm[k] = v.slice(1, -1).split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+      } else {
+        fm[k] = v.replace(/^["']|["']$/g, '');
+      }
+    }
+    i++;
+  }
+  return fm;
+}
+
+// мини-парсер frontmatter (key: value; tags: [a, b]; relations: {…}) — без YAML-зависимости
 export function parse(file) {
   const raw = readFileSync(file, 'utf8');
   const id = relative(ROOT, file).replace(/\.md$/, '');
   const base = file.split('/').pop();
-  const fm = {};
+  let fm = {};
   let body = raw;
+  let hasFM = false;
   const m = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
   if (m) {
+    hasFM = true;
     body = m[2];
-    for (const line of m[1].split('\n')) {
-      const mm = line.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
-      if (!mm) continue;
-      let [, k, v] = mm; v = v.trim();
-      if (v.startsWith('[') && v.endsWith(']'))
-        fm[k] = v.slice(1, -1).split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
-      else fm[k] = v.replace(/^["']|["']$/g, '');
-    }
+    fm = parseFrontmatter(m[1]);
     if (!fm.visibility) fm.visibility = 'internal';
   }
   const prose = body.replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '');
   const links = [...prose.matchAll(/\[[^\]]*\]\(([^)]+\.md)\)/g)].map(x => x[1]);
-  return { file, id, base, reserved: RESERVED.has(base), fm, hasFM: !!m, body, links };
+  const relations = normalizeRelations(fm.relations);
+  // keep fm.relations as the normalized map for consumers that read fm
+  if (Object.keys(relations).length) fm.relations = relations;
+  else delete fm.relations;
+  return { file, id, base, reserved: RESERVED.has(base), fm, hasFM, body, links, relations };
 }
 
 export function load(opts = {}) { return walk(ROOT, opts).map(parse); }
@@ -74,4 +162,50 @@ export function resolveLink(fromFile, target) {
   const root = resolve(ROOT) + sep;
   if (!resolved.startsWith(root)) return null;
   return resolved;
+}
+
+/** Resolve a relation target path (bundle-absolute preferred; relative to ROOT also ok). */
+export function resolveRelationPath(target) {
+  if (!target) return null;
+  const t = String(target).trim();
+  const resolved = t.startsWith('/')
+    ? resolve(ROOT, '.' + t)
+    : resolve(ROOT, t);
+  const root = resolve(ROOT) + sep;
+  if (!resolved.startsWith(root) && resolved !== resolve(ROOT)) return null;
+  return resolved;
+}
+
+/**
+ * Collect all typed relation edges from a document list.
+ * Returns { fromId, type, toPath, toId, resolved, exists }[].
+ */
+export function collectRelationEdges(docs) {
+  const edges = [];
+  for (const d of docs) {
+    const rel = d.relations || normalizeRelations(d.fm?.relations);
+    for (const [type, paths] of Object.entries(rel)) {
+      for (const toPath of paths) {
+        const resolved = resolveRelationPath(toPath);
+        const toId = pathToId(toPath);
+        edges.push({
+          fromId: d.id,
+          type,
+          toPath,
+          toId,
+          resolved,
+          exists: resolved ? existsSync(resolved) : false,
+        });
+      }
+    }
+  }
+  return edges;
+}
+
+/** Find a concept by id (exact) or basename suffix — same rules as okf-query get. */
+export function findById(docs, q) {
+  const needle = String(q || '').replace(/\.md$/, '');
+  const exact = docs.filter(d => d.id === needle);
+  if (exact.length) return exact;
+  return docs.filter(d => d.id.endsWith('/' + needle) || d.id === needle);
 }
