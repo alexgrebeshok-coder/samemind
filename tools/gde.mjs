@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// gde.mjs — «где я писал про X»: человекочитаемый поиск по OKF-bundle (semantic + keyword fallback).
+// gde.mjs — «где я писал про X»: человекочитаемый поиск по OKF-bundle.
+//   semantic (если есть индекс и отвечает OKF_EMBED_URL), иначе локальный BM25-фолбэк.
 //   node tools/gde.mjs "где я писал про ..." [-k N] [--secret] [--reindex]
 // mirror включён по умолчанию; secret — только с --secret.
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';
@@ -7,8 +8,8 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ROOT, load } from './lib/okf.mjs';
 import {
-  DEFAULT_EMBED_URL, DEFAULT_MODEL, fetchEmbedding, rankByQuery, syncIndex, indexKey,
-  checkIndexStale, rankByKeywords, extractSnippet,
+  DEFAULT_EMBED_URL, DEFAULT_MODEL, fetchEmbedding, syncIndex, indexKey,
+  checkIndexStale, extractSnippet, recallSearch,
 } from './lib/recall.mjs';
 import { atomicWriteJsonSync } from '../lib/atomic-write.mjs';
 
@@ -94,7 +95,7 @@ export function formatResults(query, results, { k, mode, staleWarning }) {
 }
 
 export async function search(query, opts) {
-  const { k, includeSecret, includeMirror, reindex } = opts;
+  const { k, includeSecret, includeMirror, reindex, mode = 'auto' } = opts;
   const docs = load({ includeSecret, includeMirror }).filter(d => !d.reserved);
   const docById = new Map(docs.map(d => [d.id, d]));
   let staleWarning = null;
@@ -104,33 +105,20 @@ export async function search(query, opts) {
       const stats = await buildIndex({ includeSecret, includeMirror });
       console.error(`индекс обновлён: ${stats.built} новых/изменённых, ${stats.reused} без изменений, всего ${stats.total}`);
     } catch (e) {
-      console.error(`⚠ reindex не удался (${e.message}) — продолжаю keyword-поиском`);
+      console.error(`⚠ reindex не удался (${e.message}) — продолжаю BM25`);
     }
   } else {
-    const idx = loadIdx();
-    const { stale, reasons } = checkIndexStale(idx, docs, { idxPath: IDX });
+    const { stale, reasons } = checkIndexStale(loadIdx(), docs, { idxPath: IDX });
     if (stale) staleWarning = `индекс устарел (${reasons.join('; ')}), добавь --reindex`;
   }
 
-  // semantic path
-  if (existsSync(IDX) && Object.keys(loadIdx().items || {}).length > 0) {
-    try {
-      const idx = loadIdx();
-      const qv = await embed(query);
-      const ranked = rankByQuery(idx.items, qv, { k, includeSecret, includeMirror });
-      const results = enrichResults(ranked, docById, query);
-      return { results, mode: 'semantic', staleWarning };
-    } catch (e) {
-      console.error(`⚠ embeddings недоступны (${EMBED_URL}): ${e.message}`);
-      console.error('   fallback → keyword-поиск по bundle');
-    }
-  } else if (!reindex) {
-    staleWarning = staleWarning || 'индекс отсутствует — semantic недоступен без --reindex';
-  }
-
-  const ranked = rankByKeywords(docs, query, { k, includeSecret, includeMirror });
-  const results = enrichResults(ranked, docById, query);
-  return { results, mode: 'keyword', staleWarning };
+  // Единый механизм поиска/фолбэка — из lib (разделяется с okf-recall).
+  const { hits, mode: used, warning } = await recallSearch({
+    docs, query, mode, embed, idx: loadIdx(), k, includeSecret, includeMirror,
+  });
+  if (warning) console.error(`⚠ ${warning}`);
+  const results = enrichResults(hits, docById, query);
+  return { results, mode: used, staleWarning };
 }
 
 async function main() {
