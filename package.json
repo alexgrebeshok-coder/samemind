@@ -1,0 +1,36 @@
+{
+  "name": "samemind",
+  "version": "0.1.0",
+  "description": "Your personal universal memory for every AI agent. Switch engines. Same mind.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test tools/*.test.mjs",
+    "validate": "node tools/okf-query.mjs validate",
+    "validate:demo": "OKF_ROOT=demo node tools/okf-query.mjs validate"
+  },
+  "keywords": [
+    "memory",
+    "okf",
+    "agent",
+    "markdown",
+    "second-brain",
+    "ai"
+  ],
+  "files": [
+    "lib/",
+    "tools/",
+    "demo/",
+    "concepts/",
+    "entities/",
+    "projects/",
+    "inbox/",
+    "index.md",
+    "log.md",
+    "README.md",
+    "LICENSE"
+  ]
+}
