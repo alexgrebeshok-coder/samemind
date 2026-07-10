@@ -6,6 +6,9 @@ visibility: internal
 tags: [project, app, notes]
 timestamp: 2026-07-10T00:00:00Z
 source: demo
+relations:
+  depends_on: /concepts/retrieval-strategy.md
+  uses: /concepts/nova.md
 ---
 
 # Lumen

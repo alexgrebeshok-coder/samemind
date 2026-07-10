@@ -6,6 +6,8 @@ visibility: internal
 tags: [engine, rule, batch]
 timestamp: 2026-07-10T00:00:00Z
 source: demo
+relations:
+  part_of: /concepts/nova.md
 ---
 
 # Engine: opencode

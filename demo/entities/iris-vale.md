@@ -6,6 +6,9 @@ visibility: internal
 tags: [person, collaborator, designer]
 timestamp: 2026-07-10T00:00:00Z
 source: demo
+relations:
+  works_at: /entities/acme-labs.md
+  uses: [/projects/lumen.md, /projects/atlas.md]
 ---
 
 # Iris Vale

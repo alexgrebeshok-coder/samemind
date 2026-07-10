@@ -6,6 +6,8 @@ visibility: internal
 tags: [organization, employer]
 timestamp: 2026-07-10T00:00:00Z
 source: demo
+relations:
+  uses: /projects/lumen.md
 ---
 
 # Acme Labs
