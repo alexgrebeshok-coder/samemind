@@ -9,7 +9,22 @@ can read and write.
 ## Quick start
 
 ```sh
-# clone or copy this repo, then:
+npx samemind init --demo      # scaffold a bundle here + the fictional Nova demo content
+npx samemind query list       # see what's in it
+npx samemind gde "where did I write about context budget"   # human-readable search
+```
+
+`init` refuses to touch a non-empty directory — run it in a fresh folder, or pass
+a path: `npx samemind init ./my-memory`. Drop `--demo` once you're ready for a real,
+empty bundle. It also runs `git init` + a first commit when git is available.
+
+Copy a concept template, fill the frontmatter, link nodes with
+`[title](/path.md)`. Path = identity.
+
+<details>
+<summary>Working from a checkout instead (dev mode)</summary>
+
+```sh
 node tools/okf-query.mjs validate          # this empty starter bundle
 OKF_ROOT=demo node tools/okf-query.mjs validate   # fictional Nova demo
 
@@ -30,8 +45,7 @@ node tools/okf-recall.mjs "how does Nova handle retrieval" -k 5
 node tools/gde.mjs "where did I write about context budget"
 ```
 
-Copy a concept template, fill the frontmatter, link nodes with
-`[title](/path.md)`. Path = identity.
+</details>
 
 ## Format
 
@@ -89,16 +103,20 @@ conformant type checks.
 
 ## Tools
 
-| Tool | Purpose |
+| Command | Purpose |
 |------|---------|
-| `tools/okf-query.mjs` | Structural queries: `list`, `type`, `tag`, `get`, `links`, `rel`, `validate` |
-| `tools/okf-recall.mjs` | Semantic search (local embeddings; env: `OKF_EMBED_URL`, `OKF_EMBED_MODEL`) |
-| `tools/gde.mjs` | Human search: semantic + keyword fallback |
-| `tools/consolidate.mjs` | Gap map: inbox/mirror → candidates for promotion into the canon |
+| `samemind init [dir] [--demo]` | Scaffold a fresh bundle (empty dir only; `--demo` adds the Nova example) |
+| `samemind query <cmd>` | Structural queries: `list`, `type`, `tag`, `get`, `links`, `rel`, `validate` |
+| `samemind recall <cmd>` | Semantic search (local embeddings; env: `OKF_EMBED_URL`, `OKF_EMBED_MODEL`) |
+| `samemind gde "<query>"` | Human search: semantic + keyword fallback |
+| `tools/consolidate.mjs` | Gap map: inbox/mirror → candidates for promotion into the canon (dev-mode only, run from a checkout) |
 
-Shared libraries: `tools/lib/` (okf + recall), `lib/` (atomic write, safe paths, mirror sync).
+`query`/`recall`/`gde` run against `OKF_ROOT` if set, otherwise your current directory —
+so they operate on your own bundle, not on the samemind package itself.
 
-Root of the bundle is the checkout by default; override with `OKF_ROOT`.
+Under the hood: `bin/samemind.mjs` routes to `tools/okf-query.mjs`, `tools/okf-recall.mjs`,
+`tools/gde.mjs`, `tools/init.mjs`. Shared libraries: `tools/lib/` (okf + recall), `lib/`
+(atomic write, safe paths, mirror sync).
 
 ## Compatibility
 

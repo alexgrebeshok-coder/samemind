@@ -1,0 +1,300 @@
+#!/usr/bin/env node
+// init.mjs — samemind init: scaffold a fresh OKF bundle in a target directory.
+//   node tools/init.mjs [dir] [--demo]
+// No --force: refuses a non-empty target directory, never overwrites anything.
+import {
+  existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, statSync,
+} from 'node:fs';
+import { join, dirname, resolve, basename } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+export const PACKAGE_ROOT = resolve(HERE, '..');
+
+const FOLDERS = ['concepts', 'entities', 'projects', 'inbox', 'secret'];
+
+const CONCEPTS_TEMPLATE = `---
+type: Concept
+title:
+description:
+visibility: internal
+tags: []
+timestamp:
+source:
+---
+
+> Copy this file, drop the \`_\` prefix from the name, fill the frontmatter.
+> \`path = identity\`: \`concepts/my-idea.md\` is the concept \`my-idea\`.
+
+# <title>
+
+Body of the concept. Link related nodes: see [another concept](/concepts/example.md).
+`;
+
+const CONCEPTS_INDEX = `---
+okf_version: "0.1"
+---
+
+# Concepts
+
+Ideas, architectures, methods, rules. Typical \`type\` values: \`Concept\`, \`EngineRule\`,
+\`Identity\`, \`Reference\`. Start from [\`_template.md\`](_template.md).
+
+List concepts: \`npx samemind query list\`
+`;
+
+const ENTITIES_TEMPLATE = `---
+type: Entity
+title:
+description:
+visibility: internal
+tags: []
+timestamp:
+source:
+---
+
+> People, organizations, systems. Use \`type: User\` for the bundle owner,
+> \`type: Entity\` for everyone/everything else.
+
+# <title>
+
+Body. Link to projects and concepts this entity relates to.
+`;
+
+const ENTITIES_INDEX = `---
+okf_version: "0.1"
+---
+
+# Entities
+
+People, organizations, systems. \`type: User\` (owner) or \`type: Entity\`.
+Start from [\`_template.md\`](_template.md).
+`;
+
+const PROJECTS_TEMPLATE = `---
+type: Project
+title:
+description:
+visibility: internal
+tags: []
+timestamp:
+source:
+---
+
+# <title>
+
+Body. Status, goal, next step, blockers. Link entities and concepts involved.
+`;
+
+const PROJECTS_INDEX = `---
+okf_version: "0.1"
+---
+
+# Projects
+
+Products and initiatives (\`type: Project\`). Start from [\`_template.md\`](_template.md).
+`;
+
+const INBOX_INDEX = `---
+okf_version: "0.1"
+---
+
+# Inbox
+
+Raw notes waiting to be curated into the canon. Drop loose \`.md\` files here, then
+promote what matters into \`concepts/\`, \`entities/\`, or \`projects/\` once reviewed.
+`;
+
+const SECRET_TEMPLATE = `---
+type: Concept
+title:
+description:
+visibility: secret
+tags: []
+timestamp:
+source:
+---
+
+> \`visibility: secret\` keeps this node out of default queries and out of git
+> (the \`/secret/\` folder is gitignored). It appears only with \`--include-secret\`.
+
+# <title>
+
+Sensitive body.
+`;
+
+const GITIGNORE = `# local-only tiers — never commit real content
+# keep folder templates so the bundle is usable out of the box
+/secret/**
+!/secret/
+!/secret/_template.md
+/mirror/**
+
+# generated artifacts
+tools/.index/
+inbox/_consolidation-report.md
+
+# node
+node_modules/
+
+# os / editor noise
+.DS_Store
+*.log
+`;
+
+function rootIndexMd(bundleName) {
+  return `---
+okf_version: "0.1"
+---
+
+# ${bundleName} — universal memory bundle
+
+One mind across every engine you run. This directory is your OKF bundle:
+plain markdown, path = identity, links \`[title](/path.md)\`, frontmatter classifies each node.
+
+## Folders
+
+- \`concepts/\` — ideas, architectures, methods, rules (\`type: Concept\`, \`EngineRule\`, \`Identity\`, …)
+- \`entities/\` — people, organizations, systems (\`type: User\`, \`Entity\`)
+- \`projects/\` — products and initiatives (\`type: Project\`)
+- \`inbox/\` — raw notes pending curation → promote into the canon above
+- \`secret/\` — sensitive entries (gitignored; included only with \`--include-secret\`)
+- \`mirror/\` — live-memory mirrors from each engine (gitignored; \`--include-mirror\`)
+
+Validate your bundle:
+
+\`\`\`sh
+npx samemind query validate
+\`\`\`
+`;
+}
+
+function rootLogMd(today) {
+  return `---
+okf_version: "0.1"
+---
+
+# Log
+
+Append-only timeline of meaningful changes to the bundle. One entry per line, newest first.
+This is for humans and curating agents — the graph itself is the source of truth.
+
+- \`${today}\` — bundle initialized (samemind init).
+`;
+}
+
+/** Copies demo/{concepts,entities,projects}/*.md (skipping index.md/_template.md) into dir. */
+function copyDemoContent(dir, packageRoot) {
+  const demoRoot = join(packageRoot, 'demo');
+  let count = 0;
+  for (const folder of ['concepts', 'entities', 'projects']) {
+    const src = join(demoRoot, folder);
+    if (!existsSync(src)) continue;
+    for (const name of readdirSync(src)) {
+      if (!name.endsWith('.md') || name.startsWith('_') || name === 'index.md') continue;
+      const content = readFileSync(join(src, name), 'utf8');
+      writeFileSync(join(dir, folder, name), content, 'utf8');
+      count++;
+    }
+  }
+  return count;
+}
+
+function initGit(dir) {
+  try {
+    execFileSync('git', ['--version'], { stdio: 'ignore' });
+  } catch {
+    return { ok: false, reason: 'git не найден в PATH — пропускаю git init (структура создана без него)' };
+  }
+  try {
+    execFileSync('git', ['init'], { cwd: dir, stdio: 'ignore' });
+    execFileSync('git', ['add', '-A'], { cwd: dir, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'samemind: initial bundle'], { cwd: dir, stdio: 'ignore' });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: `git init/commit не завершились (${e.message.split('\n')[0]}) — файлы на месте, закоммить вручную` };
+  }
+}
+
+/**
+ * Scaffolds a fresh OKF bundle into targetDir.
+ * Refuses (returns {ok:false}) if targetDir exists and is non-empty — never overwrites.
+ */
+export function runInit({ targetDir = '.', demo = false, packageRoot = PACKAGE_ROOT } = {}) {
+  const dir = resolve(targetDir);
+
+  if (existsSync(dir)) {
+    if (!statSync(dir).isDirectory()) {
+      return { ok: false, reason: `«${dir}» существует и не является папкой` };
+    }
+    const entries = readdirSync(dir);
+    if (entries.length > 0) {
+      return {
+        ok: false,
+        reason: `папка «${dir}» не пуста (${entries.length} элементов) — samemind init работает только с пустой папкой, ничего не создаю и не перезаписываю`,
+      };
+    }
+  } else {
+    mkdirSync(dir, { recursive: true });
+  }
+
+  for (const folder of FOLDERS) mkdirSync(join(dir, folder), { recursive: true });
+
+  const today = new Date().toISOString().slice(0, 10);
+  const bundleName = basename(dir) || 'memory';
+
+  writeFileSync(join(dir, 'index.md'), rootIndexMd(bundleName), 'utf8');
+  writeFileSync(join(dir, 'log.md'), rootLogMd(today), 'utf8');
+  writeFileSync(join(dir, '.gitignore'), GITIGNORE, 'utf8');
+
+  writeFileSync(join(dir, 'concepts', '_template.md'), CONCEPTS_TEMPLATE, 'utf8');
+  writeFileSync(join(dir, 'concepts', 'index.md'), CONCEPTS_INDEX, 'utf8');
+  writeFileSync(join(dir, 'entities', '_template.md'), ENTITIES_TEMPLATE, 'utf8');
+  writeFileSync(join(dir, 'entities', 'index.md'), ENTITIES_INDEX, 'utf8');
+  writeFileSync(join(dir, 'projects', '_template.md'), PROJECTS_TEMPLATE, 'utf8');
+  writeFileSync(join(dir, 'projects', 'index.md'), PROJECTS_INDEX, 'utf8');
+  writeFileSync(join(dir, 'inbox', 'index.md'), INBOX_INDEX, 'utf8');
+  writeFileSync(join(dir, 'secret', '_template.md'), SECRET_TEMPLATE, 'utf8');
+
+  const demoCopied = demo ? copyDemoContent(dir, packageRoot) : 0;
+  const git = initGit(dir);
+
+  return { ok: true, dir, demoCopied, git };
+}
+
+function parseArgs(argv) {
+  const demo = argv.includes('--demo');
+  const positional = argv.filter(a => !a.startsWith('--'));
+  return { targetDir: positional[0] || '.', demo };
+}
+
+function printNextSteps() {
+  console.log('');
+  console.log('Что дальше:');
+  console.log('  1. добавь концепт — скопируй concepts/_template.md → concepts/<name>.md и заполни');
+  console.log('  2. npx samemind query list — посмотреть, что уже в bundle');
+  console.log('  3. подключи MCP — скоро');
+}
+
+async function main() {
+  const { targetDir, demo } = parseArgs(process.argv.slice(2));
+  const result = runInit({ targetDir, demo });
+  if (!result.ok) {
+    console.error(`✗ ${result.reason}`);
+    process.exit(1);
+  }
+  console.log(`✓ bundle создан: ${result.dir}`);
+  if (demo) console.log(`  --demo: скопировано ${result.demoCopied} демо-концептов`);
+  if (result.git.ok) console.log('  git init + первый коммит выполнены');
+  else console.log(`  ⚠ ${result.git.reason}`);
+  printNextSteps();
+}
+
+const isMain = process.argv[1] === fileURLToPath(import.meta.url);
+if (isMain) {
+  main().catch(e => {
+    console.error('Ошибка:', e.message);
+    process.exit(1);
+  });
+}

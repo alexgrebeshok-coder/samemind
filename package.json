@@ -4,6 +4,9 @@
   "description": "Your personal universal memory for every AI agent. Switch engines. Same mind.",
   "license": "MIT",
   "type": "module",
+  "bin": {
+    "samemind": "bin/samemind.mjs"
+  },
   "engines": {
     "node": ">=18"
   },
@@ -21,6 +24,7 @@
     "ai"
   ],
   "files": [
+    "bin/",
     "lib/",
     "tools/",
     "demo/",
