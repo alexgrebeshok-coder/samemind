@@ -274,7 +274,7 @@ function printNextSteps() {
   console.log('Что дальше:');
   console.log('  1. добавь концепт — скопируй concepts/_template.md → concepts/<name>.md и заполни');
   console.log('  2. npx samemind query list — посмотреть, что уже в bundle');
-  console.log('  3. подключи MCP — скоро');
+  console.log('  3. npx samemind serve — MCP stdio-сервер (claude mcp add samemind -- npx samemind serve)');
 }
 
 async function main() {
