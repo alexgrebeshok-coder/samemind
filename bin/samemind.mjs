@@ -9,6 +9,8 @@
 //   npx samemind handoff [...]           → tools/handoff.mjs     (work-state: tasks/plans/decisions/session)
 //   npx samemind forget <id>             → tools/forget.mjs      (soft-deprecate; never deletes — see docs/memory-hygiene.md)
 //   npx samemind install --agent <id>    → tools/install.mjs     (wire brief+protocol into an engine's instruction file)
+//   npx samemind export <dir> [...]      → tools/export.mjs      (shareable OKF-bundle / --to-gbrain; no secrets)
+//   npx samemind import <dir> [...]      → tools/import.mjs      (accept foreign OKF; default → inbox)
 //   npx samemind serve                   → tools/mcp-server.mjs  (MCP stdio server: memory_* tools)
 //
 // query/recall/gde are routed with OKF_ROOT defaulted to the caller's cwd, so the tools
@@ -30,6 +32,8 @@ const ROUTES = {
   handoff: 'tools/handoff.mjs',
   forget: 'tools/forget.mjs',
   install: 'tools/install.mjs',
+  export: 'tools/export.mjs',
+  import: 'tools/import.mjs',
   serve: 'tools/mcp-server.mjs',
 };
 
@@ -46,6 +50,8 @@ function usage() {
   console.log('  handoff [...]         бриф состояния работ: active/decisions/plans/session (--project <path> --days N)');
   console.log('  forget <id>           пометить концепт устаревшим (deprecated: true) — не удаляет файл, см. docs/memory-hygiene.md');
   console.log('  install --agent <id>  вписать бриф+протокол в инструкционный файл движка (--list — список; --agent all — во все существующие)');
+  console.log('  export <dir> [...]    shareable OKF-bundle (без secret/mirror/inbox); --visibility public|internal --dry-run --to-gbrain');
+  console.log('  import <dir> [...]    принять чужой OKF-bundle; --into inbox|concepts (дефолт inbox) — см. docs/interop.md');
   console.log('  serve                 MCP stdio-сервер (memory_search/get/list/write_inbox/handoff/health) — подключи как MCP-инструмент');
 }
 
