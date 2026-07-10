@@ -90,11 +90,18 @@ source: …
 relations:             # optional SameMind extension (typed graph edges)
   works_at: /entities/acme-labs.md
   depends_on: [/projects/atlas.md, /concepts/retrieval-strategy.md]
+supersedes: /concepts/old-idea.md   # optional — memory hygiene, see below
+importance: 3                      # optional — 1..5, default 3 (neutral)
 ---
 ```
 
 See `demo/` for a complete fictional worked example (agent **Nova**, owner
 **Alex Doe**, three engine rules, two projects, linked concepts).
+
+**Stale vs. current isn't automatic** — a fact from six months ago and one
+from today rank equally unless you say otherwise. `supersedes`,
+`samemind forget`, `importance`, and gentle time-decay fix that without ever
+deleting history: see [docs/memory-hygiene.md](docs/memory-hygiene.md).
 
 ## Relations
 
@@ -176,15 +183,17 @@ first, voice next, everything else trimmed first with a `truncated — see
 | `samemind recall "<query>"` | Search: `--mode bm25\|semantic\|auto` (default `auto`). BM25 works zero-dep; semantic needs `OKF_EMBED_URL` + `index`. |
 | `samemind gde "<query>"` | Human search: semantic when an index exists, BM25 fallback otherwise |
 | `samemind brief [--engine <id>] [--budget <n>] [--inject <file>]` | Compact Identity+User+EngineRule digest — see [Identity layer](#identity-layer) |
+| `samemind forget <id>` | Soft-deprecate a concept (`deprecated: true` in frontmatter) — never deletes the file. See [Memory hygiene](docs/memory-hygiene.md) |
 | `samemind serve` | MCP stdio server: `memory_search/get/list/write_inbox/health` — see [MCP](#mcp) |
-| `tools/consolidate.mjs` | Gap map: inbox/mirror → candidates for promotion into the canon (dev-mode only, run from a checkout) |
+| `tools/consolidate.mjs` | Gap map: inbox/mirror → candidates for promotion into the canon, plus a same-type "contradictions" section (dev-mode only, run from a checkout) |
 
-`query`/`recall`/`gde`/`brief`/`serve` run against `OKF_ROOT` if set, otherwise your current
-directory — so they operate on your own bundle, not on the samemind package itself.
+`query`/`recall`/`gde`/`brief`/`forget`/`serve` run against `OKF_ROOT` if set, otherwise your
+current directory — so they operate on your own bundle, not on the samemind package itself.
 
 Under the hood: `bin/samemind.mjs` routes to `tools/okf-query.mjs`, `tools/okf-recall.mjs`,
-`tools/gde.mjs`, `tools/init.mjs`, `tools/brief.mjs`, `tools/mcp-server.mjs`. Shared libraries:
-`tools/lib/` (okf, recall, bm25, mcp, injection), `lib/` (atomic write, safe paths, mirror sync).
+`tools/gde.mjs`, `tools/init.mjs`, `tools/brief.mjs`, `tools/forget.mjs`, `tools/mcp-server.mjs`.
+Shared libraries: `tools/lib/` (okf, recall, bm25, hygiene, mcp, injection), `lib/` (atomic write,
+safe paths, mirror sync).
 
 ### Recall modes & env
 
