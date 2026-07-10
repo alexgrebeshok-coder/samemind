@@ -1,14 +1,22 @@
 {
   "name": "samemind",
   "version": "0.1.0",
-  "description": "Your personal universal memory for every AI agent. Switch engines. Same mind.",
+  "description": "Git-native, zero-infra markdown memory for AI coding agents — one bundle, every engine, no database.",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alexgrebeshok-coder/samemind.git"
+  },
+  "homepage": "https://github.com/alexgrebeshok-coder/samemind#readme",
+  "bugs": {
+    "url": "https://github.com/alexgrebeshok-coder/samemind/issues"
+  },
   "bin": {
     "samemind": "bin/samemind.mjs"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "scripts": {
     "test": "node --test tools/*.test.mjs",
@@ -17,11 +25,18 @@
   },
   "keywords": [
     "memory",
-    "okf",
+    "ai-agents",
     "agent",
-    "markdown",
+    "mcp",
+    "okf",
     "second-brain",
-    "ai"
+    "markdown",
+    "claude",
+    "claude-code",
+    "cursor",
+    "llm",
+    "git-native",
+    "context"
   ],
   "files": [
     "bin/",
@@ -29,13 +44,8 @@
     "tools/",
     "demo/",
     "docs/",
-    "concepts/",
-    "entities/",
-    "projects/",
-    "inbox/",
-    "index.md",
-    "log.md",
     "README.md",
+    "CONTRIBUTING.md",
     "INSTALL_FOR_AGENTS.md",
     "LICENSE"
   ]

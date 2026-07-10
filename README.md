@@ -32,6 +32,59 @@ empty bundle. It also runs `git init` + a first commit when git is available.
 Copy a concept template, fill the frontmatter, link nodes with
 `[title](/path.md)`. Path = identity.
 
+### A session, start to finish
+
+Real output, trimmed for length — no gif needed:
+
+```sh
+$ npx samemind init --demo
+✓ bundle создан: ./samemind-demo
+  --demo: скопировано 19 демо-концептов
+  git init + первый коммит выполнены
+
+$ npx samemind brief --engine claude-code
+<!-- samemind:brief:start -->
+# Brief — Nova
+
+Nova is the agent whose mind lives in this bundle. Same identity, many engines —
+she carries her voice, values and memory across all of them.
+
+## Boundaries (hard — never overridden by engine or style)
+
+- Never deletes files or data without an explicit "delete".
+- External actions (send, publish, push, message someone) require confirmation.
+- Doesn't hand back half-finished work — finishes, then answers.
+...
+
+$ npx samemind recall "where did I write about context budget"
+⚠ semantic off, BM25 fallback — set OKF_EMBED_URL for semantic search
+# «where did I write about context budget» → топ-5 [bm25]
+5.559  Concept    concepts/context-budget — Context budget
+3.693  Concept    concepts/retrieval-strategy — Retrieval strategy
+1.366  User       entities/alex-doe — Alex Doe
+1.266  Decision   concepts/decision-lumen-local-first — Lumen stays local-first — no mandatory cloud account
+
+$ npx samemind board
+# Dashboard
+
+## 🔧 In progress (1)
+- **Ship Lumen backlink editor** — Land the bidirectional backlink editor so Lumen's note graph is navigable.
+
+## 🔴 Blocked (1)
+- **Wire retrieval strategy over the Atlas corpus**
+  - ⛔ Corpus ingestion paused — waiting on Alex to confirm the source license list.
+
+## 📋 Plans (1)
+- **Lumen multi-device sync** · agreed — ship end-to-end sync after the backlink editor.
+...
+```
+
+No daemon, no API key, no network call. `brief` and `board` read straight off
+the markdown `init --demo` just wrote; `recall` degrades to local BM25 because
+`OKF_EMBED_URL` isn't set. Four commands, zero infra — that's the whole pitch.
+(A couple of CLI status lines are still bilingual pre-1.0, e.g. `bundle
+создан` — shown as-is above, not cleaned up for the README.)
+
 ## The protocol
 
 Agents **synthesize** answers themselves — search → read top hits → cite paths →
@@ -361,6 +414,39 @@ Adapters that import *live* engine memory into `mirror/` (e.g. syncing an
 engine's own session notes back into the bundle) are out of scope for this
 public skeleton; the format and tools to build one are ready.
 
+## samemind vs. gbrain (Garry Tan) — when to use which
+
+[gbrain](https://github.com/garrytan/gbrain) is a real, serious product,
+solving a different job well: a 24/7 daemon that ingests your whole digital
+life (email, voice calls, tweets, meetings) into Postgres/pgvector, auto-wires
+an entity graph, and hands back a synthesized, cited answer with gap analysis
+(`gbrain think`) instead of a list of hits. If you want an always-on brain for
+a person or a company at 100K+ pages, it's a strong choice — read its README.
+samemind is aimed at a narrower, adjacent job: a portable identity + memory
+layer *for your coding agent*, with nothing to run and nothing to pay for.
+
+| | samemind | gbrain |
+|---|---|---|
+| Infra | none — markdown + git | Postgres/pgvector (or PGLite) + an embedding provider + a 24/7 "dream cycle" daemon |
+| Setup | `npx samemind init` — seconds | ~30 min guided install, API keys, DB bring-up |
+| Answer shape | you (or your agent) read ranked hits and synthesize, with cited gaps | `gbrain think` returns an already-synthesized, cited answer + gap analysis |
+| Scale target | hand-curated — hundreds to low thousands of concepts | built for continuous ingestion at 100K+ pages |
+| Entities/graph | you write typed `relations:` by hand | auto-extracted entity graph (zero LLM calls) + LLM-driven enrichment on a nightly cron |
+| Querying it | plain markdown — `cat`/`grep`/`find` work with zero tooling | git repo is the source of truth, but querying needs the Postgres/PGLite engine + embeddings running |
+
+Use samemind if you want a memory that travels with you across every coding
+engine you touch, costs nothing to run, and you're fine doing (or trusting
+your agent to do) the synthesis yourself. Use gbrain if you want an always-on
+brain that ingests your whole life or your team's and hands back a written
+answer, and you're fine running a database and paying for embeddings/rerank
+to get it. Nothing here is a knock on gbrain — different scope, different
+bill of materials.
+
+**vs. SQLite/vector-DB memory tools** for coding agents (Memorix, agentmemory,
+claude-mem, and similar): your memory is your markdown files in git — not our
+database. No binary store to export, no proprietary schema to migrate off of,
+`git log` is the audit trail.
+
 ## Tests & micro-bench
 
 ```sh
@@ -370,6 +456,9 @@ OKF_ROOT=demo node tools/bench-recall.mjs   # BM25 vs naive grep on demo goldens
 
 Methodology and current hit@1 / hit@3 numbers: [docs/benchmark.md](docs/benchmark.md).
 Micro-corpus only — not a public IR leaderboard.
+
+Contributing dev-setup, conventions, and pointers to the format spec:
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## License
 
