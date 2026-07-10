@@ -229,15 +229,17 @@ Shortened example, run against the demo bundle:
 | `samemind handoff [--project <path>] [--days N]` | Work-state brief (tasks/plans/decisions/session) — see [docs/compaction-recipe.md](docs/compaction-recipe.md) |
 | `samemind forget <id>` | Soft-deprecate a concept (`deprecated: true` in frontmatter) — never deletes the file. See [Memory hygiene](docs/memory-hygiene.md) |
 | `samemind board [--write] [--project <path>]` | Kanban over the work-discipline layer (Backlog / In progress / Done / Blocked+aging, Plans, Recent) — `--write` → `DASHBOARD.md` — see [Board](#board) |
+| `samemind export <dir> [--visibility public\|internal] [--dry-run] [--to-gbrain]` | Shareable OKF-bundle (strips `secret/`/`mirror/`/`inbox/`); gbrain page mapping — see [docs/interop.md](docs/interop.md) |
+| `samemind import <dir> [--into inbox\|concepts]` | Accept a foreign OKF-bundle (default → curated `inbox/import-<date>.md`; never overwrites) — see [docs/interop.md](docs/interop.md) |
 | `samemind serve` | MCP stdio server: `memory_search/get/list/write_inbox/handoff/health` — see [MCP](#mcp) |
 | `tools/consolidate.mjs` | Gap map: inbox/mirror → candidates for promotion into the canon, plus a same-type "contradictions" section (dev-mode only, run from a checkout) |
 
-`query`/`recall`/`gde`/`brief`/`board`/`handoff`/`forget`/`serve` run against `OKF_ROOT` if set, otherwise your
+`query`/`recall`/`gde`/`brief`/`board`/`handoff`/`forget`/`export`/`import`/`serve` run against `OKF_ROOT` if set, otherwise your
 current directory — so they operate on your own bundle, not on the samemind package itself.
 
 Under the hood: `bin/samemind.mjs` routes to `tools/okf-query.mjs`, `tools/okf-recall.mjs`,
 `tools/gde.mjs`, `tools/init.mjs`, `tools/brief.mjs`, `tools/board.mjs`, `tools/handoff.mjs`,
-`tools/forget.mjs`, `tools/mcp-server.mjs`. Shared libraries: `tools/lib/` (okf, recall, bm25,
+`tools/forget.mjs`, `tools/export.mjs`, `tools/import.mjs`, `tools/mcp-server.mjs`. Shared libraries: `tools/lib/` (okf, recall, bm25,
 hygiene, mcp, injection), `lib/` (atomic write, safe paths, mirror sync).
 
 ### Recall modes & env
@@ -314,6 +316,7 @@ Designed to sit under any agent that can read a folder of markdown and run Node:
 - Claude Code / Cursor / Codex / Gemini CLI / opencode — point at this tree
 - OpenClaw / Hermes / chat orchestrators — same bundle, different engine rules
 - Any OpenAI-compatible embeddings server for recall (LM Studio, Ollama, …)
+- **Google OKF v0.1** wire shape — `samemind export` / `import` exchange shareable packs (`okf_version: "0.1"`); `--to-gbrain` maps concepts to [garrytan/gbrain](https://github.com/garrytan/gbrain) pages — see [docs/interop.md](docs/interop.md)
 
 Adapters that import live memory into `mirror/` are out of scope for this public
 skeleton; the format and tools are ready.
