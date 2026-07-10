@@ -1,5 +1,5 @@
 // mcp.mjs — логика MCP-инструментов samemind (транспорт-агностичная; см. ../mcp-server.mjs).
-// 5 инструментов: memory_search | memory_get | memory_list | memory_write_inbox | memory_health.
+// 6 инструментов: memory_search | memory_get | memory_list | memory_write_inbox | memory_handoff | memory_health.
 //
 // Безопасность (см. наряд N3):
 //  - visibility: secret НИКОГДА не попадает в docs, которые видят инструменты (load({includeSecret:false}))
@@ -19,6 +19,7 @@ import {
 } from './recall.mjs';
 import { scanForInjection } from './injection.mjs';
 import { loadIdx } from '../okf-recall.mjs';
+import { buildHandoff, DEFAULT_DAYS as HANDOFF_DEFAULT_DAYS } from '../handoff.mjs';
 import { atomicWriteFileSync } from '../../lib/atomic-write.mjs';
 import { safeMdPath, assertSafeConceptId, sanitizeAgentName } from '../../lib/safe-path.mjs';
 
@@ -87,6 +88,17 @@ export const TOOLS = [
         title: { type: 'string', description: 'Optional short heading for the entry' },
       },
       required: ['content'],
+    },
+  },
+  {
+    name: 'memory_handoff',
+    description: 'Work-state handoff brief: active tasks, recent decisions, plans in force, last session, open questions. Call at session start after /compact or engine switch. Never includes secret-visibility concepts. Not the identity brief (use samemind brief / identity layer for that).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: { type: 'string', description: 'Optional project filter (e.g. "lumen" or "/projects/lumen.md")' },
+        days: { type: 'integer', minimum: 1, description: 'Decision lookback window in days (default 14)' },
+      },
     },
   },
   {
@@ -199,6 +211,24 @@ async function memoryWriteInbox({ content, title } = {}) {
   };
 }
 
+async function memoryHandoff({ project, days } = {}) {
+  const docs = readableDocs(); // secret already excluded
+  const dayWindow = Number.isFinite(Number(days)) && Number(days) > 0
+    ? Math.floor(Number(days))
+    : HANDOFF_DEFAULT_DAYS;
+  const { markdown, sections, warnings, project: projectKey } = buildHandoff(docs, {
+    project: project || null,
+    days: dayWindow,
+  });
+  return {
+    markdown,
+    project: projectKey,
+    days: dayWindow,
+    sections,
+    warnings,
+  };
+}
+
 async function memoryHealth() {
   const docs = readableDocs();
   const idx = loadIdx();
@@ -217,6 +247,7 @@ const HANDLERS = {
   memory_get: memoryGet,
   memory_list: memoryList,
   memory_write_inbox: memoryWriteInbox,
+  memory_handoff: memoryHandoff,
   memory_health: memoryHealth,
 };
 
