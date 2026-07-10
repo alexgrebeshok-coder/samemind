@@ -147,7 +147,12 @@ export function parse(file) {
   // keep fm.relations as the normalized map for consumers that read fm
   if (Object.keys(relations).length) fm.relations = relations;
   else delete fm.relations;
-  return { file, id, base, reserved: RESERVED.has(base), fm, hasFM, body, links, relations };
+  // supersedes: /path.md | [/a.md, /b.md] — normalized the same way as a relations value
+  // (see docs/memory-hygiene.md). Not nested under relations: it's a hygiene signal, not a graph edge.
+  const supersedes = asPathList(fm.supersedes);
+  if (supersedes.length) fm.supersedes = supersedes;
+  else delete fm.supersedes;
+  return { file, id, base, reserved: RESERVED.has(base), fm, hasFM, body, links, relations, supersedes };
 }
 
 export function load(opts = {}) { return walk(ROOT, opts).map(parse); }

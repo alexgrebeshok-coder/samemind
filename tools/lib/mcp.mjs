@@ -113,6 +113,7 @@ async function memorySearch({ query, k = 5, mode = 'auto' } = {}) {
       title: h.title || doc?.fm.title || null,
       score: Number.isFinite(h.score) ? Number(h.score.toFixed(4)) : 0,
       snippet: extractSnippet(doc?.body || '', query, { contextLines: 1 }),
+      hygiene: h.label || null, // e.g. "[superseded by /concepts/new.md]" — see docs/memory-hygiene.md
     };
   });
   return { query, mode: used, warning: warning || null, count: results.length, results };

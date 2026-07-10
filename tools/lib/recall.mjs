@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { buildCorpus, bm25Score } from './bm25.mjs';
+import { buildSupersededMap, hygieneMultiplier, hygieneLabel } from './hygiene.mjs';
 
 // Размерность проверяется только если OKF_EMBED_DIM задана явно. Иначе принимаем любую
 // (OpenAI text-embedding-3-* — 1536/3072, bge-m3 — 1024, …): требование фиксированной dim
@@ -64,11 +65,26 @@ export function passesTier(visibility, { includeSecret = false, includeMirror = 
   return true;
 }
 
-/** Ранжирование по косинусу с учётом тиров. */
-export function rankByQuery(items, queryVector, { k = 5, includeSecret = false, includeMirror = false } = {}) {
+/**
+ * Ранжирование по косинусу с учётом тиров + гигиены памяти (supersedes/deprecated/importance/decay
+ * — см. docs/memory-hygiene.md). `docs` — полные распарсенные концепты (для fm.supersedes и т.п.);
+ * без них (или для id вне docs) множитель гигиены нейтрален (1) — обратная совместимость с индексом,
+ * где этих полей нет.
+ */
+export function rankByQuery(items, queryVector, {
+  k = 5, includeSecret = false, includeMirror = false, docs = [],
+} = {}) {
+  const docsById = new Map(docs.map(d => [d.id, d]));
+  const supersededMap = buildSupersededMap(docs);
   return Object.entries(items)
     .filter(([, v]) => passesTier(v.visibility, { includeSecret, includeMirror }))
-    .map(([id, v]) => ({ id, title: v.title, type: v.type, score: cosine(queryVector, v.vector) }))
+    .map(([id, v]) => {
+      const doc = docsById.get(id);
+      const rawScore = cosine(queryVector, v.vector);
+      const score = doc ? rawScore * hygieneMultiplier(doc, supersededMap) : rawScore;
+      const label = doc ? hygieneLabel(doc, supersededMap) : '';
+      return { id, title: v.title, type: v.type, score, rawScore, label };
+    })
     .sort((a, b) => b.score - a.score)
     .slice(0, k);
 }
@@ -189,7 +205,8 @@ export function keywordScore(text, query) {
   return coverage * 0.65 + density * 0.35;
 }
 
-/** Единый fallback-ранкер: BM25 по title/description/tags/телу концептов (docText).
+/** Единый fallback-ранкер: BM25 по title/description/tags/телу концептов (docText), с той же
+ *  гигиеной ранга, что и rankByQuery (supersedes/deprecated/importance/decay).
  *  Без сети, без зависимостей. Используется и gde, и okf-recall — один механизм фолбэба. */
 export function rankByKeywords(docs, query, { k = 5, includeSecret = false, includeMirror = true } = {}) {
   const pool = docs
@@ -197,16 +214,22 @@ export function rankByKeywords(docs, query, { k = 5, includeSecret = false, incl
     .filter(d => passesTier(d.fm.visibility, { includeSecret, includeMirror }));
   if (!pool.length) return [];
   const corpus = buildCorpus(pool, { textOf: docText });
+  const supersededMap = buildSupersededMap(docs);
   return pool
-    .map(d => ({
-      id: d.id,
-      title: d.fm.title,
-      type: d.fm.type,
-      score: bm25Score(query, d.id, corpus),
-      file: d.file,
-      body: d.body,
-    }))
-    .filter(r => r.score > 0)
+    .map(d => {
+      const rawScore = bm25Score(query, d.id, corpus);
+      return {
+        id: d.id,
+        title: d.fm.title,
+        type: d.fm.type,
+        score: rawScore * hygieneMultiplier(d, supersededMap),
+        rawScore,
+        file: d.file,
+        body: d.body,
+        label: hygieneLabel(d, supersededMap),
+      };
+    })
+    .filter(r => r.rawScore > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, k);
 }
@@ -234,14 +257,14 @@ export async function recallSearch({
     if (!hasIndex) throw new Error('semantic-режим требует индекс: запусти `okf-recall.mjs index` (нужен OKF_EMBED_URL)');
     if (!embed) throw new Error('semantic-режим требует эндпоинт эмбеддингов (OKF_EMBED_URL)');
     const qv = await embed(query);
-    return { hits: rankByQuery(idx.items, qv, { k, includeSecret, includeMirror }), mode: 'semantic', warning: null };
+    return { hits: rankByQuery(idx.items, qv, { k, includeSecret, includeMirror, docs }), mode: 'semantic', warning: null };
   }
 
   // auto
   if (hasIndex && embed) {
     try {
       const qv = await embed(query);
-      return { hits: rankByQuery(idx.items, qv, { k, includeSecret, includeMirror }), mode: 'semantic', warning: null };
+      return { hits: rankByQuery(idx.items, qv, { k, includeSecret, includeMirror, docs }), mode: 'semantic', warning: null };
     } catch (e) {
       return { hits: bm25(), mode: 'bm25', warning: `semantic недоступен (${e.message}) — BM25 fallback` };
     }
