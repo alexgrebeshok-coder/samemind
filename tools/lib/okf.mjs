@@ -8,15 +8,20 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const ROOT = resolve(process.env.OKF_ROOT || join(HERE, '../..'));
 // Bundle map + docs that live at the root but are not graph concepts.
-export const RESERVED = new Set(['index.md', 'log.md', 'README.md', 'DASHBOARD.md', 'LICENSE.md', 'CHANGELOG.md', 'CONTRIBUTING.md']);
+export const RESERVED = new Set([
+  'index.md', 'log.md', 'README.md', 'DASHBOARD.md', 'LICENSE.md', 'CHANGELOG.md',
+  'CONTRIBUTING.md', 'INSTALL_FOR_AGENTS.md',
+]);
 
 export function walk(dir = ROOT, { includeSecret = false, includeMirror = false } = {}, acc = []) {
   let entries;
   try { entries = readdirSync(dir); } catch { return acc; }
   const rootPrefix = resolve(ROOT) + sep;
   for (const name of entries) {
-    // `.`/`_`-префикс = служебное (генераты, sync-блоки, отчёты); tools/demo/node_modules — не концепты графа
-    if (name.startsWith('.') || name.startsWith('_') || name === 'node_modules' || name === 'tools' || name === 'demo') continue;
+    // `.`/`_`-префикс = служебное (генераты, sync-блоки, отчёты); tools/demo/node_modules — не концепты
+    // графа; docs — package prose (adapters/benchmark/…), not OKF nodes (no frontmatter by design)
+    if (name.startsWith('.') || name.startsWith('_') || name === 'node_modules' || name === 'tools'
+      || name === 'demo' || name === 'docs') continue;
     const full = join(dir, name);
     let st;
     try { st = lstatSync(full); } catch { continue; }
