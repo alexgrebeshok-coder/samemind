@@ -2,8 +2,8 @@
 // samemind.mjs — CLI router for the samemind package.
 //   npx samemind init [dir] [--demo]     scaffold a fresh OKF bundle
 //   npx samemind query <cmd> ...         → tools/okf-query.mjs   (list|type|tag|get|links|validate)
-//   npx samemind recall <cmd> ...        → tools/okf-recall.mjs  (index|"<query>")
-//   npx samemind gde "<query>" ...       → tools/gde.mjs         (semantic + keyword fallback)
+//   npx samemind recall <cmd> ...        → tools/okf-recall.mjs  (index | "<query>" [--mode bm25|semantic|auto])
+//   npx samemind gde "<query>" ...       → tools/gde.mjs         (semantic + BM25 fallback)
 //
 // query/recall/gde are routed with OKF_ROOT defaulted to the caller's cwd, so the tools
 // operate on the user's own bundle rather than on samemind's own repo checkout.
@@ -27,8 +27,8 @@ function usage() {
   console.log('Команды:');
   console.log('  init [dir] [--demo]   создать bundle с нуля (только в пустой папке; --demo — с демо-контентом)');
   console.log('  query <cmd> ...       структурные запросы: list | type <T> | tag <t> | get <id> | links | validate');
-  console.log('  recall <cmd> ...      семантический поиск: index | "<запрос>" [-k N]');
-  console.log('  gde "<запрос>" ...    человекочитаемый поиск (semantic + keyword fallback)');
+  console.log('  recall <cmd> ...      поиск: index | "<запрос>" [-k N] [--mode bm25|semantic|auto] (дефолт auto: BM25 без эндпоинта)');
+  console.log('  gde "<запрос>" ...    человекочитаемый поиск (semantic + BM25 fallback)');
 }
 
 export function main(argv = process.argv.slice(2)) {
