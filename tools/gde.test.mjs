@@ -20,9 +20,9 @@ import { ROOT } from './lib/okf.mjs';
 function mockEmbed(text) {
   const t = text.toLowerCase();
   return [
-    (t.match(/park|industrial|индустриальн/g) || []).length,
+    (t.match(/park|industrial/g) || []).length,
     (t.match(/quartz|mine|mineral/g) || []).length,
-    (t.match(/secret|секрет/g) || []).length,
+    (t.match(/secret/g) || []).length,
   ].map(n => n + 0.01);
 }
 
@@ -120,7 +120,7 @@ describe('gde — stale index', () => {
     const docs = fixtureDocs();
     const r = checkIndexStale({ items: {} }, docs, { idxPath: '/nonexistent/embeddings.json' });
     assert.equal(r.stale, true);
-    assert.match(r.reasons[0], /отсутствует/);
+    assert.match(r.reasons[0], /missing/);
   });
 
   it('checkIndexStale: hash mismatch in sample', () => {
@@ -134,7 +134,7 @@ describe('gde — stale index', () => {
       const idx = { items: { 'projects/industrial-park': { hash: 'deadbeef00000000' } } };
       const r = checkIndexStale(idx, docs, { idxPath, maxAgeMs: 999_999_999, sampleSize: 1 });
       assert.equal(r.stale, true);
-      assert.ok(r.reasons.some(x => x.includes('изменились')));
+      assert.ok(r.reasons.some(x => x.includes('changed')));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

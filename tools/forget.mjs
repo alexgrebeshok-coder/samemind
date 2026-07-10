@@ -21,7 +21,7 @@ import { atomicWriteFileSync } from '../lib/atomic-write.mjs';
  */
 export function setDeprecated(raw, timestamp) {
   const m = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
-  if (!m) throw new Error('forget: файл без frontmatter — нечего помечать');
+  if (!m) throw new Error('forget: file has no frontmatter — nothing to mark');
   const [, fmBlock, rest] = m;
   const lines = fmBlock.split('\n');
   const out = [];
@@ -53,10 +53,10 @@ export function forget(id, { includeSecret = false, includeMirror = false, docs,
   const all = (docs || load({ includeSecret, includeMirror })).filter(d => !d.reserved);
   const hits = findById(all, id);
   if (!hits.length) {
-    throw new Error(`не найдено: ${id}`);
+    throw new Error(`not found: ${id}`);
   }
   if (hits.length > 1) {
-    throw new Error(`неоднозначно: ${hits.length} совпадений для «${id}»:\n${hits.map(d => d.id).join('\n')}`);
+    throw new Error(`ambiguous: ${hits.length} matches for "${id}":\n${hits.map(d => d.id).join('\n')}`);
   }
   const doc = hits[0];
   const raw = readFileSync(doc.file, 'utf8');
@@ -80,7 +80,7 @@ async function main() {
     const already = r.alreadyDeprecated ? ' (was already deprecated — timestamp refreshed)' : '';
     console.log(`forgotten: ${r.id}${already}\n  deprecated_on: ${r.deprecatedOn}\n  file kept, not deleted: ${r.file}`);
   } catch (e) {
-    console.error('Ошибка:', e.message);
+    console.error('Error:', e.message);
     process.exit(1);
   }
 }

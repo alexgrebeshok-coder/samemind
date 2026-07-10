@@ -97,7 +97,7 @@ export function validateOkfFile(file, sourceRoot) {
 /** Insert or replace `source:` in an existing frontmatter block (minimal text edit). */
 export function setSourceField(raw, sourceValue) {
   const m = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
-  if (!m) throw new Error('import: файл без frontmatter');
+  if (!m) throw new Error('import: file has no frontmatter');
   const [, fmBlock, rest] = m;
   const lines = fmBlock.split('\n');
   const out = [];
@@ -132,7 +132,7 @@ export function formatInboxBlocks(concepts, { date, sourceLabel }) {
     '',
     `# Import ${date}`,
     '',
-    `Источник bundle: \`${sourceLabel}\`. Каждый блок — кандидат на курирование (не канон).`,
+    `Source bundle: \`${sourceLabel}\`. Each block is a curation candidate (not canon).`,
     '',
   ].join('\n');
 
@@ -168,7 +168,7 @@ export function runImport({
   if (!sourceDir) {
     return {
       ok: false,
-      reason: 'нужен source-dir: samemind import <dir> [--into inbox|concepts]',
+      reason: 'source-dir required: samemind import <dir> [--into inbox|concepts]',
       imported: [],
       refused: [],
       nonConformant: [],
@@ -178,7 +178,7 @@ export function runImport({
   if (intoKey !== 'inbox' && intoKey !== 'concepts') {
     return {
       ok: false,
-      reason: `--into должен быть inbox|concepts (получено «${into}»)`,
+      reason: `--into must be inbox|concepts (got "${into}")`,
       imported: [],
       refused: [],
       nonConformant: [],
@@ -189,7 +189,7 @@ export function runImport({
   if (!existsSync(src) || !statSync(src).isDirectory()) {
     return {
       ok: false,
-      reason: `источник «${src}» не найден или не папка`,
+      reason: `source "${src}" not found or not a directory`,
       imported: [],
       refused: [],
       nonConformant: [],
@@ -350,8 +350,8 @@ export async function main(argv = process.argv.slice(2)) {
   if (!opts.sourceDir) {
     console.log('Usage: samemind import <source-dir> [--into inbox|concepts]');
     console.log('');
-    console.log('  Принимает чужой OKF-bundle. Дефолт --into inbox (курируемый путь).');
-    console.log('  --into concepts — прямая копия с source: import:<dir>; коллизии → отказ по файлу.');
+    console.log('  Accepts a foreign OKF-bundle. Default --into inbox (curated path).');
+    console.log('  --into concepts — direct copy with source: import:<dir>; collisions → refuse that file.');
     return 0;
   }
   const result = runImport(opts);
@@ -372,7 +372,7 @@ export async function main(argv = process.argv.slice(2)) {
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
   main().catch(e => {
-    console.error('Ошибка:', e.message);
+    console.error('Error:', e.message);
     process.exit(1);
   }).then(code => {
     if (typeof code === 'number') process.exit(code);

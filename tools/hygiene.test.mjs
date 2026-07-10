@@ -403,7 +403,7 @@ describe('forget() — pure function', () => {
 
   it('missing id throws (never silently deprecates the wrong thing)', () => {
     const docs = [{ id: 'concepts/old', file, reserved: false }];
-    assert.throws(() => forget('concepts/does-not-exist', { docs }), /не найдено/);
+    assert.throws(() => forget('concepts/does-not-exist', { docs }), /not found/);
   });
 
   it('ambiguous id throws (same contract as okf-query get)', () => {
@@ -414,7 +414,7 @@ describe('forget() — pure function', () => {
       { id: 'concepts/old', file, reserved: false },
       { id: 'concepts/nested/old', file: otherFile, reserved: false },
     ];
-    assert.throws(() => forget('old', { docs }), /неоднозначно/);
+    assert.throws(() => forget('old', { docs }), /ambiguous/);
   });
 });
 
@@ -472,13 +472,13 @@ describe('forget CLI — end to end (subprocess)', () => {
   it('missing id → non-zero exit, no crash, no file written', () => {
     const { code, out } = runForgetCli(root, ['concepts/nope']);
     assert.notEqual(code, 0);
-    assert.match(out, /не найдено/);
+    assert.match(out, /not found/);
   });
 
   it('ambiguous id → refuses, lists candidates (same as get)', () => {
     const { code, out } = runForgetCli(root, ['dup']);
     assert.notEqual(code, 0);
-    assert.match(out, /неоднозначно/);
+    assert.match(out, /ambiguous/);
     assert.match(out, /concepts\/dup/);
     assert.match(out, /concepts\/nested\/dup/);
   });
@@ -497,9 +497,9 @@ describe('validate — supersede chains and warnings (subprocess)', () => {
       const { code, out } = runQuery(root, ['validate']);
       assert.equal(code, 0, out);
       assert.match(out, /✅ OKF/);
-      assert.match(out, /Цепочки supersede/);
+      assert.match(out, /Supersede chains/);
       assert.match(out, /concepts\/new supersedes concepts\/old/);
-      assert.ok(!/Проблемы supersede/.test(out), out);
+      assert.ok(!/Supersede issues/.test(out), out);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -512,8 +512,8 @@ describe('validate — supersede chains and warnings (subprocess)', () => {
       const { code, out } = runQuery(root, ['validate']);
       assert.equal(code, 0, out);
       assert.match(out, /✅ OKF/);
-      assert.match(out, /Проблемы supersede/);
-      assert.match(out, /цель не найдена/);
+      assert.match(out, /Supersede issues/);
+      assert.match(out, /target not found/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -526,8 +526,8 @@ describe('validate — supersede chains and warnings (subprocess)', () => {
       writeConcept(root, 'concepts/b.md', { type: 'Concept', title: 'B', supersedes: '/concepts/a.md' });
       const { code, out } = runQuery(root, ['validate']);
       assert.equal(code, 0, out);
-      assert.match(out, /Проблемы supersede/);
-      assert.match(out, /цикл supersedes/);
+      assert.match(out, /Supersede issues/);
+      assert.match(out, /supersedes cycle/);
       assert.match(out, /concepts\/a/);
       assert.match(out, /concepts\/b/);
     } finally {

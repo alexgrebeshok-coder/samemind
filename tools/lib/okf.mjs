@@ -250,15 +250,15 @@ export function disciplineChecks(docs) {
     if (!dict) continue;                       // type carries no status lifecycle
     const status = String(d.fm?.status || '').trim();
     if (!status) {
-      warns.push(`${d.id}: ${typeRaw} без 'status'`);
+      warns.push(`${d.id}: ${typeRaw} missing 'status'`);
       continue;                                // missing ≠ outside dictionary
     }
     if (!dict.includes(status.toLowerCase())) {
-      warns.push(`${d.id}: ${typeRaw} 'status' вне словаря (${dict.join('|')}): «${status}»`);
+      warns.push(`${d.id}: ${typeRaw} 'status' outside dictionary (${dict.join('|')}): "${status}"`);
     }
     if (typeRaw.toLowerCase() === 'task' && status.toLowerCase() === 'blocked') {
       const reason = String(d.fm?.blocked_reason || '').trim();
-      if (!reason) warns.push(`${d.id}: Task 'blocked' без 'blocked_reason'`);
+      if (!reason) warns.push(`${d.id}: Task 'blocked' missing 'blocked_reason'`);
     }
   }
   return warns;

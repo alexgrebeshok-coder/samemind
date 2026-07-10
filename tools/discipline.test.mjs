@@ -61,21 +61,21 @@ describe('disciplineChecks — unit (pure function)', () => {
   it('Plan without status → warns', () => {
     const w = okf.disciplineChecks([doc('projects/p', { type: 'Plan', title: 'P' })]);
     assert.equal(w.length, 1);
-    assert.match(w[0], /projects\/p: Plan без 'status'/);
+    assert.match(w[0], /projects\/p: Plan missing 'status'/);
   });
 
   it('Task without status → warns', () => {
     const w = okf.disciplineChecks([doc('projects/t', { type: 'Task', title: 'T' })]);
     assert.equal(w.length, 1);
-    assert.match(w[0], /projects\/t: Task без 'status'/);
+    assert.match(w[0], /projects\/t: Task missing 'status'/);
   });
 
   it('status outside the type dictionary → warns (Plan)', () => {
     const w = okf.disciplineChecks([doc('projects/p', { type: 'Plan', status: 'approved' })]);
     assert.equal(w.length, 1);
-    assert.match(w[0], /вне словаря/);
+    assert.match(w[0], /outside dictionary/);
     assert.match(w[0], /draft\|agreed\|in-progress\|done\|superseded/);
-    assert.match(w[0], /«approved»/);
+    assert.match(w[0], /"approved"/);
   });
 
   it('status outside the Task dictionary → warns', () => {
@@ -87,7 +87,7 @@ describe('disciplineChecks — unit (pure function)', () => {
   it('Task blocked without blocked_reason → warns', () => {
     const w = okf.disciplineChecks([doc('projects/t', { type: 'Task', status: 'blocked' })]);
     assert.equal(w.length, 1);
-    assert.match(w[0], /projects\/t: Task 'blocked' без 'blocked_reason'/);
+    assert.match(w[0], /projects\/t: Task 'blocked' missing 'blocked_reason'/);
   });
 
   it('Task blocked WITH blocked_reason → clean', () => {
@@ -140,7 +140,7 @@ describe('disciplineChecks — unit (pure function)', () => {
     assert.deepEqual(w1, []);
     // but missing status on a lowercase-typed task still warns, showing the original casing
     const w2 = okf.disciplineChecks([doc('projects/t', { type: 'plan' })]);
-    assert.match(w2[0], /projects\/t: plan без 'status'/);
+    assert.match(w2[0], /projects\/t: plan missing 'status'/);
   });
 
   it('STATUS_DICTIONARIES is frozen and has Plan + Task only', () => {
@@ -159,15 +159,15 @@ describe('validate — discipline warnings (integration)', () => {
     const { code, out } = runQuery(root, ['validate']);
     assert.equal(code, 0, out);
     assert.match(out, /✅ OKF/);
-    assert.match(out, /⚠️ Дисциплина работы \(1\)/);
-    assert.match(out, /projects\/p: Plan без 'status'/);
+    assert.match(out, /⚠️ Work discipline \(1\)/);
+    assert.match(out, /projects\/p: Plan missing 'status'/);
   });
 
   it('Task blocked without reason → warning block', () => {
     writeNode(root, 'projects/t.md', { type: 'Task', title: 'T', status: 'blocked', visibility: 'internal' });
     const { code, out } = runQuery(root, ['validate']);
     assert.equal(code, 0, out);
-    assert.match(out, /Task 'blocked' без 'blocked_reason'/);
+    assert.match(out, /Task 'blocked' missing 'blocked_reason'/);
   });
 
   it('clean discipline nodes → no discipline block at all', () => {
@@ -180,7 +180,7 @@ describe('validate — discipline warnings (integration)', () => {
       const { code, out } = runQuery(clean, ['validate']);
       assert.equal(code, 0, out);
       assert.match(out, /✅ OKF/);
-      assert.ok(!out.includes('Дисциплина работы'), out);
+      assert.ok(!out.includes('Work discipline'), out);
     } finally {
       rmSync(clean, { recursive: true, force: true });
     }
@@ -218,7 +218,7 @@ describe('init — work-discipline templates', () => {
       const { code, out } = runQuery(dir, ['validate']);
       assert.equal(code, 0, out);
       assert.match(out, /✅ OKF/);
-      assert.ok(!out.includes('Дисциплина работы'), out);
+      assert.ok(!out.includes('Work discipline'), out);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -256,7 +256,7 @@ describe('demo — live discipline samples', () => {
     const { code, out } = runQuery(DEMO, ['validate']);
     assert.equal(code, 0, out);
     assert.match(out, /✅/);
-    assert.ok(!out.includes('⚠️ Битые relations'), out);
-    assert.ok(!out.includes('Дисциплина работы'), out);
+    assert.ok(!out.includes('⚠️ Broken relations'), out);
+    assert.ok(!out.includes('Work discipline'), out);
   });
 });

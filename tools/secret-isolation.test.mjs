@@ -171,10 +171,10 @@ describe('secret isolation perimeter (N7)', () => {
     assertNoSecretLeak('query list', list.combined);
     assert.match(list.stdout, /projects\/lumen/, 'list should still show public demo concepts');
 
-    // query get by secret id — may echo the requested id in "не найдено", never the body
+    // query get by secret id — may echo the requested id in "not found", never the body
     const get = runCli('tools/okf-query.mjs', ['get', SECRET_ID]);
     assertNoSecretLeak('query get secret id', get.combined, { allowRequestedId: true });
-    assert.match(get.stdout, /не найдено|not found/i);
+    assert.match(get.stdout, /not found/i);
     assert.ok(!get.stdout.includes(SECRET_MARKER));
 
     // --- 2. recall bm25 (query baits the secret title/body words) ---

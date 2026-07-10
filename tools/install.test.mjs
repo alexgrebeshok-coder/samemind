@@ -333,7 +333,7 @@ describe('samemind install — CLI (demo bundle)', () => {
         env: { ...process.env, OKF_ROOT: bundle },
         encoding: 'utf8',
       });
-      assert.match(out, /Ни один инструкционный файл/);
+      assert.match(out, /No engine instruction file/);
     } finally {
       rmSync(bundle, { recursive: true, force: true });
       rmSync(target, { recursive: true, force: true });

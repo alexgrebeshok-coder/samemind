@@ -87,7 +87,7 @@ describe('runInit — scaffold', () => {
       const result = runInit({ targetDir: dir });
 
       assert.equal(result.ok, false);
-      assert.match(result.reason, /не пуста/);
+      assert.match(result.reason, /not empty/);
       // nothing was created or modified
       const after = readdirSync(dir).sort();
       assert.deepEqual(after, before);
@@ -162,7 +162,7 @@ describe('runInit — scaffold', () => {
 describe('bin/samemind.mjs — CLI router', () => {
   it('with no args prints usage and exits 0', () => {
     const res = execFileSync(process.execPath, [BIN], { encoding: 'utf8' });
-    assert.match(res, /Команды:/);
+    assert.match(res, /Commands:/);
   });
 
   it('unknown subcommand exits 1', () => {
@@ -175,7 +175,7 @@ describe('bin/samemind.mjs — CLI router', () => {
     const dir = tmp('bin-init');
     try {
       const out = execFileSync(process.execPath, [BIN, 'init', dir], { encoding: 'utf8' });
-      assert.match(out, /bundle создан/);
+      assert.match(out, /bundle created/);
       assert.ok(existsSync(join(dir, 'index.md')));
       assert.ok(existsSync(join(dir, 'concepts', '_template.md')));
     } finally {
@@ -187,7 +187,7 @@ describe('bin/samemind.mjs — CLI router', () => {
     const dir = tmp('bin-init-demo');
     try {
       const out = execFileSync(process.execPath, [BIN, 'init', dir, '--demo'], { encoding: 'utf8' });
-      assert.match(out, /демо-концептов/);
+      assert.match(out, /demo concepts/);
       assert.ok(existsSync(join(dir, 'concepts', 'nova.md')));
     } finally {
       rmSync(dir, { recursive: true, force: true });

@@ -33,7 +33,7 @@ function buildMirrorEntry({ name, description = '', body = '' }) {
 describe('P0-1 path traversal', () => {
   it('assertSafeBasename rejects ../ and separators', () => {
     for (const bad of ['../../projects/other', 'foo/bar', '..', 'a/../b', '/etc/passwd']) {
-      assert.throws(() => assertSafeBasename(bad), /небезопасный|path traversal/i);
+      assert.throws(() => assertSafeBasename(bad), /unsafe path|path traversal/i);
     }
   });
 
@@ -42,7 +42,7 @@ describe('P0-1 path traversal', () => {
     try {
       assert.throws(
         () => safeMdPath(base, '../../outside'),
-        /небезопасный|path traversal/i,
+        /unsafe path|path traversal/i,
       );
       const ok = safeMdPath(base, 'valid-name');
       assert.ok(ok.startsWith(base));
@@ -60,7 +60,7 @@ describe('P0-1 path traversal', () => {
           sourceMarker: 'test',
           entries: [{ name: '../../evil', content: '---\nsource: test\n---\n' }],
         }),
-        /небезопасный|path traversal/i,
+        /unsafe path|path traversal/i,
       );
     } finally {
       rmSync(out, { recursive: true, force: true });

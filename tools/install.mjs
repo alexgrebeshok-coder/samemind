@@ -157,7 +157,7 @@ function fileOwnerMap() {
 export function installEngine(engineId, { targetDir = '.', docs, budgetTokens } = {}) {
   const meta = ENGINE_FILES[engineId];
   if (!meta) {
-    return { ok: false, reason: `неизвестный движок «${engineId}» — список поддерживаемых: samemind install --list` };
+    return { ok: false, reason: `unknown engine "${engineId}" — list of supported ones: samemind install --list` };
   }
   const dir = resolve(targetDir);
   const { block, warnings } = buildInstallBlock(docs, engineId, { budgetTokens });
@@ -208,16 +208,16 @@ function parseArgs(argv) {
 }
 
 function printList() {
-  console.log('Поддерживаемые движки (samemind install --agent <id>):');
+  console.log('Supported engines (samemind install --agent <id>):');
   for (const [id, meta] of Object.entries(ENGINE_FILES)) {
     console.log(`  ${id.padEnd(13)} ${meta.label} — ${meta.files.join(', ')}`);
   }
   console.log('');
-  console.log('  all           установить во все инструкционные файлы, уже существующие в --target');
+  console.log('  all           install into every instruction file already existing under --target');
   console.log('');
-  console.log('Без MCP: aider — см. docs/adapters.md (CONVENTIONS.md через --read, не авто-загрузка).');
+  console.log('Without MCP: aider — see docs/adapters.md (CONVENTIONS.md via --read, no auto-load).');
   console.log('');
-  console.log('Флаги: --target <dir> (по умолчанию cwd) · --budget <n> (identity-бриф, токены).');
+  console.log('Flags: --target <dir> (default cwd) · --budget <n> (identity brief, tokens).');
 }
 
 async function main() {
@@ -235,12 +235,12 @@ async function main() {
   if (agent === 'all') {
     const results = installAll({ targetDir, docs, budgetTokens: budget });
     if (!results.length) {
-      console.log(`Ни один инструкционный файл движков не найден в ${targetDir} — ничего не тронуто.`);
-      console.log('Установи явно: samemind install --agent <id> (samemind install --list — список).');
+      console.log(`No engine instruction file found in ${targetDir} — nothing touched.`);
+      console.log('Install explicitly: samemind install --agent <id> (samemind install --list for the list).');
       return;
     }
     for (const r of results) {
-      const verb = r.replaced ? 'обновлён' : r.created ? 'создан' : 'дополнен';
+      const verb = r.replaced ? 'updated' : r.created ? 'created' : 'appended';
       console.log(`✓ ${(r.engineId || 'shared').padEnd(13)} ${verb} ${r.path}`);
     }
     return;
@@ -252,9 +252,9 @@ async function main() {
     process.exit(1);
   }
   for (const w of res.warnings || []) console.error(`⚠ ${w}`);
-  console.log(`✓ ${res.label} (${res.id}) в ${targetDir}:`);
+  console.log(`✓ ${res.label} (${res.id}) in ${targetDir}:`);
   for (const f of res.files) {
-    const verb = f.replaced ? 'обновлён' : f.created ? 'создан' : 'дополнен';
+    const verb = f.replaced ? 'updated' : f.created ? 'created' : 'appended';
     console.log(`  ${verb} ${f.path}`);
   }
 }
@@ -262,7 +262,7 @@ async function main() {
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
   main().catch(e => {
-    console.error('Ошибка:', e.message);
+    console.error('Error:', e.message);
     process.exit(1);
   });
 }

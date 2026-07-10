@@ -113,7 +113,7 @@ function renderTask(d, nowMs) {
     if (reason) lines.push(`  - ⛔ ${reason}`);
     const age = ageDays(d, nowMs);
     if (Number.isFinite(age) && age >= 0) {
-      lines.push(`  - ⏳ ${age}д${age >= AGING_THRESHOLD_DAYS ? ' (aging)' : ''}`);
+      lines.push(`  - ⏳ ${age}d${age >= AGING_THRESHOLD_DAYS ? ' (aging)' : ''}`);
     }
   }
   return lines.join('\n');
@@ -133,10 +133,10 @@ function renderSession(d) {
   return `- [${titleOf(d)}](${linkOf(d)})${date ? ` · ${date}` : ''} — ${oneline(d)}`;
 }
 
-/** Append a `## heading (n)` section with items; `_(пусто)_` when empty. */
+/** Append a `## heading (n)` section with items; `_(empty)_` when empty. */
 function section(L, heading, items, render, nowMs) {
   L.push(`## ${heading} (${items.length})`, '');
-  if (!items.length) { L.push('_(пусто)_'); }
+  if (!items.length) { L.push('_(empty)_'); }
   else { for (const it of items) L.push(render(it, nowMs)); }
   L.push('');
 }
@@ -176,9 +176,9 @@ export function buildBoard(docs, {
 
   const L = [];
   L.push('# Dashboard', '');
-  L.push('> Канбан памяти: что в работе, что готово, где застряло. Обновить: `samemind board --write`.');
+  L.push('> Memory kanban: what\'s in progress, what\'s done, what\'s stuck. Refresh: `samemind board --write`.');
   if (project) {
-    L.push('', `> Фильтр задач: проект \`${normProj(project)}\` (Plans / Recent / Sessions — по всему bundle).`);
+    L.push('', `> Task filter: project \`${normProj(project)}\` (Plans / Recent / Sessions — bundle-wide).`);
   }
   L.push('');
 
@@ -192,15 +192,15 @@ export function buildBoard(docs, {
   if (recent.length) {
     for (const d of recent) L.push(renderRecent(d));
   } else {
-    L.push(`_(ничего за последние ${recentDays}д)_`);
+    L.push(`_(nothing in the last ${recentDays}d)_`);
   }
   L.push('');
 
-  L.push(`### Последние сессии (${sessions.length})`, '');
+  L.push(`### Recent sessions (${sessions.length})`, '');
   if (sessions.length) {
     for (const d of sessions) L.push(renderSession(d));
   } else {
-    L.push('_(сессий нет)_');
+    L.push('_(no sessions)_');
   }
   L.push('');
 
@@ -230,8 +230,8 @@ export async function main(argv = process.argv.slice(2)) {
   if (write) {
     const target = boardPath(ROOT);
     atomicWriteFileSync(target, md);
-    console.log(`✓ борд записан: ${target}`);
-    console.log('  DASHBOARD.md коммитится в git (фича, не в .gitignore).');
+    console.log(`✓ board written: ${target}`);
+    console.log('  DASHBOARD.md is committed to git (a feature, not gitignored).');
   } else {
     console.log(md);
   }
@@ -240,7 +240,7 @@ export async function main(argv = process.argv.slice(2)) {
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
   main().catch(e => {
-    console.error('Ошибка:', e.message);
+    console.error('Error:', e.message);
     process.exit(1);
   });
 }
