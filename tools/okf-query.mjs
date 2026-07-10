@@ -25,7 +25,7 @@ function formatRow(d) {
 function resolveDoc(q) {
   const hits = findById(all, q);
   if (hits.length > 1) {
-    console.error(`неоднозначно: ${hits.length} совпадений для «${q}»:\n` + hits.map(d => d.id).join('\n'));
+    console.error(`ambiguous: ${hits.length} matches for "${q}":\n` + hits.map(d => d.id).join('\n'));
     process.exit(1);
   }
   return hits[0] || null;
@@ -34,22 +34,22 @@ function resolveDoc(q) {
 if (cmd === 'list') {
   const rows = cs.map(d =>
     `${(d.fm.type || '∅').padEnd(10)} ${(d.fm.visibility || '?').padEnd(9)} ${d.id}  — ${d.fm.title || ''}`);
-  console.log(`# ${rows.length} концептов${includeSecret ? ' (вкл. secret)' : ''}\n` + rows.sort().join('\n'));
+  console.log(`# ${rows.length} concepts${includeSecret ? ' (incl. secret)' : ''}\n` + rows.sort().join('\n'));
 
 } else if (cmd === 'type') {
   const t = (args[1] || '').toLowerCase();
   console.log(cs.filter(d => (d.fm.type || '').toLowerCase() === t)
-    .map(d => `${d.id} — ${d.fm.title || ''}`).join('\n') || `нет концептов type=${args[1]}`);
+    .map(d => `${d.id} — ${d.fm.title || ''}`).join('\n') || `no concepts with type=${args[1]}`);
 
 } else if (cmd === 'tag') {
   const t = (args[1] || '').toLowerCase();
   console.log(cs.filter(d => (d.fm.tags || []).map(x => x.toLowerCase()).includes(t))
-    .map(d => `${d.id} — ${d.fm.title || ''}`).join('\n') || `нет концептов с тегом ${args[1]}`);
+    .map(d => `${d.id} — ${d.fm.title || ''}`).join('\n') || `no concepts with tag ${args[1]}`);
 
 } else if (cmd === 'get') {
   const hit = resolveDoc(args[1]);
   if (!hit) {
-    console.log(`не найдено: ${args[1]}`);
+    console.log(`not found: ${args[1]}`);
   } else {
     const supersededMap = buildSupersededMap(cs);
     const banner = hygieneBanner(hit, supersededMap);
@@ -61,13 +61,13 @@ if (cmd === 'list') {
   const edgeType = args[1];
   const idArg = args.filter((a, i) => i >= 2 && !a.startsWith('--'))[0];
   if (!edgeType || !idArg) {
-    console.log('Использование: okf-query rel <тип> <id> [--inbound]\n'
-      + '  Прямые рёбра (from → to) и секция «Входящие» (кто ссылается на id этим типом).');
+    console.log('Usage: okf-query rel <type> <id> [--inbound]\n'
+      + '  Outbound edges (from → to) and an "Inbound" section (who references id with this type).');
     process.exit(1);
   }
   const hit = resolveDoc(idArg);
   if (!hit) {
-    console.log(`не найдено: ${idArg}`);
+    console.log(`not found: ${idArg}`);
     process.exit(1);
   }
   const targetId = hit.id;
@@ -78,7 +78,7 @@ if (cmd === 'list') {
   const outRows = outPaths.map(p => {
     const tid = pathToId(p);
     const doc = byId.get(tid) || findById(all, tid)[0];
-    return doc ? formatRow(doc) : `${tid}  — (нет узла: ${p})`;
+    return doc ? formatRow(doc) : `${tid}  — (no node: ${p})`;
   });
 
   // inbound: any node with relations[type] pointing at this id
@@ -95,13 +95,13 @@ if (cmd === 'list') {
   }
 
   if (inboundOnly) {
-    console.log(`# Входящие ${edgeType} → ${targetId} (${inRows.length})\n`
-      + (inRows.length ? inRows.sort().join('\n') : '— нет'));
+    console.log(`# Inbound ${edgeType} → ${targetId} (${inRows.length})\n`
+      + (inRows.length ? inRows.sort().join('\n') : '— none'));
   } else {
     console.log(`# ${edgeType} from ${targetId} (${outRows.length})\n`
-      + (outRows.length ? outRows.join('\n') : '— нет'));
-    console.log(`\n# Входящие ${edgeType} → ${targetId} (${inRows.length})\n`
-      + (inRows.length ? inRows.sort().join('\n') : '— нет'));
+      + (outRows.length ? outRows.join('\n') : '— none'));
+    console.log(`\n# Inbound ${edgeType} → ${targetId} (${inRows.length})\n`
+      + (inRows.length ? inRows.sort().join('\n') : '— none'));
   }
 
 } else if (cmd === 'links') {
@@ -111,8 +111,8 @@ if (cmd === 'list') {
   for (const d of all) for (const l of d.links) {
     mdEdges++;
     const tgt = resolveLink(d.file, l);
-    if (!tgt) { broken.push(`${d.id} → ${l} (вне bundle)`); continue; }
-    if (!existsSync(tgt)) broken.push(`${d.id} → ${l} (битая)`);
+    if (!tgt) { broken.push(`${d.id} → ${l} (outside bundle)`); continue; }
+    if (!existsSync(tgt)) broken.push(`${d.id} → ${l} (broken)`);
     else {
       const tid = relative(ROOT, tgt).replace(/\.md$/, '');
       inbound.set(tid, (inbound.get(tid) || 0) + 1);
@@ -123,8 +123,8 @@ if (cmd === 'list') {
   let relCount = 0;
   for (const e of relEdges) {
     relCount++;
-    if (!e.resolved) { broken.push(`${e.fromId} [${e.type}] → ${e.toPath} (вне bundle)`); continue; }
-    if (!e.exists) broken.push(`${e.fromId} [${e.type}] → ${e.toPath} (битая)`);
+    if (!e.resolved) { broken.push(`${e.fromId} [${e.type}] → ${e.toPath} (outside bundle)`); continue; }
+    if (!e.exists) broken.push(`${e.fromId} [${e.type}] → ${e.toPath} (broken)`);
     else inbound.set(e.toId, (inbound.get(e.toId) || 0) + 1);
   }
   // supersedes edges too — an old, superseded concept is still connected to the graph, not an orphan
@@ -132,30 +132,30 @@ if (cmd === 'list') {
   let supersedeCount = 0;
   for (const e of supersedeEdges) {
     supersedeCount++;
-    if (!e.resolved) { broken.push(`${e.fromId} [supersedes] → ${e.toPath} (вне bundle)`); continue; }
-    if (!e.exists) broken.push(`${e.fromId} [supersedes] → ${e.toPath} (битая)`);
+    if (!e.resolved) { broken.push(`${e.fromId} [supersedes] → ${e.toPath} (outside bundle)`); continue; }
+    if (!e.exists) broken.push(`${e.fromId} [supersedes] → ${e.toPath} (broken)`);
     else inbound.set(e.toId, (inbound.get(e.toId) || 0) + 1);
   }
   const orphans = cs.filter(d => !inbound.get(d.id)).map(d => d.id);
   const totalEdges = mdEdges + relCount + supersedeCount;
-  console.log('# Граф ссылок');
-  console.log(`Концептов: ${cs.length}, рёбер: ${totalEdges} (md: ${mdEdges}, relations: ${relCount}, supersedes: ${supersedeCount})`);
-  console.log('\nСироты (нет входящих ссылок):\n' + (orphans.length ? orphans.join('\n') : '— нет'));
-  console.log('\nБитые ссылки:\n' + (broken.length ? broken.join('\n') : '— нет'));
+  console.log('# Link graph');
+  console.log(`Concepts: ${cs.length}, edges: ${totalEdges} (md: ${mdEdges}, relations: ${relCount}, supersedes: ${supersedeCount})`);
+  console.log('\nOrphans (no inbound links):\n' + (orphans.length ? orphans.join('\n') : '— none'));
+  console.log('\nBroken links:\n' + (broken.length ? broken.join('\n') : '— none'));
 
 } else if (cmd === 'validate') {
   const errs = [];
   for (const d of cs) {
-    if (!d.hasFM) errs.push(`${d.id}: нет frontmatter`);
-    else if (!d.fm.type) errs.push(`${d.id}: пустой/отсутствует обязательный 'type'`);
+    if (!d.hasFM) errs.push(`${d.id}: no frontmatter`);
+    else if (!d.fm.type) errs.push(`${d.id}: empty/missing required 'type'`);
   }
   // broken relation edges → warnings (not hard fail)
   const relWarns = [];
   for (const e of collectRelationEdges(cs)) {
     if (!e.resolved) {
-      relWarns.push(`${e.fromId} [${e.type}] → ${e.toPath} (вне bundle)`);
+      relWarns.push(`${e.fromId} [${e.type}] → ${e.toPath} (outside bundle)`);
     } else if (!e.exists) {
-      relWarns.push(`${e.fromId} [${e.type}] → ${e.toPath} (путь не существует)`);
+      relWarns.push(`${e.fromId} [${e.type}] → ${e.toPath} (path does not exist)`);
     }
   }
   // work-discipline status checks → warnings (Plan/Task only); see docs/work-discipline.md
@@ -164,32 +164,32 @@ if (cmd === 'list') {
   // same severity as broken relations above (see docs/memory-hygiene.md).
   const supersedeEdges = collectSupersedeEdges(cs);
   const supersedeChains = supersedeEdges.map(e =>
-    `${e.fromId} supersedes ${e.toId}${e.exists ? '' : ' (цель не найдена)'}`);
+    `${e.fromId} supersedes ${e.toId}${e.exists ? '' : ' (target not found)'}`);
   const supersedeWarns = supersedeEdges.filter(e => !e.exists)
-    .map(e => `${e.fromId} supersedes ${e.toId} — цель не найдена`);
+    .map(e => `${e.fromId} supersedes ${e.toId} — target not found`);
   for (const cycle of detectSupersedeCycles(cs)) {
-    supersedeWarns.push(`цикл supersedes: ${cycle.join(' → ')}`);
+    supersedeWarns.push(`supersedes cycle: ${cycle.join(' → ')}`);
   }
   if (errs.length) {
-    console.log('❌ НЕ conformant:\n' + errs.join('\n'));
-    if (relWarns.length) console.log('\n⚠️ Битые relations:\n' + relWarns.join('\n'));
-    if (supersedeWarns.length) console.log('\n⚠️ Проблемы supersede:\n' + supersedeWarns.join('\n'));
+    console.log('❌ NOT conformant:\n' + errs.join('\n'));
+    if (relWarns.length) console.log('\n⚠️ Broken relations:\n' + relWarns.join('\n'));
+    if (supersedeWarns.length) console.log('\n⚠️ Supersede issues:\n' + supersedeWarns.join('\n'));
     process.exit(1);
   }
-  console.log(`✅ OKF v0.1 conformant: ${cs.length} концептов, у всех непустой type.`);
+  console.log(`✅ OKF v0.1 conformant: ${cs.length} concepts, all have a non-empty type.`);
   if (relWarns.length) {
-    console.log(`⚠️ Битые relations (${relWarns.length}):\n` + relWarns.join('\n'));
+    console.log(`⚠️ Broken relations (${relWarns.length}):\n` + relWarns.join('\n'));
   }
   if (disciplineWarns.length) {
-    console.log(`⚠️ Дисциплина работы (${disciplineWarns.length}):\n` + disciplineWarns.join('\n'));
+    console.log(`⚠️ Work discipline (${disciplineWarns.length}):\n` + disciplineWarns.join('\n'));
   }
   if (supersedeChains.length) {
-    console.log(`\n# Цепочки supersede (${supersedeChains.length}):\n` + supersedeChains.join('\n'));
+    console.log(`\n# Supersede chains (${supersedeChains.length}):\n` + supersedeChains.join('\n'));
   }
   if (supersedeWarns.length) {
-    console.log(`\n⚠️ Проблемы supersede (${supersedeWarns.length}):\n` + supersedeWarns.join('\n'));
+    console.log(`\n⚠️ Supersede issues (${supersedeWarns.length}):\n` + supersedeWarns.join('\n'));
   }
 
 } else {
-  console.log('Команды: list | type <T> | tag <t> | get <id> | links | rel <type> <id> [--inbound] | validate   [--include-secret]');
+  console.log('Commands: list | type <T> | tag <t> | get <id> | links | rel <type> <id> [--inbound] | validate   [--include-secret]');
 }

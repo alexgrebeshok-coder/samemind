@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// gde.mjs — «где я писал про X»: человекочитаемый поиск по OKF-bundle.
-//   semantic (если есть индекс и отвечает OKF_EMBED_URL), иначе локальный BM25-фолбэк.
-//   node tools/gde.mjs "где я писал про ..." [-k N] [--secret] [--reindex]
-// mirror включён по умолчанию; secret — только с --secret.
+// gde.mjs — "where did I write about X": human-readable search over an OKF bundle.
+//   semantic (if an index exists and OKF_EMBED_URL answers), otherwise a local BM25 fallback.
+//   node tools/gde.mjs "where did I write about ..." [-k N] [--secret] [--reindex]
+// mirror is included by default; secret — only with --secret.
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,10 +24,10 @@ export function loadIdx() {
   if (!existsSync(IDX)) return { model: MODEL, items: {} };
   try {
     const idx = JSON.parse(readFileSync(IDX, 'utf8'));
-    if (!idx || typeof idx.items !== 'object') throw new Error('неверная схема индекса');
+    if (!idx || typeof idx.items !== 'object') throw new Error('invalid index schema');
     return idx;
   } catch (e) {
-    console.warn(`битый индекс ${IDX} — пересобери: node tools/gde.mjs "…" --reindex (${e.message})`);
+    console.warn(`corrupt index ${IDX} — rebuild it: node tools/gde.mjs "…" --reindex (${e.message})`);
     return { model: MODEL, items: {} };
   }
 }
@@ -60,7 +60,7 @@ export async function buildIndex({ includeSecret, includeMirror }) {
   return stats;
 }
 
-/** Обогащает hit snippet + абсолютный путь. */
+/** Enriches a hit with a snippet + absolute path. */
 export function enrichResults(hits, docById, query) {
   return hits.map(h => {
     const doc = docById.get(h.id);
@@ -77,9 +77,9 @@ export function enrichResults(hits, docById, query) {
 export function formatResults(query, results, { k, mode, staleWarning }) {
   const lines = [];
   if (staleWarning) lines.push(`⚠ ${staleWarning}`);
-  lines.push(`# «${query}» → топ-${k} [${mode}]`);
+  lines.push(`# "${query}" → top-${k} [${mode}]`);
   if (!results.length) {
-    lines.push('(ничего не найдено)');
+    lines.push('(nothing found)');
     return lines.join('\n');
   }
   results.forEach((r, i) => {
@@ -103,13 +103,13 @@ export async function search(query, opts) {
   if (reindex) {
     try {
       const stats = await buildIndex({ includeSecret, includeMirror });
-      console.error(`индекс обновлён: ${stats.built} новых/изменённых, ${stats.reused} без изменений, всего ${stats.total}`);
+      console.error(`index updated: ${stats.built} new/changed, ${stats.reused} unchanged, ${stats.total} total`);
     } catch (e) {
-      console.error(`⚠ reindex не удался (${e.message}) — продолжаю BM25`);
+      console.error(`⚠ reindex failed (${e.message}) — falling back to BM25`);
     }
   } else {
     const { stale, reasons } = checkIndexStale(loadIdx(), docs, { idxPath: IDX });
-    if (stale) staleWarning = `индекс устарел (${reasons.join('; ')}), добавь --reindex`;
+    if (stale) staleWarning = `index is stale (${reasons.join('; ')}), add --reindex`;
   }
 
   // Единый механизм поиска/фолбэка — из lib (разделяется с okf-recall).
@@ -124,8 +124,8 @@ export async function search(query, opts) {
 async function main() {
   const opts = parseArgs();
   if (!opts.query) {
-    console.log('Usage: node tools/gde.mjs "<запрос>" [-k N] [--secret] [--reindex]');
-    console.log('  mirror включён по умолчанию; secret — только с --secret');
+    console.log('Usage: node tools/gde.mjs "<query>" [-k N] [--secret] [--reindex]');
+    console.log('  mirror is included by default; secret — only with --secret');
     process.exit(0);
   }
   const { results, mode, staleWarning } = await search(opts.query, opts);
@@ -135,7 +135,7 @@ async function main() {
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
   main().catch(e => {
-    console.error('Ошибка:', e.message);
+    console.error('Error:', e.message);
     process.exit(1);
   });
 }

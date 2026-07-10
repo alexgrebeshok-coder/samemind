@@ -145,10 +145,10 @@ export async function fetchEmbedding(text, {
   if (!r.ok) throw new Error(`embeddings HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
   const emb = (await r.json())?.data?.[0]?.embedding;
   if (!Array.isArray(emb) || emb.length === 0) {
-    throw new Error(`embedding: ожидался непустой vector, получен ${Array.isArray(emb) ? `length ${emb.length}` : typeof emb}`);
+    throw new Error(`embedding: expected a non-empty vector, got ${Array.isArray(emb) ? `length ${emb.length}` : typeof emb}`);
   }
   if (dim && emb.length !== dim) {
-    throw new Error(`embedding: dim ${emb.length} ≠ ожидаемой ${dim} (переопредели OKF_EMBED_DIM или снимите ограничение)`);
+    throw new Error(`embedding: dim ${emb.length} != expected ${dim} (override OKF_EMBED_DIM or remove the constraint)`);
   }
   return emb;
 }
@@ -254,8 +254,8 @@ export async function recallSearch({
   if (mode === 'bm25') return { hits: bm25(), mode: 'bm25', warning: null };
 
   if (mode === 'semantic') {
-    if (!hasIndex) throw new Error('semantic-режим требует индекс: запусти `okf-recall.mjs index` (нужен OKF_EMBED_URL)');
-    if (!embed) throw new Error('semantic-режим требует эндпоинт эмбеддингов (OKF_EMBED_URL)');
+    if (!hasIndex) throw new Error('semantic mode requires an index: run `okf-recall.mjs index` (needs OKF_EMBED_URL)');
+    if (!embed) throw new Error('semantic mode requires an embeddings endpoint (OKF_EMBED_URL)');
     const qv = await embed(query);
     return { hits: rankByQuery(idx.items, qv, { k, includeSecret, includeMirror, docs }), mode: 'semantic', warning: null };
   }
@@ -266,12 +266,12 @@ export async function recallSearch({
       const qv = await embed(query);
       return { hits: rankByQuery(idx.items, qv, { k, includeSecret, includeMirror, docs }), mode: 'semantic', warning: null };
     } catch (e) {
-      return { hits: bm25(), mode: 'bm25', warning: `semantic недоступен (${e.message}) — BM25 fallback` };
+      return { hits: bm25(), mode: 'bm25', warning: `semantic unavailable (${e.message}) — BM25 fallback` };
     }
   }
   const embedUrlSet = !!process.env.OKF_EMBED_URL;
   const warning = embedUrlSet
-    ? 'BM25 fallback — нет индекса: запусти `okf-recall.mjs index` для семантики'
+    ? 'BM25 fallback — no index: run `okf-recall.mjs index` for semantic search'
     : FALLBACK_WARN_OFF;
   return { hits: bm25(), mode: 'bm25', warning };
 }
@@ -282,11 +282,11 @@ const DEFAULT_STALE_AGE_MS = 86_400_000;
 export function checkIndexStale(idx, docs, { idxPath, maxAgeMs = DEFAULT_STALE_AGE_MS, sampleSize = 10 } = {}) {
   const reasons = [];
   if (!idxPath || !existsSync(idxPath)) {
-    return { stale: true, reasons: ['индекс отсутствует'] };
+    return { stale: true, reasons: ['index missing'] };
   }
   const age = Date.now() - statSync(idxPath).mtimeMs;
   if (age > maxAgeMs) {
-    reasons.push(`индекс старше ${Math.round(age / 86_400_000)} суток`);
+    reasons.push(`index older than ${Math.round(age / 86_400_000)} days`);
   }
   const sample = docs.filter(d => !d.reserved).slice(0, sampleSize);
   let mismatches = 0;
@@ -295,6 +295,6 @@ export function checkIndexStale(idx, docs, { idxPath, maxAgeMs = DEFAULT_STALE_A
     const item = idx.items?.[d.id];
     if (!item || item.hash !== h) mismatches++;
   }
-  if (mismatches > 0) reasons.push(`${mismatches}/${sample.length} документов изменились`);
+  if (mismatches > 0) reasons.push(`${mismatches}/${sample.length} documents changed`);
   return { stale: reasons.length > 0, reasons };
 }

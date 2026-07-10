@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// okf-recall.mjs — поиск по OKF-bundle: семантика (любой OpenAI-совместимый embeddings-эндпоинт)
-//   или локальный BM25-фолбэк без сети и без зависимостей. Индекс эмбеддингов локальный.
-//   node tools/okf-recall.mjs index [--include-mirror] [--include-secret]   # построить семантический индекс (нужен OKF_EMBED_URL)
-//   node tools/okf-recall.mjs "<запрос>" [-k N] [--mode bm25|semantic|auto] [--include-mirror] [--include-secret]
-// Режимы: auto (дефолт) — семантика если есть индекс и отвечает эндпоинт, иначе BM25;
-//         bm25 — всегда локальный keyword/BM25; semantic — строго семантика (без тихого фолбэка).
-// Тиры: курированное (дефолт) · mirror (зеркало живой памяти) · secret (/secret).
-// Эндпоинт/модель/ключ: OKF_EMBED_URL / OKF_EMBED_MODEL / OKF_EMBED_KEY (Bearer).
+// okf-recall.mjs — search over an OKF bundle: semantic (any OpenAI-compatible embeddings endpoint)
+//   or a local BM25 fallback with no network and no dependencies. The embeddings index is local.
+//   node tools/okf-recall.mjs index [--include-mirror] [--include-secret]   # build the semantic index (needs OKF_EMBED_URL)
+//   node tools/okf-recall.mjs "<query>" [-k N] [--mode bm25|semantic|auto] [--include-mirror] [--include-secret]
+// Modes: auto (default) — semantic if an index exists and the endpoint answers, otherwise BM25;
+//        bm25 — always local keyword/BM25; semantic — strictly semantic (no silent fallback).
+// Tiers: curated (default) · mirror (live-memory mirror) · secret (/secret).
+// Endpoint/model/key: OKF_EMBED_URL / OKF_EMBED_MODEL / OKF_EMBED_KEY (Bearer).
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,10 +27,10 @@ export function loadIdx() {
   if (!existsSync(IDX)) return { model: MODEL, items: {} };
   try {
     const idx = JSON.parse(readFileSync(IDX, 'utf8'));
-    if (!idx || typeof idx.items !== 'object') throw new Error('неверная схема индекса');
+    if (!idx || typeof idx.items !== 'object') throw new Error('invalid index schema');
     return idx;
   } catch (e) {
-    console.warn(`битый индекс ${IDX} — пересобери: node tools/okf-recall.mjs index (${e.message})`);
+    console.warn(`corrupt index ${IDX} — rebuild it: node tools/okf-recall.mjs index (${e.message})`);
     return { model: MODEL, items: {} };
   }
 }
@@ -50,7 +50,7 @@ export function parseArgs(argv = process.argv.slice(2)) {
   const mi = argv.indexOf('--mode');
   const mode = mi >= 0 ? argv[mi + 1] : 'auto';
   if (!MODES.includes(mode)) {
-    throw new Error(`неизвестный --mode: ${mode} (допустимо: ${MODES.join('|')})`);
+    throw new Error(`unknown --mode: ${mode} (allowed: ${MODES.join('|')})`);
   }
   const positional = argv.filter((a, i) => !a.startsWith('-')
     && !(ki >= 0 && i === ki + 1)
@@ -68,22 +68,22 @@ async function buildIndex(includeSecret, includeMirror) {
   const docs = load({ includeSecret, includeMirror }).filter(d => !d.reserved);
   const { built, reused, total } = await syncIndex(idx, docs, embed, { includeSecret, includeMirror });
   saveIdx(idx);
-  console.log(`индекс: ${built} новых/изменённых, ${reused} без изменений, всего ${total} (model ${MODEL})`);
+  console.log(`index: ${built} new/changed, ${reused} unchanged, ${total} total (model ${MODEL})`);
 }
 
 async function query(q, k, includeSecret, includeMirror, mode) {
-  // BM25-ранжируем по телу концептов, поэтому грузим bundle в любом режиме.
+  // BM25 ranks over concept bodies, so we load the bundle in every mode.
   const docs = load({ includeSecret, includeMirror }).filter(d => !d.reserved);
   const idx = loadIdx();
   const { hits, mode: used, warning } = await recallSearch({
     docs, query: q, mode, embed, idx, k, includeSecret, includeMirror,
   });
   if (warning) console.error(`⚠ ${warning}`);
-  console.log(`# «${q}» → топ-${k} [${used}]`);
+  console.log(`# "${q}" → top-${k} [${used}]`);
   for (const r of hits) {
     console.log(`${r.score.toFixed(3)}  ${(r.type || '').padEnd(10)} ${r.id} — ${r.title || ''}${r.label ? '  ' + r.label : ''}`);
   }
-  if (!hits.length) console.log('(ничего не найдено)');
+  if (!hits.length) console.log('(nothing found)');
 }
 
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
@@ -92,10 +92,10 @@ if (isMain) {
   try {
     if (positional[0] === 'index') await buildIndex(includeSecret, includeMirror);
     else if (positional.length) await query(positional.join(' '), k, includeSecret, includeMirror, mode);
-    else console.log('Usage: okf-recall.mjs index | "<запрос>" [-k N] [--mode bm25|semantic|auto] [--include-mirror] [--include-secret]');
+    else console.log('Usage: okf-recall.mjs index | "<query>" [-k N] [--mode bm25|semantic|auto] [--include-mirror] [--include-secret]');
   } catch (e) {
-    console.error('Ошибка:', e.message);
-    if (mode !== 'bm25') console.error('Подсказка: --mode bm25 ищет без эндпоинта; --mode auto (дефолт) включает семантику при OKF_EMBED_URL.');
+    console.error('Error:', e.message);
+    if (mode !== 'bm25') console.error('Hint: --mode bm25 searches without an endpoint; --mode auto (default) enables semantic search when OKF_EMBED_URL is set.');
     process.exit(1);
   }
 }

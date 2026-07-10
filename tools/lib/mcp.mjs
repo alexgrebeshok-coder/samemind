@@ -109,7 +109,7 @@ export const TOOLS = [
 ];
 
 async function memorySearch({ query, k = 5, mode = 'auto' } = {}) {
-  if (!query || !String(query).trim()) throw new Error('memory_search: "query" обязателен');
+  if (!query || !String(query).trim()) throw new Error('memory_search: "query" is required');
   const kk = Number.isFinite(Number(k)) && Number(k) > 0 ? Math.floor(Number(k)) : 5;
   const docs = readableDocs();
   const docById = new Map(docs.map(d => [d.id, d]));
@@ -132,12 +132,12 @@ async function memorySearch({ query, k = 5, mode = 'auto' } = {}) {
 }
 
 async function memoryGet({ id } = {}) {
-  const rel = assertSafeConceptId(id, ROOT); // бросает на traversal/пустой id — до похода в docs
-  const docs = readableDocs(); // secret уже исключён на уровне load()
+  const rel = assertSafeConceptId(id, ROOT); // throws on traversal/empty id — before touching docs
+  const docs = readableDocs(); // secret already excluded at the load() level
   const hits = findById(docs, rel);
   if (!hits.length) return { found: false, id: rel };
   if (hits.length > 1) {
-    throw new Error(`memory_get: неоднозначно — ${hits.length} совпадений для «${rel}»: ${hits.map(d => d.id).join(', ')}`);
+    throw new Error(`memory_get: ambiguous — ${hits.length} matches for "${rel}": ${hits.map(d => d.id).join(', ')}`);
   }
   const doc = hits[0];
   if ((doc.fm.visibility || 'internal') === 'secret') return { found: false, id: rel }; // defense-in-depth
@@ -167,7 +167,7 @@ async function memoryList({ type, tag } = {}) {
 
 async function memoryWriteInbox({ content, title } = {}) {
   if (content === undefined || content === null || !String(content).trim()) {
-    throw new Error('memory_write_inbox: "content" обязателен и не может быть пустым');
+    throw new Error('memory_write_inbox: "content" is required and cannot be empty');
   }
   const agent = sanitizeAgentName(process.env.SAMEMIND_AGENT);
   const inboxDir = join(ROOT, 'inbox');
@@ -176,12 +176,12 @@ async function memoryWriteInbox({ content, title } = {}) {
   const text = String(content);
   const scan = scanForInjection(text);
   const timestamp = new Date().toISOString();
-  const heading = title && String(title).trim() ? String(title).trim() : '(без заголовка)';
+  const heading = title && String(title).trim() ? String(title).trim() : '(untitled)';
 
   const block = scan.flagged
     ? [
       `## ${timestamp} — ${heading}`,
-      `quarantine: true  <!-- паттерны: ${scan.matches.join(', ')} -->`,
+      `quarantine: true  <!-- patterns: ${scan.matches.join(', ')} -->`,
       '',
       '```quarantine',
       text,
@@ -197,7 +197,7 @@ async function memoryWriteInbox({ content, title } = {}) {
 
   const existing = existsSync(target)
     ? readFileSync(target, 'utf8')
-    : `---\nokf_version: "0.1"\n---\n\n# Inbox — ${agent}\n\nAppend-only заметки, записанные через samemind MCP (memory_write_inbox).\n\n`;
+    : `---\nokf_version: "0.1"\n---\n\n# Inbox — ${agent}\n\nAppend-only notes written via samemind MCP (memory_write_inbox).\n\n`;
 
   const next = `${existing.replace(/\n*$/, '\n\n')}${block}\n`;
   atomicWriteFileSync(target, next);

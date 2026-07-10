@@ -40,19 +40,19 @@ const ROUTES = {
 function usage() {
   console.log('samemind — universal git-native memory for AI agents');
   console.log('');
-  console.log('Команды:');
-  console.log('  init [dir] [--demo]   создать bundle с нуля (только в пустой папке; --demo — с демо-контентом)');
-  console.log('  query <cmd> ...       структурные запросы: list | type <T> | tag <t> | get <id> | links | validate');
-  console.log('  recall <cmd> ...      поиск: index | "<запрос>" [-k N] [--mode bm25|semantic|auto] (дефолт auto: BM25 без эндпоинта)');
-  console.log('  gde "<запрос>" ...    человекочитаемый поиск (semantic + BM25 fallback)');
-  console.log('  brief [...]           бриф personality-слоя: identity+owner+роль движка (--engine <id> --budget <n> --inject <file>)');
-  console.log('  board [...]           канбан памяти в markdown: Backlog/In progress/Done/Blocked+aging, Plans, Recent (--write → DASHBOARD.md, --project <path>)');
-  console.log('  handoff [...]         бриф состояния работ: active/decisions/plans/session (--project <path> --days N)');
-  console.log('  forget <id>           пометить концепт устаревшим (deprecated: true) — не удаляет файл, см. docs/memory-hygiene.md');
-  console.log('  install --agent <id>  вписать бриф+протокол в инструкционный файл движка (--list — список; --agent all — во все существующие)');
-  console.log('  export <dir> [...]    shareable OKF-bundle (без secret/mirror/inbox); --visibility public|internal --dry-run --to-gbrain');
-  console.log('  import <dir> [...]    принять чужой OKF-bundle; --into inbox|concepts (дефолт inbox) — см. docs/interop.md');
-  console.log('  serve                 MCP stdio-сервер (memory_search/get/list/write_inbox/handoff/health) — подключи как MCP-инструмент');
+  console.log('Commands:');
+  console.log('  init [dir] [--demo]   create a bundle from scratch (empty folder only; --demo — with demo content)');
+  console.log('  query <cmd> ...       structural queries: list | type <T> | tag <t> | get <id> | links | validate');
+  console.log('  recall <cmd> ...      search: index | "<query>" [-k N] [--mode bm25|semantic|auto] (default auto: BM25 without an endpoint)');
+  console.log('  gde "<query>" ...     human-readable search (semantic + BM25 fallback)');
+  console.log('  brief [...]           personality-layer brief: identity+owner+engine role (--engine <id> --budget <n> --inject <file>)');
+  console.log('  board [...]           memory kanban in markdown: Backlog/In progress/Done/Blocked+aging, Plans, Recent (--write → DASHBOARD.md, --project <path>)');
+  console.log('  handoff [...]         work-state brief: active/decisions/plans/session (--project <path> --days N)');
+  console.log('  forget <id>           mark a concept deprecated (deprecated: true) — never deletes the file, see docs/memory-hygiene.md');
+  console.log('  install --agent <id>  wire brief+protocol into an engine\'s instruction file (--list — list them; --agent all — into all existing ones)');
+  console.log('  export <dir> [...]    shareable OKF-bundle (no secret/mirror/inbox); --visibility public|internal --dry-run --to-gbrain');
+  console.log('  import <dir> [...]    accept a foreign OKF-bundle; --into inbox|concepts (default inbox) — see docs/interop.md');
+  console.log('  serve                 MCP stdio server (memory_search/get/list/write_inbox/handoff/health) — connect it as an MCP tool');
 }
 
 export function main(argv = process.argv.slice(2)) {
@@ -72,7 +72,7 @@ export function main(argv = process.argv.slice(2)) {
     env,
   });
   if (res.error) {
-    console.error('Ошибка:', res.error.message);
+    console.error('Error:', res.error.message);
     return 1;
   }
   return res.status === null ? 1 : res.status;
