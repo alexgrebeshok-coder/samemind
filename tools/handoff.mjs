@@ -380,7 +380,7 @@ async function main() {
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
   main().catch(e => {
-    console.error('Ошибка:', e.message);
+    console.error('Error:', e.message);
     process.exit(1);
   });
 }

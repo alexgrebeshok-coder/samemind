@@ -237,7 +237,7 @@ async function main() {
 
   if (inject) {
     const res = injectBrief(inject, markdown);
-    console.log(`✓ бриф ${res.replaced ? 'обновлён' : res.created ? 'создан' : 'добавлен'} в ${res.file}`);
+    console.log(`✓ brief ${res.replaced ? 'updated' : res.created ? 'created' : 'appended'} in ${res.file}`);
   } else {
     console.log(markdown);
   }
@@ -246,7 +246,7 @@ async function main() {
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
   main().catch(e => {
-    console.error('Ошибка:', e.message);
+    console.error('Error:', e.message);
     process.exit(1);
   });
 }
