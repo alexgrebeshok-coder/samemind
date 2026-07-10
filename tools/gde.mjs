@@ -84,7 +84,7 @@ export function formatResults(query, results, { k, mode, staleWarning }) {
   }
   results.forEach((r, i) => {
     lines.push('');
-    lines.push(`${i + 1}. ${r.title || r.id}`);
+    lines.push(`${i + 1}. ${r.title || r.id}${r.label ? '  ' + r.label : ''}`);
     lines.push(`   ${r.type || '—'} · score ${r.score.toFixed(3)}`);
     lines.push(`   ${r.file}`);
     if (r.snippet) {

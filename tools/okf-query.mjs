@@ -7,6 +7,9 @@ import {
   ROOT, load, resolveLink, resolveRelationPath, pathToId,
   collectRelationEdges, findById,
 } from './lib/okf.mjs';
+import {
+  buildSupersededMap, hygieneBanner, detectSupersedeCycles, collectSupersedeEdges,
+} from './lib/hygiene.mjs';
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -45,7 +48,13 @@ if (cmd === 'list') {
 
 } else if (cmd === 'get') {
   const hit = resolveDoc(args[1]);
-  console.log(hit ? readFileSync(hit.file, 'utf8') : `не найдено: ${args[1]}`);
+  if (!hit) {
+    console.log(`не найдено: ${args[1]}`);
+  } else {
+    const supersededMap = buildSupersededMap(cs);
+    const banner = hygieneBanner(hit, supersededMap);
+    console.log((banner ? banner + '\n\n' : '') + readFileSync(hit.file, 'utf8'));
+  }
 
 } else if (cmd === 'rel') {
   // rel <type> <id> [--inbound]
@@ -118,10 +127,19 @@ if (cmd === 'list') {
     if (!e.exists) broken.push(`${e.fromId} [${e.type}] → ${e.toPath} (битая)`);
     else inbound.set(e.toId, (inbound.get(e.toId) || 0) + 1);
   }
+  // supersedes edges too — an old, superseded concept is still connected to the graph, not an orphan
+  const supersedeEdges = collectSupersedeEdges(cs);
+  let supersedeCount = 0;
+  for (const e of supersedeEdges) {
+    supersedeCount++;
+    if (!e.resolved) { broken.push(`${e.fromId} [supersedes] → ${e.toPath} (вне bundle)`); continue; }
+    if (!e.exists) broken.push(`${e.fromId} [supersedes] → ${e.toPath} (битая)`);
+    else inbound.set(e.toId, (inbound.get(e.toId) || 0) + 1);
+  }
   const orphans = cs.filter(d => !inbound.get(d.id)).map(d => d.id);
-  const totalEdges = mdEdges + relCount;
+  const totalEdges = mdEdges + relCount + supersedeCount;
   console.log('# Граф ссылок');
-  console.log(`Концептов: ${cs.length}, рёбер: ${totalEdges} (md: ${mdEdges}, relations: ${relCount})`);
+  console.log(`Концептов: ${cs.length}, рёбер: ${totalEdges} (md: ${mdEdges}, relations: ${relCount}, supersedes: ${supersedeCount})`);
   console.log('\nСироты (нет входящих ссылок):\n' + (orphans.length ? orphans.join('\n') : '— нет'));
   console.log('\nБитые ссылки:\n' + (broken.length ? broken.join('\n') : '— нет'));
 
@@ -140,14 +158,33 @@ if (cmd === 'list') {
       warns.push(`${e.fromId} [${e.type}] → ${e.toPath} (путь не существует)`);
     }
   }
+
+  // supersedes: show chains for visibility, warn (not fail) on dangling targets and cycles —
+  // same severity as broken relations above (see docs/memory-hygiene.md).
+  const supersedeEdges = collectSupersedeEdges(cs);
+  const supersedeChains = supersedeEdges.map(e =>
+    `${e.fromId} supersedes ${e.toId}${e.exists ? '' : ' (цель не найдена)'}`);
+  const supersedeWarns = supersedeEdges.filter(e => !e.exists)
+    .map(e => `${e.fromId} supersedes ${e.toId} — цель не найдена`);
+  for (const cycle of detectSupersedeCycles(cs)) {
+    supersedeWarns.push(`цикл supersedes: ${cycle.join(' → ')}`);
+  }
+
   if (errs.length) {
     console.log('❌ НЕ conformant:\n' + errs.join('\n'));
     if (warns.length) console.log('\n⚠️ Битые relations:\n' + warns.join('\n'));
+    if (supersedeWarns.length) console.log('\n⚠️ Проблемы supersede:\n' + supersedeWarns.join('\n'));
     process.exit(1);
   }
   console.log(`✅ OKF v0.1 conformant: ${cs.length} концептов, у всех непустой type.`);
   if (warns.length) {
     console.log(`⚠️ Битые relations (${warns.length}):\n` + warns.join('\n'));
+  }
+  if (supersedeChains.length) {
+    console.log(`\n# Цепочки supersede (${supersedeChains.length}):\n` + supersedeChains.join('\n'));
+  }
+  if (supersedeWarns.length) {
+    console.log(`\n⚠️ Проблемы supersede (${supersedeWarns.length}):\n` + supersedeWarns.join('\n'));
   }
 
 } else {
