@@ -129,7 +129,7 @@ effect stays inspectable/testable.
 - **`okf-query links`** — `supersedes` edges now count toward the edge tally
   and inbound links, so a superseded-but-referenced-only-that-way concept
   isn't misreported as an orphan.
-- **`tools/consolidate.mjs`** — a new "⚔️ Противоречия" (contradictions)
+- **`tools/consolidate.mjs`** — a new "⚔️ Contradictions" (contradictions)
   section: pairs of canon concepts of the **same `type`** with high
   title/tag token similarity where **neither** `supersedes` the other —
   candidates for a human to resolve (merge, add `supersedes`, or leave be).
@@ -177,5 +177,5 @@ OKF_ROOT=demo node tools/okf-query.mjs get concepts/embed-model-bge-m3
 # → prints the SUPERSEDED banner above the file content
 
 OKF_ROOT=demo node tools/okf-query.mjs validate
-# → "# Цепочки supersede" lists: concepts/embed-model-qwen3 supersedes concepts/embed-model-bge-m3
+# → "# Supersede chains" lists: concepts/embed-model-qwen3 supersedes concepts/embed-model-bge-m3
 ```

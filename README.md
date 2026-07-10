@@ -38,9 +38,9 @@ Real output, trimmed for length — no gif needed:
 
 ```sh
 $ npx samemind init --demo
-✓ bundle создан: ./samemind-demo
-  --demo: скопировано 19 демо-концептов
-  git init + первый коммит выполнены
+✓ bundle created: ./samemind-demo
+  --demo: copied 19 demo concepts
+  git init + initial commit done
 
 $ npx samemind brief --engine claude-code
 <!-- samemind:brief:start -->
@@ -58,7 +58,7 @@ she carries her voice, values and memory across all of them.
 
 $ npx samemind recall "where did I write about context budget"
 ⚠ semantic off, BM25 fallback — set OKF_EMBED_URL for semantic search
-# «where did I write about context budget» → топ-5 [bm25]
+# "where did I write about context budget" → top-5 [bm25]
 5.559  Concept    concepts/context-budget — Context budget
 3.693  Concept    concepts/retrieval-strategy — Retrieval strategy
 1.366  User       entities/alex-doe — Alex Doe
@@ -82,8 +82,6 @@ $ npx samemind board
 No daemon, no API key, no network call. `brief` and `board` read straight off
 the markdown `init --demo` just wrote; `recall` degrades to local BM25 because
 `OKF_EMBED_URL` isn't set. Four commands, zero infra — that's the whole pitch.
-(A couple of CLI status lines are still bilingual pre-1.0, e.g. `bundle
-создан` — shown as-is above, not cleaned up for the README.)
 
 ## The protocol
 
@@ -269,12 +267,12 @@ Shortened example, run against the demo bundle:
 ## 🔴 Blocked (1)
 - **[Wire retrieval strategy over the Atlas corpus](/projects/task-atlas-retrieval.md)** — Connect Nova's retrieval…
   - ⛔ Corpus ingestion paused — waiting on Alex to confirm the source license list…
-  - ⏳ 0д
+  - ⏳ 0d
 
 ## 📋 Plans (1)
 - **[Lumen multi-device sync](/projects/plan-lumen-sync.md)** · agreed — Agreed plan to ship end-to-end sync…
 
-### Последние сессии (1)
+### Recent sessions (1)
 - [Lumen sync kickoff (2026-07-09)](/concepts/session-2026-07-09-lumen-sync.md) · 2026-07-09 — Working session that agreed the sync plan…
 ```
 
