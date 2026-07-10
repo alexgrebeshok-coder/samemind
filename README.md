@@ -457,6 +457,9 @@ OKF_ROOT=demo node tools/bench-recall.mjs   # BM25 vs naive grep on demo goldens
 Methodology and current hit@1 / hit@3 numbers: [docs/benchmark.md](docs/benchmark.md).
 Micro-corpus only — not a public IR leaderboard.
 
+Contributing dev-setup, conventions, and pointers to the format spec:
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ## License
 
 MIT © 2026 Aleksandr Grebeshok
