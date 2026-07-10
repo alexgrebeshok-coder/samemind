@@ -8,6 +8,8 @@
 //   npx samemind board [...]             → tools/board.mjs       (kanban dashboard over the work-discipline layer)
 //   npx samemind handoff [...]           → tools/handoff.mjs     (work-state: tasks/plans/decisions/session)
 //   npx samemind forget <id>             → tools/forget.mjs      (soft-deprecate; never deletes — see docs/memory-hygiene.md)
+//   npx samemind export <dir> [...]      → tools/export.mjs      (shareable OKF-bundle / --to-gbrain; no secrets)
+//   npx samemind import <dir> [...]      → tools/import.mjs      (accept foreign OKF; default → inbox)
 //   npx samemind serve                   → tools/mcp-server.mjs  (MCP stdio server: memory_* tools)
 //
 // query/recall/gde are routed with OKF_ROOT defaulted to the caller's cwd, so the tools
@@ -28,6 +30,8 @@ const ROUTES = {
   board: 'tools/board.mjs',
   handoff: 'tools/handoff.mjs',
   forget: 'tools/forget.mjs',
+  export: 'tools/export.mjs',
+  import: 'tools/import.mjs',
   serve: 'tools/mcp-server.mjs',
 };
 
@@ -43,6 +47,8 @@ function usage() {
   console.log('  board [...]           канбан памяти в markdown: Backlog/In progress/Done/Blocked+aging, Plans, Recent (--write → DASHBOARD.md, --project <path>)');
   console.log('  handoff [...]         бриф состояния работ: active/decisions/plans/session (--project <path> --days N)');
   console.log('  forget <id>           пометить концепт устаревшим (deprecated: true) — не удаляет файл, см. docs/memory-hygiene.md');
+  console.log('  export <dir> [...]    shareable OKF-bundle (без secret/mirror/inbox); --visibility public|internal --dry-run --to-gbrain');
+  console.log('  import <dir> [...]    принять чужой OKF-bundle; --into inbox|concepts (дефолт inbox) — см. docs/interop.md');
   console.log('  serve                 MCP stdio-сервер (memory_search/get/list/write_inbox/handoff/health) — подключи как MCP-инструмент');
 }
 
