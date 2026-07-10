@@ -39,12 +39,16 @@ okf_version: "0.1"
 # Concepts
 
 Ideas, architectures, methods, rules. Typical \`type\` values: \`Concept\`, \`EngineRule\`,
-\`Identity\`, \`Reference\`. Start from [\`_template.md\`](_template.md).
+\`Identity\`, \`Reference\`, \`Decision\`, \`Session\`. Start from [\`_template.md\`](_template.md).
 
 Identity layer (docs/identity-layer.md): [\`_identity-template.md\`](_identity-template.md) —
 the agent's own mind (one per bundle); [\`_engine-rule-template.md\`](_engine-rule-template.md) —
 per-engine role/allowed/forbidden (one per engine). Assemble a compact brief from them:
 \`npx samemind brief\`.
+
+Work discipline (docs/work-discipline.md): [\`_decision-template.md\`](_decision-template.md) —
+a decision and its context (append-only); [\`_session-template.md\`](_session-template.md) —
+a session summary (\`## Done\` / \`## Decided\` / \`## Next\`).
 
 List concepts: \`npx samemind query list\`
 `;
@@ -176,6 +180,76 @@ One sentence: the role this engine plays (terminal dev / chat orchestrator / bat
 - Style: tone/format specific to this engine.
 `;
 
+const DECISION_TEMPLATE = `---
+type: Decision
+title:
+description:
+visibility: internal
+agreed_on:                       # ISO date the decision was made (YYYY-MM-DD)
+tags: [decision]
+timestamp:
+source:
+relations:
+  agreed_with: []
+  # e.g. agreed_with: /entities/<person>.md
+  about:
+  # e.g. about: /projects/<name>.md
+  supersedes: []
+  # filled only when reversing a prior decision: supersedes: /concepts/<old-decision>.md
+---
+
+> Copy this file, drop the \`_\` prefix (→ \`concepts/<decision-name>.md\`), fill it in.
+> A Decision is a point on the timeline — no \`status\` field. To change a decision,
+> write a NEW Decision with \`relations.supersedes\` pointing at the old one; never
+> rewrite the old node. See docs/work-discipline.md and demo/concepts/decision-lumen-local-first.md.
+
+# <decision name>
+
+One line: the decision itself, stated as a position ("we will …", "we will not …").
+
+## Context
+
+Why this call, what alternatives were weighed, what would change it.
+`;
+
+const SESSION_TEMPLATE = `---
+type: Session
+title:
+description:
+visibility: internal
+engine:                          # the engine this session ran on (e.g. claude-code)
+date:                            # ISO date of the session (YYYY-MM-DD)
+tags: [session]
+timestamp:
+source:
+relations:
+  decided: []
+  # decisions reached this session: /concepts/<decision>.md
+  next: []
+  # tasks queued as "next": /projects/<task>.md
+---
+
+> Copy this file, drop the \`_\` prefix (→ \`concepts/<session-name>.md\`), fill it in.
+> Write one at the END of a session, never rewrite it (point-in-time). The closing
+> artifact of any non-trivial session. See docs/work-discipline.md and demo/concepts/session-*.md.
+
+# <session name>
+
+One line: the span of work this session covered.
+
+## Done
+
+- What was finished or shipped this session.
+
+## Decided
+
+- Decisions reached (link the Decision nodes if any were written).
+
+## Next
+
+- What the next session should pick up.
+`;
+
 const PROJECTS_TEMPLATE = `---
 type: Project
 title:
@@ -191,6 +265,70 @@ source:
 Body. Status, goal, next step, blockers. Link entities and concepts involved.
 `;
 
+const PLAN_TEMPLATE = `---
+type: Plan
+title:
+description:
+visibility: internal
+status: draft                     # draft | agreed | in-progress | done | superseded
+agreed_on:                        # ISO date the current status was agreed (YYYY-MM-DD)
+tags: [plan]
+timestamp:
+source:
+relations:
+  agreed_with: []
+  # e.g. agreed_with: /entities/<person>.md
+  covers:
+  # e.g. covers: /projects/<name>.md   — the initiative this plan is for
+  supersedes: []
+  # filled only when replacing a prior plan: supersedes: /projects/<old-plan>.md
+---
+
+> Copy this file, drop the \`_\` prefix (→ \`projects/<plan-name>.md\`), fill it in.
+> A Plan is a *coordinated* course of action. Body: ## Stages then ## Risks. When the
+> plan changes, write a NEW Plan with \`relations.supersedes\` and mark this one
+> \`status: superseded\` — Plans are append-only history. See docs/work-discipline.md
+> and demo/projects/plan-lumen-sync.md.
+
+# <plan name>
+
+One line: what this plan achieves and who it was agreed with.
+
+## Stages
+
+1. First stage — concrete and verifiable.
+
+## Risks
+
+- Risk, and the mitigation that keeps it from derailing the plan.
+`;
+
+const TASK_TEMPLATE = `---
+type: Task
+title:
+description:
+visibility: internal
+status: backlog                   # backlog | in-progress | done | blocked
+blocked_reason:                   # REQUIRED (non-empty) when status is blocked
+tags: [task]
+timestamp:
+source:
+relations:
+  project:
+  # e.g. project: /projects/<name>.md   — the initiative this task belongs to
+---
+
+> Copy this file, drop the \`_\` prefix (→ \`projects/<task-name>.md\`), fill it in.
+> A Task is the ONE discipline type you edit in place — \`status\` is its current
+> state, not history. \`status: blocked\` requires a non-empty \`blocked_reason\`
+> (what blocks it, what unblocks it). See docs/work-discipline.md and
+> demo/projects/task-*.md.
+
+# <task name>
+
+What "done" looks like for this task — verifiable, one or two sentences.
+`;
+
 const PROJECTS_INDEX = `---
 okf_version: "0.1"
 ---
@@ -198,6 +336,11 @@ okf_version: "0.1"
 # Projects
 
 Products and initiatives (\`type: Project\`). Start from [\`_template.md\`](_template.md).
+
+Work discipline (docs/work-discipline.md): [\`_plan-template.md\`](_plan-template.md) —
+an agreed course of action (\`## Stages\` / \`## Risks\`, append-only via \`supersedes\`);
+[\`_task-template.md\`](_task-template.md) — a unit of work edited in place
+(\`status\` lifecycle; \`blocked\` needs a \`blocked_reason\`).
 `;
 
 const INBOX_INDEX = `---
@@ -355,11 +498,15 @@ export function runInit({ targetDir = '.', demo = false, packageRoot = PACKAGE_R
   writeFileSync(join(dir, 'concepts', '_template.md'), CONCEPTS_TEMPLATE, 'utf8');
   writeFileSync(join(dir, 'concepts', '_identity-template.md'), IDENTITY_TEMPLATE, 'utf8');
   writeFileSync(join(dir, 'concepts', '_engine-rule-template.md'), ENGINE_RULE_TEMPLATE, 'utf8');
+  writeFileSync(join(dir, 'concepts', '_decision-template.md'), DECISION_TEMPLATE, 'utf8');
+  writeFileSync(join(dir, 'concepts', '_session-template.md'), SESSION_TEMPLATE, 'utf8');
   writeFileSync(join(dir, 'concepts', 'index.md'), CONCEPTS_INDEX, 'utf8');
   writeFileSync(join(dir, 'entities', '_template.md'), ENTITIES_TEMPLATE, 'utf8');
   writeFileSync(join(dir, 'entities', '_user-template.md'), USER_TEMPLATE, 'utf8');
   writeFileSync(join(dir, 'entities', 'index.md'), ENTITIES_INDEX, 'utf8');
   writeFileSync(join(dir, 'projects', '_template.md'), PROJECTS_TEMPLATE, 'utf8');
+  writeFileSync(join(dir, 'projects', '_plan-template.md'), PLAN_TEMPLATE, 'utf8');
+  writeFileSync(join(dir, 'projects', '_task-template.md'), TASK_TEMPLATE, 'utf8');
   writeFileSync(join(dir, 'projects', 'index.md'), PROJECTS_INDEX, 'utf8');
   writeFileSync(join(dir, 'inbox', 'index.md'), INBOX_INDEX, 'utf8');
   writeFileSync(join(dir, 'secret', '_template.md'), SECRET_TEMPLATE, 'utf8');

@@ -5,7 +5,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { relative } from 'node:path';
 import {
   ROOT, load, resolveLink, resolveRelationPath, pathToId,
-  collectRelationEdges, findById,
+  collectRelationEdges, findById, disciplineChecks,
 } from './lib/okf.mjs';
 
 const args = process.argv.slice(2);
@@ -127,27 +127,32 @@ if (cmd === 'list') {
 
 } else if (cmd === 'validate') {
   const errs = [];
-  const warns = [];
   for (const d of cs) {
     if (!d.hasFM) errs.push(`${d.id}: нет frontmatter`);
     else if (!d.fm.type) errs.push(`${d.id}: пустой/отсутствует обязательный 'type'`);
   }
   // broken relation edges → warnings (not hard fail)
+  const relWarns = [];
   for (const e of collectRelationEdges(cs)) {
     if (!e.resolved) {
-      warns.push(`${e.fromId} [${e.type}] → ${e.toPath} (вне bundle)`);
+      relWarns.push(`${e.fromId} [${e.type}] → ${e.toPath} (вне bundle)`);
     } else if (!e.exists) {
-      warns.push(`${e.fromId} [${e.type}] → ${e.toPath} (путь не существует)`);
+      relWarns.push(`${e.fromId} [${e.type}] → ${e.toPath} (путь не существует)`);
     }
   }
+  // work-discipline status checks → warnings (Plan/Task only); see docs/work-discipline.md
+  const disciplineWarns = disciplineChecks(cs);
   if (errs.length) {
     console.log('❌ НЕ conformant:\n' + errs.join('\n'));
-    if (warns.length) console.log('\n⚠️ Битые relations:\n' + warns.join('\n'));
+    if (relWarns.length) console.log('\n⚠️ Битые relations:\n' + relWarns.join('\n'));
     process.exit(1);
   }
   console.log(`✅ OKF v0.1 conformant: ${cs.length} концептов, у всех непустой type.`);
-  if (warns.length) {
-    console.log(`⚠️ Битые relations (${warns.length}):\n` + warns.join('\n'));
+  if (relWarns.length) {
+    console.log(`⚠️ Битые relations (${relWarns.length}):\n` + relWarns.join('\n'));
+  }
+  if (disciplineWarns.length) {
+    console.log(`⚠️ Дисциплина работы (${disciplineWarns.length}):\n` + disciplineWarns.join('\n'));
   }
 
 } else {

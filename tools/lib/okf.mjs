@@ -209,3 +209,47 @@ export function findById(docs, q) {
   if (exact.length) return exact;
   return docs.filter(d => d.id.endsWith('/' + needle) || d.id === needle);
 }
+
+/**
+ * Work-discipline status dictionaries (see docs/work-discipline.md).
+ * Only Plan and Task carry a `status` field; Decision and Session are append-only
+ * / point-in-time and have no status lifecycle, so they are intentionally absent.
+ * Values are matched case-insensitively against the lowercase dictionary.
+ */
+export const STATUS_DICTIONARIES = Object.freeze({
+  Plan: ['draft', 'agreed', 'in-progress', 'done', 'superseded'],
+  Task: ['backlog', 'in-progress', 'done', 'blocked'],
+});
+
+/**
+ * Discipline checks → warning strings (never errors; we don't fail foreign bundles).
+ * Fires for Plan/Task only:
+ *   - missing `status`
+ *   - `status` value outside the type's dictionary
+ *   - Task `status: blocked` without a non-empty `blocked_reason`
+ */
+export function disciplineChecks(docs) {
+  const warns = [];
+  const byLowerType = new Map(
+    Object.entries(STATUS_DICTIONARIES).map(([t, v]) => [t.toLowerCase(), v])
+  );
+  for (const d of docs) {
+    if (d.reserved) continue;
+    const typeRaw = String(d.fm?.type || '').trim();
+    const dict = byLowerType.get(typeRaw.toLowerCase());
+    if (!dict) continue;                       // type carries no status lifecycle
+    const status = String(d.fm?.status || '').trim();
+    if (!status) {
+      warns.push(`${d.id}: ${typeRaw} без 'status'`);
+      continue;                                // missing ≠ outside dictionary
+    }
+    if (!dict.includes(status.toLowerCase())) {
+      warns.push(`${d.id}: ${typeRaw} 'status' вне словаря (${dict.join('|')}): «${status}»`);
+    }
+    if (typeRaw.toLowerCase() === 'task' && status.toLowerCase() === 'blocked') {
+      const reason = String(d.fm?.blocked_reason || '').trim();
+      if (!reason) warns.push(`${d.id}: Task 'blocked' без 'blocked_reason'`);
+    }
+  }
+  return warns;
+}

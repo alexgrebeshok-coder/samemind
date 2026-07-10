@@ -13,4 +13,15 @@ When a question needs past context (owner, people, projects, decisions):
 
 Token rule: search → rank → full-read top-N only. Do not dump the whole bundle.
 
+## Write discipline (MUST)
+
+The bundle holds **work**, not only facts (full spec: `docs/work-discipline.md`).
+
+- Agreed a plan/position with the owner → write a `Plan`/`Decision` to `inbox/` **now** (MCP `memory_write_inbox`). "Later" = didn't happen.
+- Plan changed → write a **new** `Plan` with `relations.supersedes: /projects/<old>.md`; mark old `status: superseded`. Plans/Decisions are append-only.
+- Session ended → write a `Session` to `inbox/` (`engine`, `date`, `## Done` / `## Decided` / `## Next`).
+- Task changed status → edit the `Task` **in place**. `status: blocked` requires a non-empty `blocked_reason`.
+
+`samemind query validate` warns on Plan/Task missing `status`, bad `status`, or blocked Task without reason.
+
 Tools: `samemind query|recall|gde|serve` · bundle root = `OKF_ROOT` or cwd.
