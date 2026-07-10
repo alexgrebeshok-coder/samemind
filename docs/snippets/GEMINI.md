@@ -14,3 +14,14 @@ When the user asks about people, projects, decisions, or prior work:
 5. Write new notes only with `memory_write_inbox`. Do not edit canon paths as the agent.
 
 Search is cheap; full bodies are not. Never load the entire bundle for one question.
+
+## Write discipline (MUST)
+
+The bundle holds **work**, not only facts (spec: `docs/work-discipline.md`).
+
+- Agreed a plan/position with the owner → write a `Plan`/`Decision` to `inbox/` **now** (`memory_write_inbox`). Postponed = lost.
+- Plan changed → write a **new** `Plan`, `relations.supersedes: /projects/<old>.md`, old `status: superseded`. Plans/Decisions are append-only.
+- Session ended → `Session` in `inbox/` (`engine`, `date`, `## Done` / `## Decided` / `## Next`).
+- Task status changed → edit the `Task` **in place**; `status: blocked` needs a non-empty `blocked_reason`.
+
+`samemind query validate` warns on Plan/Task missing `status`, bad `status`, or a blocked Task without reason.

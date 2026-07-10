@@ -85,6 +85,34 @@ writes. Canon promotion is a human/curation step (`tools/consolidate.mjs`).
 
 ---
 
+## Write discipline
+
+The bundle is a system of **work**, not only facts. Four concept types capture
+agreements, decisions, owed work, and session outcomes — see
+[`docs/work-discipline.md`](work-discipline.md) for the full spec. The rules
+below are **MUSTs**, not suggestions:
+
+- **Agreed a plan or a position with the owner → write it *now*.** Open a `Plan`
+  (status `agreed`, `agreed_with`, `agreed_on`) or `Decision` node in `inbox/`
+  via `memory_write_inbox` (or a file). "I'll note it later" = it didn't happen.
+- **A plan changed → write a *new* `Plan`**, not an edit. Set
+  `relations.supersedes: /projects/<old-plan>.md` on the new one and mark the old
+  one `status: superseded`. Plans and Decisions are append-only history; the old
+  node stays on record.
+- **Session ended → write a `Session` summary** in `inbox/`: `## Done`,
+  `## Decided`, `## Next`, plus `engine` and `date`. This is the closing artifact
+  of every non-trivial session — no session-summary, no provenance.
+- **A task changed status → update the `Task` *in place*.** `Task` is the one
+  discipline type you edit, because `status` is its current state, not history.
+  If it is now `blocked`, `blocked_reason` is mandatory (what blocks it, what
+  unblocks it).
+
+Validate catches the common lapses as warnings:
+`samemind query validate` flags a `Plan`/`Task` with no `status`, a `status`
+outside the type's dictionary, or a blocked `Task` with no `blocked_reason`.
+
+---
+
 ## Token discipline
 
 | Phase | Cost | Rule |

@@ -14,3 +14,14 @@ Use the local samemind bundle for owner/project/past context. No cloud memory se
 5. Persist new facts only via `memory_write_inbox` — never mutate canon nodes as the agent.
 
 Prefer search over loading the whole tree. Bundle root: `OKF_ROOT` or process cwd.
+
+## Write discipline (MUST)
+
+The bundle stores **work**, not only facts (spec: `docs/work-discipline.md`).
+
+- Agreed a plan/position → write a `Plan`/`Decision` to `inbox/` **immediately** (MCP `memory_write_inbox`). No deferred notes.
+- Plan changed → new `Plan` with `relations.supersedes: /projects/<old>.md`, old marked `status: superseded`. Plans/Decisions are append-only.
+- Session ended → `Session` in `inbox/` (`engine`, `date`, `## Done` / `## Decided` / `## Next`).
+- Task status changed → edit the `Task` **in place**. `status: blocked` needs a non-empty `blocked_reason`.
+
+`samemind query validate` warns on Plan/Task without `status`, out-of-dictionary `status`, or blocked Task lacking a reason.
