@@ -1,10 +1,16 @@
 // recall.mjs — чистая логика recall-индекса (okf-recall + gde + тесты).
 import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
+import { buildCorpus, bm25Score } from './bm25.mjs';
 
-export const EMBED_VECTOR_DIM = parseInt(process.env.OKF_EMBED_DIM || '1024', 10);
+// Размерность проверяется только если OKF_EMBED_DIM задана явно. Иначе принимаем любую
+// (OpenAI text-embedding-3-* — 1536/3072, bge-m3 — 1024, …): требование фиксированной dim
+// ломало бы «любой OpenAI-совместимый эндпоинт». Несоответствие ловится через indexKey.
+const DIM_EXPLICIT = Object.prototype.hasOwnProperty.call(process.env, 'OKF_EMBED_DIM');
+export const EMBED_VECTOR_DIM = DIM_EXPLICIT ? parseInt(process.env.OKF_EMBED_DIM, 10) : null;
 // Эндпоинт эмбеддингов по умолчанию (локальный embeddings-сервер: bge-m3 через LM Studio / Ollama / и т.п.).
-// Переопределяется через OKF_EMBED_URL — чтобы крутить recall на любом OpenAI-совместимом сервере.
+// Переопределяется через OKF_EMBED_URL — любой OpenAI-совместимый /v1/embeddings-сервер
+// (Ollama / LM Studio / OpenAI / локальный). Авторизация опционально через OKF_EMBED_KEY (Bearer).
 export const DEFAULT_EMBED_URL = process.env.OKF_EMBED_URL || 'http://127.0.0.1:8000/v1/embeddings';
 export const DEFAULT_MODEL = process.env.OKF_EMBED_MODEL || 'bge-m3';
 export const MAX_EMBED_CHARS = 5000;
@@ -108,17 +114,25 @@ export async function syncIndex(idx, docs, embed, { includeSecret = false, inclu
   return { built, reused, total: Object.keys(idx.items).length };
 }
 
-export async function fetchEmbedding(text, { url = DEFAULT_EMBED_URL, model = DEFAULT_MODEL } = {}) {
+export async function fetchEmbedding(text, {
+  url = DEFAULT_EMBED_URL, model = DEFAULT_MODEL, key = process.env.OKF_EMBED_KEY, dim = EMBED_VECTOR_DIM,
+} = {}) {
   const input = text.slice(0, MAX_EMBED_CHARS);
+  const headers = { 'Content-Type': 'application/json' };
+  if (key) headers['Authorization'] = `Bearer ${key}`;
+  // Стандартный OpenAI /v1/embeddings: { model, input }, ответ { data: [{ embedding: [...] }] }.
   const r = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ model, input }),
   });
   if (!r.ok) throw new Error(`embeddings HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
   const emb = (await r.json())?.data?.[0]?.embedding;
-  if (!Array.isArray(emb) || emb.length !== EMBED_VECTOR_DIM) {
-    throw new Error(`embedding: ожидался vector[${EMBED_VECTOR_DIM}], получен ${Array.isArray(emb) ? emb.length : typeof emb}`);
+  if (!Array.isArray(emb) || emb.length === 0) {
+    throw new Error(`embedding: ожидался непустой vector, получен ${Array.isArray(emb) ? `length ${emb.length}` : typeof emb}`);
+  }
+  if (dim && emb.length !== dim) {
+    throw new Error(`embedding: dim ${emb.length} ≠ ожидаемой ${dim} (переопредели OKF_EMBED_DIM или снимите ограничение)`);
   }
   return emb;
 }
@@ -155,7 +169,8 @@ export function extractSnippet(body, query, { contextLines = 1 } = {}) {
   return lines.slice(start, end).join('\n').trim();
 }
 
-/** Скор keyword-поиска: покрытие терминов + плотность вхождений. */
+/** Простой по-тексту скор (покрытие терминов + плотность). Лёгкий однодоковый эвристический
+ *  scorer; основной фолбэк-ранкер rankByKeywords использует полноценный корпусный BM25. */
 export function keywordScore(text, query) {
   const terms = queryTerms(query);
   if (!terms.length) return 0;
@@ -174,22 +189,68 @@ export function keywordScore(text, query) {
   return coverage * 0.65 + density * 0.35;
 }
 
-/** Fallback: ранжирование bundle по keyword-совпадениям. */
+/** Единый fallback-ранкер: BM25 по title/description/tags/телу концептов (docText).
+ *  Без сети, без зависимостей. Используется и gde, и okf-recall — один механизм фолбэба. */
 export function rankByKeywords(docs, query, { k = 5, includeSecret = false, includeMirror = true } = {}) {
-  return docs
+  const pool = docs
     .filter(d => !d.reserved)
-    .filter(d => passesTier(d.fm.visibility, { includeSecret, includeMirror }))
+    .filter(d => passesTier(d.fm.visibility, { includeSecret, includeMirror }));
+  if (!pool.length) return [];
+  const corpus = buildCorpus(pool, { textOf: docText });
+  return pool
     .map(d => ({
       id: d.id,
       title: d.fm.title,
       type: d.fm.type,
-      score: keywordScore(docText(d), query),
+      score: bm25Score(query, d.id, corpus),
       file: d.file,
       body: d.body,
     }))
     .filter(r => r.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, k);
+}
+
+const FALLBACK_WARN_OFF = 'semantic off, BM25 fallback — set OKF_EMBED_URL for semantic search';
+
+/**
+ * Единый поиск recall: режимы bm25 | semantic | auto (дефолт auto).
+ * Возвращает { hits, mode, warning }. warning — честное одноразовое пояснение фолбэка
+ * (клиент печатает его в stderr); в semantic-режиме при неготовности — бросает.
+ *   mode='auto': индекс есть и embed отвечает → semantic; иначе BM25 (с warning).
+ *   mode='semantic': требует индекс и embed (без тихого фолбэка).
+ *   mode='bm25': всегда BM25, без сети.
+ */
+export async function recallSearch({
+  docs, query, mode = 'auto', embed = null, idx = { items: {} },
+  k = 5, includeSecret = false, includeMirror = false,
+}) {
+  const bm25 = () => rankByKeywords(docs, query, { k, includeSecret, includeMirror });
+  const hasIndex = !!(idx && idx.items && Object.keys(idx.items).length > 0);
+
+  if (mode === 'bm25') return { hits: bm25(), mode: 'bm25', warning: null };
+
+  if (mode === 'semantic') {
+    if (!hasIndex) throw new Error('semantic-режим требует индекс: запусти `okf-recall.mjs index` (нужен OKF_EMBED_URL)');
+    if (!embed) throw new Error('semantic-режим требует эндпоинт эмбеддингов (OKF_EMBED_URL)');
+    const qv = await embed(query);
+    return { hits: rankByQuery(idx.items, qv, { k, includeSecret, includeMirror }), mode: 'semantic', warning: null };
+  }
+
+  // auto
+  if (hasIndex && embed) {
+    try {
+      const qv = await embed(query);
+      return { hits: rankByQuery(idx.items, qv, { k, includeSecret, includeMirror }), mode: 'semantic', warning: null };
+    } catch (e) {
+      return { hits: bm25(), mode: 'bm25', warning: `semantic недоступен (${e.message}) — BM25 fallback` };
+    }
+  }
+  const embedUrlSet = !!process.env.OKF_EMBED_URL;
+  const warning = embedUrlSet
+    ? 'BM25 fallback — нет индекса: запусти `okf-recall.mjs index` для семантики'
+    : FALLBACK_WARN_OFF;
+  return { hits: bm25(), mode: 'bm25', warning };
 }
 
 const DEFAULT_STALE_AGE_MS = 86_400_000;
