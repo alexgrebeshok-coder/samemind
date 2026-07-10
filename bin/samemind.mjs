@@ -6,6 +6,7 @@
 //   npx samemind gde "<query>" ...       → tools/gde.mjs         (semantic + BM25 fallback)
 //   npx samemind brief [...]             → tools/brief.mjs       (identity/user/engine-rule digest, --inject)
 //   npx samemind handoff [...]           → tools/handoff.mjs     (work-state: tasks/plans/decisions/session)
+//   npx samemind forget <id>             → tools/forget.mjs      (soft-deprecate; never deletes — see docs/memory-hygiene.md)
 //   npx samemind serve                   → tools/mcp-server.mjs  (MCP stdio server: memory_* tools)
 //
 // query/recall/gde are routed with OKF_ROOT defaulted to the caller's cwd, so the tools
@@ -24,6 +25,7 @@ const ROUTES = {
   gde: 'tools/gde.mjs',
   brief: 'tools/brief.mjs',
   handoff: 'tools/handoff.mjs',
+  forget: 'tools/forget.mjs',
   serve: 'tools/mcp-server.mjs',
 };
 
@@ -37,6 +39,7 @@ function usage() {
   console.log('  gde "<запрос>" ...    человекочитаемый поиск (semantic + BM25 fallback)');
   console.log('  brief [...]           бриф personality-слоя: identity+owner+роль движка (--engine <id> --budget <n> --inject <file>)');
   console.log('  handoff [...]         бриф состояния работ: active/decisions/plans/session (--project <path> --days N)');
+  console.log('  forget <id>           пометить концепт устаревшим (deprecated: true) — не удаляет файл, см. docs/memory-hygiene.md');
   console.log('  serve                 MCP stdio-сервер (memory_search/get/list/write_inbox/handoff/health) — подключи как MCP-инструмент');
 }
 

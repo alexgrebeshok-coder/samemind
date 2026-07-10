@@ -80,7 +80,9 @@ async function query(q, k, includeSecret, includeMirror, mode) {
   });
   if (warning) console.error(`⚠ ${warning}`);
   console.log(`# «${q}» → топ-${k} [${used}]`);
-  for (const r of hits) console.log(`${r.score.toFixed(3)}  ${(r.type || '').padEnd(10)} ${r.id} — ${r.title || ''}`);
+  for (const r of hits) {
+    console.log(`${r.score.toFixed(3)}  ${(r.type || '').padEnd(10)} ${r.id} — ${r.title || ''}${r.label ? '  ' + r.label : ''}`);
+  }
   if (!hits.length) console.log('(ничего не найдено)');
 }
 
