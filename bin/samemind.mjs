@@ -4,6 +4,7 @@
 //   npx samemind query <cmd> ...         → tools/okf-query.mjs   (list|type|tag|get|links|validate)
 //   npx samemind recall <cmd> ...        → tools/okf-recall.mjs  (index | "<query>" [--mode bm25|semantic|auto])
 //   npx samemind gde "<query>" ...       → tools/gde.mjs         (semantic + BM25 fallback)
+//   npx samemind serve                   → tools/mcp-server.mjs  (MCP stdio server: 5 memory_* tools)
 //
 // query/recall/gde are routed with OKF_ROOT defaulted to the caller's cwd, so the tools
 // operate on the user's own bundle rather than on samemind's own repo checkout.
@@ -19,6 +20,7 @@ const ROUTES = {
   query: 'tools/okf-query.mjs',
   recall: 'tools/okf-recall.mjs',
   gde: 'tools/gde.mjs',
+  serve: 'tools/mcp-server.mjs',
 };
 
 function usage() {
@@ -29,6 +31,7 @@ function usage() {
   console.log('  query <cmd> ...       структурные запросы: list | type <T> | tag <t> | get <id> | links | validate');
   console.log('  recall <cmd> ...      поиск: index | "<запрос>" [-k N] [--mode bm25|semantic|auto] (дефолт auto: BM25 без эндпоинта)');
   console.log('  gde "<запрос>" ...    человекочитаемый поиск (semantic + BM25 fallback)');
+  console.log('  serve                 MCP stdio-сервер (memory_search/get/list/write_inbox/health) — подключи как MCP-инструмент');
 }
 
 export function main(argv = process.argv.slice(2)) {
