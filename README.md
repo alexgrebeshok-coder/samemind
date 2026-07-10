@@ -107,6 +107,58 @@ OKF_ROOT=demo node tools/okf-query.mjs rel works_at acme-labs --inbound
 broken relation targets as **warnings** (path missing) without failing
 conformant type checks.
 
+## Identity layer
+
+The feature this project exists for: an agent that **knows itself, its owner,
+and its role on the current engine** — no re-explaining required. Three
+concept types (`Identity`, `User`, `EngineRule` — see
+[`docs/identity-layer.md`](docs/identity-layer.md)) hold voice/values/boundaries,
+owner preferences/hard rules, and per-engine role, all in plain OKF markdown.
+`samemind init` scaffolds skeletons for them (`concepts/_identity-template.md`,
+`entities/_user-template.md`, `concepts/_engine-rule-template.md`); `demo/`
+has a filled-in example (agent Nova, owner Alex Doe, three engines).
+
+`samemind brief` compresses all three into one budget-bounded markdown block
+and can inject it straight into an engine's instruction file, so it's live
+from the first token of a session — no retrieval step needed:
+
+```sh
+npx samemind brief --engine claude-code                # print to stdout
+npx samemind brief --engine claude-code --inject ./CLAUDE.md   # idempotent insert/replace
+```
+
+Shortened example, run against the demo bundle:
+
+```
+<!-- samemind:brief:start -->
+# Brief — Nova
+
+Nova is the agent whose mind lives in this bundle. Same identity, many engines...
+
+## Boundaries (hard — never overridden by engine or style)
+
+- Never deletes files or data without an explicit "delete".
+- External actions (send, publish, push, message someone) require confirmation.
+...
+
+## Owner — Alex Doe
+
+Owner of Nova and the human this bundle ultimately serves.
+- Hates: lies, flakiness, being ignored. In AI especially: stalling and not answering.
+
+## Engine: claude-code
+
+On this engine Nova does terminal development: reads, edits, runs, verifies — directly.
+- No irreversible action (delete, push) without explicit confirmation.
+<!-- samemind:brief:end -->
+```
+
+`--inject <file>` replaces only the content between the two marker comments —
+text outside them is never touched, running it twice is a no-op. Priority
+under `--budget` (default ~1500 tokens): boundaries/owner-rules/engine-role
+first, voice next, everything else trimmed first with a `truncated — see
+/concepts/…` pointer back to the source.
+
 ## Tools
 
 | Command | Purpose |
@@ -115,15 +167,16 @@ conformant type checks.
 | `samemind query <cmd>` | Structural queries: `list`, `type`, `tag`, `get`, `links`, `rel`, `validate` |
 | `samemind recall "<query>"` | Search: `--mode bm25\|semantic\|auto` (default `auto`). BM25 works zero-dep; semantic needs `OKF_EMBED_URL` + `index`. |
 | `samemind gde "<query>"` | Human search: semantic when an index exists, BM25 fallback otherwise |
+| `samemind brief [--engine <id>] [--budget <n>] [--inject <file>]` | Compact Identity+User+EngineRule digest — see [Identity layer](#identity-layer) |
 | `samemind serve` | MCP stdio server: `memory_search/get/list/write_inbox/health` — see [MCP](#mcp) |
 | `tools/consolidate.mjs` | Gap map: inbox/mirror → candidates for promotion into the canon (dev-mode only, run from a checkout) |
 
-`query`/`recall`/`gde`/`serve` run against `OKF_ROOT` if set, otherwise your current directory —
-so they operate on your own bundle, not on the samemind package itself.
+`query`/`recall`/`gde`/`brief`/`serve` run against `OKF_ROOT` if set, otherwise your current
+directory — so they operate on your own bundle, not on the samemind package itself.
 
 Under the hood: `bin/samemind.mjs` routes to `tools/okf-query.mjs`, `tools/okf-recall.mjs`,
-`tools/gde.mjs`, `tools/init.mjs`, `tools/mcp-server.mjs`. Shared libraries: `tools/lib/`
-(okf, recall, bm25, mcp, injection), `lib/` (atomic write, safe paths, mirror sync).
+`tools/gde.mjs`, `tools/init.mjs`, `tools/brief.mjs`, `tools/mcp-server.mjs`. Shared libraries:
+`tools/lib/` (okf, recall, bm25, mcp, injection), `lib/` (atomic write, safe paths, mirror sync).
 
 ### Recall modes & env
 
