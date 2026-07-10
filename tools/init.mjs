@@ -41,6 +41,11 @@ okf_version: "0.1"
 Ideas, architectures, methods, rules. Typical \`type\` values: \`Concept\`, \`EngineRule\`,
 \`Identity\`, \`Reference\`. Start from [\`_template.md\`](_template.md).
 
+Identity layer (docs/identity-layer.md): [\`_identity-template.md\`](_identity-template.md) —
+the agent's own mind (one per bundle); [\`_engine-rule-template.md\`](_engine-rule-template.md) —
+per-engine role/allowed/forbidden (one per engine). Assemble a compact brief from them:
+\`npx samemind brief\`.
+
 List concepts: \`npx samemind query list\`
 `;
 
@@ -69,7 +74,106 @@ okf_version: "0.1"
 # Entities
 
 People, organizations, systems. \`type: User\` (owner) or \`type: Entity\`.
-Start from [\`_template.md\`](_template.md).
+Start from [\`_template.md\`](_template.md), or [\`_user-template.md\`](_user-template.md)
+for the bundle owner (see docs/identity-layer.md).
+`;
+
+const USER_TEMPLATE = `---
+type: User
+title:
+description: Owner of this bundle.
+visibility: internal
+tags: [user, owner, human]
+timestamp:
+source:
+relations:
+  uses: []
+  # e.g. /concepts/<agent-identity>.md
+---
+
+> Copy this file, drop the \`_\` prefix (→ \`entities/<owner-name>.md\`), fill it in.
+> One per bundle: the human (or org) this bundle ultimately serves. See
+> docs/identity-layer.md and demo/entities/alex-doe.md for a worked example.
+> Put preferences AND hard rules right in the intro below (bullets, before the
+> first ## heading) — \`samemind brief\` treats that block as top priority,
+> never trimmed. Extra ## sections (hobbies, context, …) are lower priority.
+
+# <owner name>
+
+Short bio — one or two sentences.
+
+- Preference, working style, what they like.
+- **Hates:** the short list of things that are non-negotiable no-gos.
+`;
+
+const IDENTITY_TEMPLATE = `---
+type: Identity
+title:
+description: The AI agent this bundle belongs to — voice, values, boundaries.
+visibility: internal
+tags: [agent, identity]
+timestamp:
+source:
+relations:
+  uses: []
+  # e.g. [/concepts/engine-claude-code.md, /concepts/engine-openclaw.md]
+---
+
+> Copy this file, drop the \`_\` prefix (→ \`concepts/<agent-name>.md\`), fill it in.
+> One per bundle: the agent whose mind this bundle *is*. See docs/identity-layer.md
+> and demo/concepts/nova.md for the full spec + a worked example.
+> \`samemind brief\` reads the ## headings below by (fuzzy) name — keep them,
+> add more if you like, but don't rename Voice/Values/Boundaries away.
+
+# <agent name>
+
+One or two sentences: who this agent is, same mind across every engine it runs on.
+
+## Voice
+
+- How it talks. Tone, register, what it never says.
+
+## Values
+
+- What it optimizes for when there's no explicit instruction.
+
+## Boundaries
+
+- Hard limits — things it never does without explicit confirmation.
+
+## Hierarchy under conflict
+
+1. Safety
+2. Owner's intent
+3. Style
+`;
+
+const ENGINE_RULE_TEMPLATE = `---
+type: EngineRule
+title: Engine — <engine-id>
+description: How <agent name> behaves on the <engine-id> engine — <one-line role>.
+visibility: internal
+tags: [engine, rule]
+timestamp:
+source:
+engine: <engine-id>
+relations:
+  part_of: /concepts/<agent-identity>.md
+---
+
+> Copy this file to \`concepts/engine-<engine-id>.md\` (drop the leading \`_\`,
+> name the file after the engine id), fill it in. One per engine the agent
+> runs on. \`samemind brief --engine <id>\` matches by the \`engine:\` field
+> above first, falling back to the \`engine-<id>.md\` filename convention.
+> See docs/identity-layer.md.
+
+# Engine: <engine-id>
+
+One sentence: the role this engine plays (terminal dev / chat orchestrator / batch coder / …).
+
+- Allowed: what it does here.
+- Forbidden: what it does not do here (or only with confirmation).
+- Style: tone/format specific to this engine.
 `;
 
 const PROJECTS_TEMPLATE = `---
@@ -249,8 +353,11 @@ export function runInit({ targetDir = '.', demo = false, packageRoot = PACKAGE_R
   writeFileSync(join(dir, '.gitignore'), GITIGNORE, 'utf8');
 
   writeFileSync(join(dir, 'concepts', '_template.md'), CONCEPTS_TEMPLATE, 'utf8');
+  writeFileSync(join(dir, 'concepts', '_identity-template.md'), IDENTITY_TEMPLATE, 'utf8');
+  writeFileSync(join(dir, 'concepts', '_engine-rule-template.md'), ENGINE_RULE_TEMPLATE, 'utf8');
   writeFileSync(join(dir, 'concepts', 'index.md'), CONCEPTS_INDEX, 'utf8');
   writeFileSync(join(dir, 'entities', '_template.md'), ENTITIES_TEMPLATE, 'utf8');
+  writeFileSync(join(dir, 'entities', '_user-template.md'), USER_TEMPLATE, 'utf8');
   writeFileSync(join(dir, 'entities', 'index.md'), ENTITIES_INDEX, 'utf8');
   writeFileSync(join(dir, 'projects', '_template.md'), PROJECTS_TEMPLATE, 'utf8');
   writeFileSync(join(dir, 'projects', 'index.md'), PROJECTS_INDEX, 'utf8');
@@ -273,8 +380,11 @@ function printNextSteps() {
   console.log('');
   console.log('Что дальше:');
   console.log('  1. добавь концепт — скопируй concepts/_template.md → concepts/<name>.md и заполни');
-  console.log('  2. npx samemind query list — посмотреть, что уже в bundle');
-  console.log('  3. npx samemind serve — MCP stdio-сервер (claude mcp add samemind -- npx samemind serve)');
+  console.log('  2. слой личности (кто агент/кто владелец/роль движка) — concepts/_identity-template.md,');
+  console.log('     entities/_user-template.md, concepts/_engine-rule-template.md (docs/identity-layer.md)');
+  console.log('  3. npx samemind query list — посмотреть, что уже в bundle');
+  console.log('  4. npx samemind brief — компактный бриф (identity+owner+engine) для инструкций движка');
+  console.log('  5. npx samemind serve — MCP stdio-сервер (claude mcp add samemind -- npx samemind serve)');
 }
 
 async function main() {
