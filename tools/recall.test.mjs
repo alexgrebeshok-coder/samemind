@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // recall.test.mjs — unit tests for the recall index (node --test). Mock embed — no live server.
 // Run: node --test tools/recall.test.mjs
-import { describe, it } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   stripLinks, docText, contentHash, cosine, passesTier, rankByQuery,
-  storageOf, storagesPresent, syncIndex,
+  storageOf, storagesPresent, syncIndex, rankByKeywords, recallSearch, fetchEmbedding,
 } from './lib/recall.mjs';
 
 // Deterministic mock-embed: 3-dim bag of words (enough for unit tests).
@@ -211,5 +211,153 @@ Atlas research corpus.
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('recall — BM25 fallback (rankByKeywords)', () => {
+  const docs = [
+    {
+      id: 'projects/lumen',
+      reserved: false,
+      fm: { title: 'Lumen Notes App', type: 'Project', visibility: 'internal', tags: ['lumen', 'notes'] },
+      body: 'Core of the Lumen notes editor.',
+    },
+    {
+      id: 'projects/atlas',
+      reserved: false,
+      fm: { title: 'Atlas Research', type: 'Project', visibility: 'internal' },
+      body: 'Atlas research corpus.',
+    },
+  ];
+
+  it('BM25 ranks the relevant concept #1 without any network', () => {
+    const ranked = rankByKeywords(docs, 'lumen notes', { k: 2 });
+    assert.equal(ranked[0].id, 'projects/lumen');
+    // atlas не содержит ни 'lumen', ни 'notes' → отфильтрован (score 0)
+    assert.equal(ranked.length, 1);
+    assert.ok(Number.isFinite(ranked[0].score));
+  });
+
+  it('returns [] when nothing matches', () => {
+    assert.deepEqual(rankByKeywords(docs, 'zzznomatch', { k: 5 }), []);
+  });
+});
+
+describe('recall — recallSearch modes', () => {
+  const docs = [
+    {
+      id: 'projects/lumen',
+      reserved: false,
+      fm: { title: 'Lumen Notes App', type: 'Project', visibility: 'internal', tags: ['lumen', 'notes'] },
+      body: 'Core of the Lumen notes editor.',
+    },
+    {
+      id: 'projects/atlas',
+      reserved: false,
+      fm: { title: 'Atlas Research', type: 'Project', visibility: 'internal' },
+      body: 'Atlas research corpus.',
+    },
+  ];
+  const idx = { items: {
+    'projects/lumen': { visibility: 'internal', vector: [2, 0], title: 'Lumen', type: 'Project' },
+    'projects/atlas': { visibility: 'internal', vector: [0, 2], title: 'Atlas', type: 'Project' },
+  } };
+  // 2-dim bag-of-words mock, синхронный по смыслу (возвращает Promise).
+  const mockEmbed = async t => {
+    const x = t.toLowerCase();
+    return [(x.match(/lumen|notes/g) || []).length + 0.01, (x.match(/atlas|research/g) || []).length + 0.01];
+  };
+
+  it('mode=bm25 — всегда BM25, без warning', async () => {
+    const r = await recallSearch({ docs, query: 'lumen', mode: 'bm25', k: 2 });
+    assert.equal(r.mode, 'bm25');
+    assert.equal(r.warning, null);
+    assert.equal(r.hits[0].id, 'projects/lumen');
+  });
+
+  it('mode=auto без индекса → деградирует на BM25 с честным warning', async () => {
+    const prev = process.env.OKF_EMBED_URL;
+    delete process.env.OKF_EMBED_URL;
+    try {
+      const r = await recallSearch({ docs, query: 'lumen', mode: 'auto', idx: { items: {} }, embed: mockEmbed, k: 2 });
+      assert.equal(r.mode, 'bm25');
+      assert.match(r.warning, /BM25 fallback/);
+      assert.match(r.warning, /OKF_EMBED_URL/);
+    } finally {
+      if (prev !== undefined) process.env.OKF_EMBED_URL = prev;
+    }
+  });
+
+  it('mode=auto с индексом и отвечающим embed → semantic', async () => {
+    const r = await recallSearch({ docs, query: 'lumen notes', mode: 'auto', idx, embed: mockEmbed, k: 2 });
+    assert.equal(r.mode, 'semantic');
+    assert.equal(r.warning, null);
+    assert.equal(r.hits[0].id, 'projects/lumen');
+  });
+
+  it('mode=auto при падении эндпоинта — не падает, уходит в BM25 с warning', async () => {
+    const badEmbed = async () => { throw new Error('ECONNREFUSED 127.0.0.1:8000'); };
+    const r = await recallSearch({ docs, query: 'lumen', mode: 'auto', idx, embed: badEmbed, k: 2 });
+    assert.equal(r.mode, 'bm25');
+    assert.match(r.warning, /ECONNREFUSED/);
+    assert.equal(r.hits[0].id, 'projects/lumen');
+  });
+
+  it('mode=semantic без индекса — бросает (нет тихого фолбэка)', async () => {
+    await assert.rejects(
+      () => recallSearch({ docs, query: 'x', mode: 'semantic', idx: { items: {} }, embed: mockEmbed, k: 2 }),
+      /требует индекс/,
+    );
+  });
+});
+
+describe('recall — fetchEmbedding (OpenAI-compatible, stubbed fetch)', () => {
+  let saved;
+  let lastOpts;
+  function stub(json, ok = true, status = 200) {
+    return async (url, opts) => {
+      lastOpts = opts;
+      return { ok, status, text: async => (ok ? '' : 'err body'), json: async => json };
+    };
+  }
+  beforeEach(() => { saved = globalThis.fetch; });
+  afterEach(() => { globalThis.fetch = saved; });
+
+  it('standard OpenAI request: POST {model,input}; parses data[0].embedding', async () => {
+    globalThis.fetch = stub({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
+    const v = await fetchEmbedding('hello', { dim: null });
+    assert.deepEqual(v, [0.1, 0.2, 0.3]);
+    assert.equal(lastOpts.method, 'POST');
+    assert.equal(lastOpts.headers['Content-Type'], 'application/json');
+    assert.deepEqual(JSON.parse(lastOpts.body), { model: 'bge-m3', input: 'hello' });
+  });
+
+  it('sends Authorization: Bearer only when key provided', async () => {
+    globalThis.fetch = stub({ data: [{ embedding: [0.1] }] });
+    await fetchEmbedding('hi', { key: undefined, dim: null });
+    assert.equal(lastOpts.headers.Authorization, undefined);
+    await fetchEmbedding('hi', { key: 'sk-test', dim: null });
+    assert.equal(lastOpts.headers.Authorization, 'Bearer sk-test');
+  });
+
+  it('dim=null accepts any vector length (any OpenAI-compatible endpoint)', async () => {
+    globalThis.fetch = stub({ data: [{ embedding: new Array(1536).fill(0.1) }] });
+    const v = await fetchEmbedding('hi', { dim: null });
+    assert.equal(v.length, 1536);
+  });
+
+  it('explicit dim mismatch throws', async () => {
+    globalThis.fetch = stub({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
+    await assert.rejects(() => fetchEmbedding('hi', { dim: 1024 }), /dim 3 ≠ ожидаемой 1024/);
+  });
+
+  it('HTTP error throws with status', async () => {
+    globalThis.fetch = stub({ data: [] }, false, 503);
+    await assert.rejects(() => fetchEmbedding('hi', { dim: null }), /HTTP 503/);
+  });
+
+  it('malformed response (no embedding) throws', async () => {
+    globalThis.fetch = stub({ data: [{}] });
+    await assert.rejects(() => fetchEmbedding('hi', { dim: null }), /непустой vector/);
   });
 });
