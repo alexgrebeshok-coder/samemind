@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const ROOT = resolve(process.env.OKF_ROOT || join(HERE, '../..'));
 // Bundle map + docs that live at the root but are not graph concepts.
-export const RESERVED = new Set(['index.md', 'log.md', 'README.md', 'LICENSE.md', 'CHANGELOG.md', 'CONTRIBUTING.md']);
+export const RESERVED = new Set(['index.md', 'log.md', 'README.md', 'DASHBOARD.md', 'LICENSE.md', 'CHANGELOG.md', 'CONTRIBUTING.md']);
 
 export function walk(dir = ROOT, { includeSecret = false, includeMirror = false } = {}, acc = []) {
   let entries;

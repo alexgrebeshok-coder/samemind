@@ -181,6 +181,42 @@ under `--budget` (default ~1500 tokens): boundaries/owner-rules/engine-role
 first, voice next, everything else trimmed first with a `truncated — see
 /concepts/…` pointer back to the source.
 
+## Board
+
+A kanban over the work-discipline layer (Plan / Task / Decision / Session — see
+[`docs/work-discipline.md`](docs/work-discipline.md)): what's queued, what's moving,
+what's **blocked** (and for how long — blocks older than 7 days are flagged `aging`),
+what just landed, and what was recently agreed. Pure markdown — reads in the terminal,
+renders on GitHub. `--write` atomically refreshes `DASHBOARD.md` in the bundle root
+(a committed artifact; `samemind init` seeds a placeholder); `--project` scopes the four
+task columns to one project (Plans / Recent / Sessions stay portfolio-wide).
+
+```sh
+npx samemind board                              # print the kanban to stdout
+npx samemind board --write                      # refresh DASHBOARD.md (idempotent — safe in a hook/cron)
+npx samemind board --project /projects/lumen.md # only Lumen's tasks
+```
+
+Shortened example, run against the demo bundle:
+
+```
+# Dashboard
+
+## 🔧 In progress (1)
+- **[Ship Lumen backlink editor](/projects/task-lumen-backlinks.md)** — Land the bidirectional backlink editor…
+
+## 🔴 Blocked (1)
+- **[Wire retrieval strategy over the Atlas corpus](/projects/task-atlas-retrieval.md)** — Connect Nova's retrieval…
+  - ⛔ Corpus ingestion paused — waiting on Alex to confirm the source license list…
+  - ⏳ 0д
+
+## 📋 Plans (1)
+- **[Lumen multi-device sync](/projects/plan-lumen-sync.md)** · agreed — Agreed plan to ship end-to-end sync…
+
+### Последние сессии (1)
+- [Lumen sync kickoff (2026-07-09)](/concepts/session-2026-07-09-lumen-sync.md) · 2026-07-09 — Working session that agreed the sync plan…
+```
+
 ## Tools
 
 | Command | Purpose |
@@ -192,16 +228,17 @@ first, voice next, everything else trimmed first with a `truncated — see
 | `samemind brief [--engine <id>] [--budget <n>] [--inject <file>]` | Compact Identity+User+EngineRule digest — see [Identity layer](#identity-layer) |
 | `samemind handoff [--project <path>] [--days N]` | Work-state brief (tasks/plans/decisions/session) — see [docs/compaction-recipe.md](docs/compaction-recipe.md) |
 | `samemind forget <id>` | Soft-deprecate a concept (`deprecated: true` in frontmatter) — never deletes the file. See [Memory hygiene](docs/memory-hygiene.md) |
+| `samemind board [--write] [--project <path>]` | Kanban over the work-discipline layer (Backlog / In progress / Done / Blocked+aging, Plans, Recent) — `--write` → `DASHBOARD.md` — see [Board](#board) |
 | `samemind serve` | MCP stdio server: `memory_search/get/list/write_inbox/handoff/health` — see [MCP](#mcp) |
 | `tools/consolidate.mjs` | Gap map: inbox/mirror → candidates for promotion into the canon, plus a same-type "contradictions" section (dev-mode only, run from a checkout) |
 
-`query`/`recall`/`gde`/`brief`/`handoff`/`forget`/`serve` run against `OKF_ROOT` if set, otherwise your
+`query`/`recall`/`gde`/`brief`/`board`/`handoff`/`forget`/`serve` run against `OKF_ROOT` if set, otherwise your
 current directory — so they operate on your own bundle, not on the samemind package itself.
 
 Under the hood: `bin/samemind.mjs` routes to `tools/okf-query.mjs`, `tools/okf-recall.mjs`,
-`tools/gde.mjs`, `tools/init.mjs`, `tools/brief.mjs`, `tools/handoff.mjs`, `tools/forget.mjs`,
-`tools/mcp-server.mjs`. Shared libraries: `tools/lib/` (okf, recall, bm25, hygiene, mcp, injection),
-`lib/` (atomic write, safe paths, mirror sync).
+`tools/gde.mjs`, `tools/init.mjs`, `tools/brief.mjs`, `tools/board.mjs`, `tools/handoff.mjs`,
+`tools/forget.mjs`, `tools/mcp-server.mjs`. Shared libraries: `tools/lib/` (okf, recall, bm25,
+hygiene, mcp, injection), `lib/` (atomic write, safe paths, mirror sync).
 
 ### Recall modes & env
 

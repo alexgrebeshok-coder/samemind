@@ -390,6 +390,18 @@ node_modules/
 *.log
 `;
 
+const DASHBOARD_PLACEHOLDER = `# Dashboard
+
+_Пусто — это плейсхолдер._ Сгенерируй канбан из состояния работ (Plan / Task / Decision /
+Session — см. docs/work-discipline.md):
+
+\`\`\`sh
+npx samemind board --write        # записать в этот DASHBOARD.md (коммитится в git)
+npx samemind board                # то же в stdout
+npx samemind board --project /projects/<name>.md   # только задачи одного проекта
+\`\`\`
+`;
+
 function rootIndexMd(bundleName) {
   return `---
 okf_version: "0.1"
@@ -493,6 +505,7 @@ export function runInit({ targetDir = '.', demo = false, packageRoot = PACKAGE_R
 
   writeFileSync(join(dir, 'index.md'), rootIndexMd(bundleName), 'utf8');
   writeFileSync(join(dir, 'log.md'), rootLogMd(today), 'utf8');
+  writeFileSync(join(dir, 'DASHBOARD.md'), DASHBOARD_PLACEHOLDER, 'utf8');
   writeFileSync(join(dir, '.gitignore'), GITIGNORE, 'utf8');
 
   writeFileSync(join(dir, 'concepts', '_template.md'), CONCEPTS_TEMPLATE, 'utf8');
@@ -531,7 +544,8 @@ function printNextSteps() {
   console.log('     entities/_user-template.md, concepts/_engine-rule-template.md (docs/identity-layer.md)');
   console.log('  3. npx samemind query list — посмотреть, что уже в bundle');
   console.log('  4. npx samemind brief — компактный бриф (identity+owner+engine) для инструкций движка');
-  console.log('  5. npx samemind serve — MCP stdio-сервер (claude mcp add samemind -- npx samemind serve)');
+  console.log('  5. npx samemind board --write — канбан состояния работ в DASHBOARD.md');
+  console.log('  6. npx samemind serve — MCP stdio-сервер (claude mcp add samemind -- npx samemind serve)');
 }
 
 async function main() {
