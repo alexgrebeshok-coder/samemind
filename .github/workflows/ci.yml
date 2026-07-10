@@ -1,0 +1,25 @@
+# CI — unit tests on Node 20 LTS + 22 current.
+# Zero npm deps: `node --test tools/*.test.mjs` only.
+name: ci
+
+on:
+  push:
+    branches: [main, 'auto/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Run unit tests
+        run: node --test tools/*.test.mjs
