@@ -16,6 +16,7 @@
 // query/recall/gde are routed with OKF_ROOT defaulted to the caller's cwd, so the tools
 // operate on the user's own bundle rather than on samemind's own repo checkout.
 import { spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -78,7 +79,12 @@ export function main(argv = process.argv.slice(2)) {
   return res.status === null ? 1 : res.status;
 }
 
-const isMain = process.argv[1] === fileURLToPath(import.meta.url);
+// npm/npx run this file through a .bin symlink, so argv[1] must be realpath'd
+// before comparing with import.meta.url — otherwise main() silently never runs.
+const isMain = (() => {
+  try { return realpathSync(process.argv[1] ?? '') === fileURLToPath(import.meta.url); }
+  catch { return false; }
+})();
 if (isMain) {
   process.exit(main());
 }

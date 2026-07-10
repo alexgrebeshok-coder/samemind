@@ -11,6 +11,8 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { mkdtempSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..');
@@ -51,5 +53,15 @@ describe('engine instruction files', () => {
     for (const f of ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md']) {
       assert.ok(RESERVED.has(f), `${f} must be RESERVED`);
     }
+  });
+});
+
+describe('bin via symlink (npx/.bin path)', () => {
+  it('prints usage when invoked through a symlink, like npm .bin does', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sm-symlink-'));
+    const link = join(dir, 'samemind');
+    symlinkSync(join(REPO_ROOT, 'bin', 'samemind.mjs'), link);
+    const res = spawnSync(process.execPath, [link], { encoding: 'utf8' });
+    assert.match(res.stdout + res.stderr, /Commands:/, 'usage must print through a symlinked bin');
   });
 });
