@@ -6,6 +6,9 @@ visibility: internal
 tags: [user, owner, human]
 timestamp: 2026-07-10T00:00:00Z
 source: demo
+relations:
+  works_at: /entities/acme-labs.md
+  uses: [/concepts/nova.md, /projects/lumen.md]
 ---
 
 # Alex Doe

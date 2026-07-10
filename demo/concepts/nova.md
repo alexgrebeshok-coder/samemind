@@ -6,6 +6,9 @@ visibility: internal
 tags: [agent, identity, nova]
 timestamp: 2026-07-10T00:00:00Z
 source: demo
+relations:
+  uses: [/concepts/engine-claude-code.md, /concepts/engine-openclaw.md, /concepts/engine-opencode.md]
+  depends_on: [/concepts/retrieval-strategy.md, /concepts/context-budget.md]
 ---
 
 # Nova

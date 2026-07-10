@@ -17,6 +17,10 @@ node tools/okf-query.mjs list
 node tools/okf-query.mjs type Project
 node tools/okf-query.mjs links
 
+# typed relations (demo): who works at Acme Labs?
+OKF_ROOT=demo node tools/okf-query.mjs rel works_at acme-labs --inbound
+OKF_ROOT=demo node tools/okf-query.mjs rel depends_on projects/atlas
+
 # semantic recall (needs a local OpenAI-compatible embeddings endpoint)
 export OKF_EMBED_URL=http://127.0.0.1:8000/v1/embeddings   # optional override
 node tools/okf-recall.mjs index
@@ -55,17 +59,39 @@ visibility: internal   # public | internal | secret | mirror
 tags: []
 timestamp: 2026-07-10T00:00:00Z
 source: …
+relations:             # optional SameMind extension (typed graph edges)
+  works_at: /entities/acme-labs.md
+  depends_on: [/projects/atlas.md, /concepts/retrieval-strategy.md]
 ---
 ```
 
 See `demo/` for a complete fictional worked example (agent **Nova**, owner
 **Alex Doe**, three engine rules, two projects, linked concepts).
 
+## Relations
+
+Typed edges in frontmatter (`relations`) are a SameMind profile extension on top
+of OKF v0.1. Edge types are open — no fixed vocabulary. Values are
+bundle-absolute paths (`/entities/…md`) or lists of them; the parser always
+normalizes to arrays.
+
+```sh
+# outbound: what does Alex depend on / work at?
+OKF_ROOT=demo node tools/okf-query.mjs rel works_at entities/alex-doe
+
+# inbound: who works at Acme Labs?
+OKF_ROOT=demo node tools/okf-query.mjs rel works_at acme-labs --inbound
+```
+
+`links` counts relation edges alongside markdown links; `validate` reports
+broken relation targets as **warnings** (path missing) without failing
+conformant type checks.
+
 ## Tools
 
 | Tool | Purpose |
 |------|---------|
-| `tools/okf-query.mjs` | Structural queries: `list`, `type`, `tag`, `get`, `links`, `validate` |
+| `tools/okf-query.mjs` | Structural queries: `list`, `type`, `tag`, `get`, `links`, `rel`, `validate` |
 | `tools/okf-recall.mjs` | Semantic search (local embeddings; env: `OKF_EMBED_URL`, `OKF_EMBED_MODEL`) |
 | `tools/gde.mjs` | Human search: semantic + keyword fallback |
 | `tools/consolidate.mjs` | Gap map: inbox/mirror → candidates for promotion into the canon |

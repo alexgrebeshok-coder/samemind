@@ -6,6 +6,9 @@ visibility: internal
 tags: [memory, retrieval, recall]
 timestamp: 2026-07-10T00:00:00Z
 source: demo
+relations:
+  depends_on: /concepts/context-budget.md
+  part_of: /concepts/nova.md
 ---
 
 # Retrieval strategy
