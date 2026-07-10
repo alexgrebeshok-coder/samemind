@@ -115,14 +115,15 @@ conformant type checks.
 | `samemind query <cmd>` | Structural queries: `list`, `type`, `tag`, `get`, `links`, `rel`, `validate` |
 | `samemind recall "<query>"` | Search: `--mode bm25\|semantic\|auto` (default `auto`). BM25 works zero-dep; semantic needs `OKF_EMBED_URL` + `index`. |
 | `samemind gde "<query>"` | Human search: semantic when an index exists, BM25 fallback otherwise |
+| `samemind serve` | MCP stdio server: `memory_search/get/list/write_inbox/health` — see [MCP](#mcp) |
 | `tools/consolidate.mjs` | Gap map: inbox/mirror → candidates for promotion into the canon (dev-mode only, run from a checkout) |
 
-`query`/`recall`/`gde` run against `OKF_ROOT` if set, otherwise your current directory —
+`query`/`recall`/`gde`/`serve` run against `OKF_ROOT` if set, otherwise your current directory —
 so they operate on your own bundle, not on the samemind package itself.
 
 Under the hood: `bin/samemind.mjs` routes to `tools/okf-query.mjs`, `tools/okf-recall.mjs`,
-`tools/gde.mjs`, `tools/init.mjs`. Shared libraries: `tools/lib/` (okf, recall, bm25), `lib/`
-(atomic write, safe paths, mirror sync).
+`tools/gde.mjs`, `tools/init.mjs`, `tools/mcp-server.mjs`. Shared libraries: `tools/lib/`
+(okf, recall, bm25, mcp, injection), `lib/` (atomic write, safe paths, mirror sync).
 
 ### Recall modes & env
 
@@ -142,6 +143,52 @@ Semantic search uses any OpenAI-compatible `/v1/embeddings` server:
 | `OKF_EMBED_DIM` | Optional; if set, the response vector length is validated |
 
 Build the index once after setting the endpoint: `node tools/okf-recall.mjs index`.
+
+## MCP
+
+`samemind serve` runs a stdio MCP server (JSON-RPC 2.0, newline-delimited, no SDK
+dependency) exposing the bundle to any MCP-capable agent — Claude Code, Codex,
+opencode, or your own client.
+
+```sh
+npx samemind serve                 # OKF_ROOT (or cwd) = bundle root; stdin/stdout = protocol
+```
+
+Connect it as a project or user-scope MCP server:
+
+```sh
+claude mcp add samemind -- npx samemind serve
+codex mcp add samemind -- npx samemind serve
+```
+
+Point `OKF_ROOT` at the bundle you want served (defaults to the current directory
+if unset — same rule as `query`/`recall`/`gde`).
+
+### Tools
+
+| Tool | Purpose |
+|------|---------|
+| `memory_search` | `{query, k?, mode?}` → recall (semantic if an index exists and answers, BM25 otherwise). Returns `{id, type, title, score, snippet}[]`. |
+| `memory_get` | `{id}` → one concept, full frontmatter + body. |
+| `memory_list` | `{type?, tag?}` → concept ids/titles, optionally filtered. |
+| `memory_write_inbox` | `{content, title?}` → append to `inbox/<agent>.md` — the **only** writable path. |
+| `memory_health` | `{}` → bundle root, concept count, active search mode, server version. |
+
+### Security
+
+- **`visibility: secret` is never returned** by any tool — no flag, no parameter, no
+  exception. Secret concepts are excluded before the tools ever see them.
+- **Path safety**: any `id` passed to `memory_get` is normalized and must resolve
+  strictly inside the bundle root; `..`/absolute escapes are refused outright.
+- **Write path is fixed**: `memory_write_inbox` can only ever append to
+  `inbox/<agent>.md`. The agent name comes from `SAMEMIND_AGENT` (default `mcp`),
+  sanitized to `[a-z0-9-]`. Every write is atomic (temp file + rename) and
+  append-only — existing entries are never rewritten.
+- **Prompt-injection content is quarantined, not dropped.** Text that looks like an
+  instruction-override attempt (`ignore previous instructions`, `<system>`,
+  `tool_use`, "run/execute this command", …) is still written — wrapped in a
+  fenced ` ```quarantine ` block with a `quarantine: true` marker — so memory is
+  never silently lost, but no downstream reader executes it blindly.
 
 ## Compatibility
 
