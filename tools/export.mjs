@@ -204,13 +204,13 @@ export function assertEmptyTarget(targetDir) {
   const dir = resolve(targetDir);
   if (existsSync(dir)) {
     if (!statSync(dir).isDirectory()) {
-      return { ok: false, reason: `«${dir}» существует и не является папкой` };
+      return { ok: false, reason: `"${dir}" exists and is not a directory` };
     }
     const entries = readdirSync(dir);
     if (entries.length > 0) {
       return {
         ok: false,
-        reason: `папка «${dir}» не пуста (${entries.length} элементов) — export только в пустую папку, ничего не перезаписываю`,
+        reason: `directory "${dir}" is not empty (${entries.length} entries) — export only into an empty directory, nothing overwritten`,
       };
     }
   }
@@ -230,12 +230,12 @@ export function runExport({
   docs,
 } = {}) {
   if (!targetDir) {
-    return { ok: false, reason: 'нужен target-dir: samemind export <dir> [--visibility public|internal] [--dry-run] [--to-gbrain]' };
+    return { ok: false, reason: 'target-dir required: samemind export <dir> [--visibility public|internal] [--dry-run] [--to-gbrain]' };
   }
 
   const visKey = String(visibility || 'internal').toLowerCase();
   if (visKey !== 'public' && visKey !== 'internal') {
-    return { ok: false, reason: `--visibility должен быть public|internal (получено «${visibility}»)` };
+    return { ok: false, reason: `--visibility must be public|internal (got "${visibility}")` };
   }
 
   const empty = assertEmptyTarget(targetDir);
@@ -365,9 +365,9 @@ export async function main(argv = process.argv.slice(2)) {
   if (!opts.targetDir) {
     console.log('Usage: samemind export <target-dir> [--visibility public|internal] [--dry-run] [--to-gbrain]');
     console.log('');
-    console.log('  Копирует shareable OKF-bundle (без secret/mirror/inbox).');
-    console.log('  target-dir должна быть пустой (как init). --dry-run — только отчёт.');
-    console.log('  --to-gbrain — страницы в формате garrytan/gbrain (см. docs/interop.md).');
+    console.log('  Copies a shareable OKF-bundle (no secret/mirror/inbox).');
+    console.log('  target-dir must be empty (like init). --dry-run — report only.');
+    console.log('  --to-gbrain — pages in garrytan/gbrain format (see docs/interop.md).');
     return 0;
   }
   const result = runExport(opts);
@@ -385,7 +385,7 @@ export async function main(argv = process.argv.slice(2)) {
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
   main().catch(e => {
-    console.error('Ошибка:', e.message);
+    console.error('Error:', e.message);
     process.exit(1);
   }).then(code => {
     if (typeof code === 'number') process.exit(code);
