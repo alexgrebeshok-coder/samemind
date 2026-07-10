@@ -89,7 +89,7 @@ describe('buildBoard — blocked reason + davnost + aging', () => {
       task('projects/t', 'blocked', { blocked_reason: 'waiting on license', timestamp: daysAgo(3) }),
     ], { now: NOW });
     assert.ok(board.includes('⛔ waiting on license'), 'reason shown');
-    assert.ok(board.includes('⏳ 3д'), 'age shown');
+    assert.ok(board.includes('⏳ 3d'), 'age shown');
     assert.ok(!board.includes('aging'), 'fresh block not flagged aging');
   });
 
@@ -97,7 +97,7 @@ describe('buildBoard — blocked reason + davnost + aging', () => {
     const board = buildBoard([
       task('projects/t', 'blocked', { blocked_reason: 'stale', timestamp: daysAgo(20) }),
     ], { now: NOW });
-    assert.match(board, /⏳ 20д \(aging\)/, 'age + aging marker');
+    assert.match(board, /⏳ 20d \(aging\)/, 'age + aging marker');
   });
 
   it('omits the age line when the task has no usable timestamp', () => {
@@ -138,7 +138,7 @@ describe('buildBoard --project filter', () => {
     assert.match(board, /## 🔧 In progress \(1\)/);   // only lumen's in-progress task
     assert.match(board, /## 🆕 Backlog \(1\)/);        // only lumen's backlog task
     assert.ok(board.includes('LumenOne') && board.includes('LumenTwo'));
-    assert.match(board, /Фильтр задач: проект `projects\/lumen`/);
+    assert.match(board, /Task filter: project `projects\/lumen`/);
   });
 
   it('accepts the bare project name too', () => {
@@ -179,9 +179,9 @@ describe('buildBoard — limits & windows', () => {
       docs.push(doc(`concepts/s${i}`, { type: 'Session', title: `S${i}`, description: 'd', date: daysAgo(i).slice(0, 10), timestamp: daysAgo(i) }));
     }
     const board = buildBoard(docs, { now: NOW });
-    assert.match(board, /### Последние сессии \(3\)/);
+    assert.match(board, /### Recent sessions \(3\)/);
     // the sessions subsection holds exactly 3 one-liners (older sessions also surface in Recent)
-    const sessSection = board.split('### Последние сессии')[1];
+    const sessSection = board.split('### Recent sessions')[1];
     const bullets = sessSection.match(/^- \[/gm) || [];
     assert.equal(bullets.length, 3, 'exactly 3 session summaries');
     assert.ok(sessSection.includes('S0') && sessSection.includes('S2'), '3 newest sessions');
@@ -194,7 +194,7 @@ describe('buildBoard — robustness', () => {
     const board = buildBoard([], { now: NOW });
     assert.match(board, /^# Dashboard/);
     assert.match(board, /## 🆕 Backlog \(0\)/);
-    assert.ok(board.includes('_(пусто)_'), 'empty sections marked');
+    assert.ok(board.includes('_(empty)_'), 'empty sections marked');
   });
 
   it('is idempotent: same docs+now → identical bytes', () => {

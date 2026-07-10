@@ -29,7 +29,7 @@ describe('package hygiene (N8): validate on the repo checkout itself', () => {
     const r = runQuery(['validate']);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /✅ OKF v0\.1 conformant/);
-    assert.doesNotMatch(r.stdout, /нет frontmatter/);
+    assert.doesNotMatch(r.stdout, /no frontmatter/);
   });
 
   it('list on repo root does not surface docs/ prose or root agent docs as concepts', () => {

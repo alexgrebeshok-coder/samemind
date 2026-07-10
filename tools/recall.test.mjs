@@ -233,7 +233,7 @@ describe('recall — BM25 fallback (rankByKeywords)', () => {
   it('BM25 ranks the relevant concept #1 without any network', () => {
     const ranked = rankByKeywords(docs, 'lumen notes', { k: 2 });
     assert.equal(ranked[0].id, 'projects/lumen');
-    // atlas не содержит ни 'lumen', ни 'notes' → отфильтрован (score 0)
+    // atlas contains neither 'lumen' nor 'notes' → filtered out (score 0)
     assert.equal(ranked.length, 1);
     assert.ok(Number.isFinite(ranked[0].score));
   });
@@ -262,20 +262,20 @@ describe('recall — recallSearch modes', () => {
     'projects/lumen': { visibility: 'internal', vector: [2, 0], title: 'Lumen', type: 'Project' },
     'projects/atlas': { visibility: 'internal', vector: [0, 2], title: 'Atlas', type: 'Project' },
   } };
-  // 2-dim bag-of-words mock, синхронный по смыслу (возвращает Promise).
+  // 2-dim bag-of-words mock, sync in effect (returns a Promise).
   const mockEmbed = async t => {
     const x = t.toLowerCase();
     return [(x.match(/lumen|notes/g) || []).length + 0.01, (x.match(/atlas|research/g) || []).length + 0.01];
   };
 
-  it('mode=bm25 — всегда BM25, без warning', async () => {
+  it('mode=bm25 — always BM25, no warning', async () => {
     const r = await recallSearch({ docs, query: 'lumen', mode: 'bm25', k: 2 });
     assert.equal(r.mode, 'bm25');
     assert.equal(r.warning, null);
     assert.equal(r.hits[0].id, 'projects/lumen');
   });
 
-  it('mode=auto без индекса → деградирует на BM25 с честным warning', async () => {
+  it('mode=auto without an index → degrades to BM25 with an honest warning', async () => {
     const prev = process.env.OKF_EMBED_URL;
     delete process.env.OKF_EMBED_URL;
     try {
@@ -288,14 +288,14 @@ describe('recall — recallSearch modes', () => {
     }
   });
 
-  it('mode=auto с индексом и отвечающим embed → semantic', async () => {
+  it('mode=auto with an index and a responding embed → semantic', async () => {
     const r = await recallSearch({ docs, query: 'lumen notes', mode: 'auto', idx, embed: mockEmbed, k: 2 });
     assert.equal(r.mode, 'semantic');
     assert.equal(r.warning, null);
     assert.equal(r.hits[0].id, 'projects/lumen');
   });
 
-  it('mode=auto при падении эндпоинта — не падает, уходит в BM25 с warning', async () => {
+  it('mode=auto when the endpoint fails — does not throw, falls back to BM25 with a warning', async () => {
     const badEmbed = async () => { throw new Error('ECONNREFUSED 127.0.0.1:8000'); };
     const r = await recallSearch({ docs, query: 'lumen', mode: 'auto', idx, embed: badEmbed, k: 2 });
     assert.equal(r.mode, 'bm25');
@@ -303,10 +303,10 @@ describe('recall — recallSearch modes', () => {
     assert.equal(r.hits[0].id, 'projects/lumen');
   });
 
-  it('mode=semantic без индекса — бросает (нет тихого фолбэка)', async () => {
+  it('mode=semantic without an index — throws (no silent fallback)', async () => {
     await assert.rejects(
       () => recallSearch({ docs, query: 'x', mode: 'semantic', idx: { items: {} }, embed: mockEmbed, k: 2 }),
-      /требует индекс/,
+      /requires an index/,
     );
   });
 });
@@ -348,7 +348,7 @@ describe('recall — fetchEmbedding (OpenAI-compatible, stubbed fetch)', () => {
 
   it('explicit dim mismatch throws', async () => {
     globalThis.fetch = stub({ data: [{ embedding: [0.1, 0.2, 0.3] }] });
-    await assert.rejects(() => fetchEmbedding('hi', { dim: 1024 }), /dim 3 ≠ ожидаемой 1024/);
+    await assert.rejects(() => fetchEmbedding('hi', { dim: 1024 }), /dim 3 != expected 1024/);
   });
 
   it('HTTP error throws with status', async () => {
@@ -358,6 +358,6 @@ describe('recall — fetchEmbedding (OpenAI-compatible, stubbed fetch)', () => {
 
   it('malformed response (no embedding) throws', async () => {
     globalThis.fetch = stub({ data: [{}] });
-    await assert.rejects(() => fetchEmbedding('hi', { dim: null }), /непустой vector/);
+    await assert.rejects(() => fetchEmbedding('hi', { dim: null }), /non-empty vector/);
   });
 });

@@ -147,7 +147,7 @@ describe('rel query — outbound and inbound', () => {
   it('inbound: who works_at acme → alex + iris', () => {
     const { code, out } = runQuery(root, ['rel', 'works_at', 'entities/acme', '--inbound']);
     assert.equal(code, 0, out);
-    assert.match(out, /Входящие works_at → entities\/acme/);
+    assert.match(out, /Inbound works_at → entities\/acme/);
     assert.match(out, /entities\/alex/);
     assert.match(out, /entities\/iris/);
   });
@@ -162,7 +162,7 @@ describe('rel query — outbound and inbound', () => {
   it('default rel prints inbound section too', () => {
     const { code, out } = runQuery(root, ['rel', 'works_at', 'alex']);
     assert.equal(code, 0, out);
-    assert.match(out, /Входящие works_at/);
+    assert.match(out, /Inbound works_at/);
   });
 });
 
@@ -189,7 +189,7 @@ describe('validate — broken relation edge is warning', () => {
     const { code, out } = runQuery(root, ['validate']);
     assert.equal(code, 0, out);
     assert.match(out, /✅ OKF/);
-    assert.match(out, /⚠️ Битые relations/);
+    assert.match(out, /⚠️ Broken relations/);
     assert.match(out, /missing-org\.md/);
     assert.match(out, /ghost\.md/);
     assert.match(out, /works_at/);
@@ -219,9 +219,9 @@ describe('links — relations count as edges', () => {
     assert.equal(code, 0, out);
     assert.match(out, /relations: 1/);
     // b is not orphan (inbound from md + relation)
-    assert.ok(!out.includes('entities/b\n') || !/Сироты[\s\S]*entities\/b/.test(out)
-      || /Сироты \(нет входящих ссылок\):\n— нет/.test(out)
-      || /Сироты[\s\S]*entities\/a/.test(out));
+    assert.ok(!out.includes('entities/b\n') || !/Orphans[\s\S]*entities\/b/.test(out)
+      || /Orphans \(no inbound links\):\n— none/.test(out)
+      || /Orphans[\s\S]*entities\/a/.test(out));
   });
 });
 
@@ -243,6 +243,6 @@ describe('demo bundle has live relations', () => {
     const { code, out } = runQuery(demoRoot, ['validate']);
     assert.equal(code, 0, out);
     assert.match(out, /✅/);
-    assert.ok(!out.includes('⚠️ Битые relations'), out);
+    assert.ok(!out.includes('⚠️ Broken relations'), out);
   });
 });

@@ -317,7 +317,7 @@ describe('runExport — filesystem', () => {
         encoding: 'utf8',
       });
       assert.notEqual(r.status, 0);
-      assert.match(r.stderr + r.stdout, /не пуста|non-empty|не перезаписываю/i);
+      assert.match(r.stderr + r.stdout, /not empty|non-empty|nothing overwritten/i);
       assert.equal(readFileSync(join(out, 'stale.txt'), 'utf8'), 'nope');
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -536,9 +536,9 @@ describe('path safety on import concepts', () => {
   it('refuses .. segments and accepts safe concept ids', () => {
     const root = tmp('trav');
     try {
-      assert.throws(() => assertSafeConceptId('../etc/passwd', root), /небезопасный|traversal/i);
-      assert.throws(() => assertSafeConceptId('concepts/../../etc/passwd', root), /небезопасный|traversal/i);
-      assert.throws(() => assertSafeConceptId('', root), /пустой/i);
+      assert.throws(() => assertSafeConceptId('../etc/passwd', root), /unsafe path|traversal/i);
+      assert.throws(() => assertSafeConceptId('concepts/../../etc/passwd', root), /unsafe path|traversal/i);
+      assert.throws(() => assertSafeConceptId('', root), /empty/i);
       // leading slash is normalized away (bundle-absolute form), not a traversal
       assert.equal(assertSafeConceptId('/concepts/ok', root), 'concepts/ok');
       assert.equal(assertSafeConceptId('concepts/ok', root), 'concepts/ok');
