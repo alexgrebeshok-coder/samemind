@@ -151,11 +151,11 @@ describe('gde — enrichResults and format', () => {
     assert.ok(enriched[0].file.endsWith('industrial-park.md'));
   });
 
-  it('formatResults marks keyword mode', () => {
+  it('formatResults marks bm25 fallback mode', () => {
     const out = formatResults('park', [{ id: 'x', title: 'T', type: 'P', score: 0.5, file: '/a/b.md', snippet: 'line' }], {
-      k: 1, mode: 'keyword', staleWarning: 'index stale, add --reindex',
+      k: 1, mode: 'bm25', staleWarning: 'index stale, add --reindex',
     });
-    assert.match(out, /\[keyword\]/);
+    assert.match(out, /\[bm25\]/);
     assert.match(out, /index stale/);
     assert.match(out, /\/a\/b\.md/);
   });

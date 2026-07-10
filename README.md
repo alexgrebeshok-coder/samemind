@@ -36,12 +36,18 @@ node tools/okf-query.mjs links
 OKF_ROOT=demo node tools/okf-query.mjs rel works_at acme-labs --inbound
 OKF_ROOT=demo node tools/okf-query.mjs rel depends_on projects/atlas
 
-# semantic recall (needs a local OpenAI-compatible embeddings endpoint)
-export OKF_EMBED_URL=http://127.0.0.1:8000/v1/embeddings   # optional override
-node tools/okf-recall.mjs index
-node tools/okf-recall.mjs "how does Nova handle retrieval" -k 5
+# recall — works out of the box, zero deps (local BM25 over title/description/tags/body)
+node tools/okf-recall.mjs "how does Nova handle retrieval" -k 5            # auto: BM25 unless an index exists
+node tools/okf-recall.mjs "retrieval" --mode bm25                          # force local BM25, no network
 
-# human-readable search with keyword fallback
+# semantic recall is opt-in: point at any OpenAI-compatible /v1/embeddings server
+export OKF_EMBED_URL=http://127.0.0.1:8000/v1/embeddings   # LM Studio / Ollama / OpenAI / local
+export OKF_EMBED_MODEL=bge-m3                              # optional
+export OKF_EMBED_KEY=sk-...                                # optional (Authorization: Bearer)
+node tools/okf-recall.mjs index                            # build the local semantic index once
+node tools/okf-recall.mjs "how does Nova handle retrieval" -k 5            # auto → semantic now
+
+# human-readable search (semantic when available, BM25 fallback otherwise)
 node tools/gde.mjs "where did I write about context budget"
 ```
 
@@ -107,16 +113,35 @@ conformant type checks.
 |------|---------|
 | `samemind init [dir] [--demo]` | Scaffold a fresh bundle (empty dir only; `--demo` adds the Nova example) |
 | `samemind query <cmd>` | Structural queries: `list`, `type`, `tag`, `get`, `links`, `rel`, `validate` |
-| `samemind recall <cmd>` | Semantic search (local embeddings; env: `OKF_EMBED_URL`, `OKF_EMBED_MODEL`) |
-| `samemind gde "<query>"` | Human search: semantic + keyword fallback |
+| `samemind recall "<query>"` | Search: `--mode bm25\|semantic\|auto` (default `auto`). BM25 works zero-dep; semantic needs `OKF_EMBED_URL` + `index`. |
+| `samemind gde "<query>"` | Human search: semantic when an index exists, BM25 fallback otherwise |
 | `tools/consolidate.mjs` | Gap map: inbox/mirror → candidates for promotion into the canon (dev-mode only, run from a checkout) |
 
 `query`/`recall`/`gde` run against `OKF_ROOT` if set, otherwise your current directory —
 so they operate on your own bundle, not on the samemind package itself.
 
 Under the hood: `bin/samemind.mjs` routes to `tools/okf-query.mjs`, `tools/okf-recall.mjs`,
-`tools/gde.mjs`, `tools/init.mjs`. Shared libraries: `tools/lib/` (okf + recall), `lib/`
+`tools/gde.mjs`, `tools/init.mjs`. Shared libraries: `tools/lib/` (okf, recall, bm25), `lib/`
 (atomic write, safe paths, mirror sync).
+
+### Recall modes & env
+
+`okf-recall.mjs "<query>"` selects a mode via `--mode`:
+
+- **`auto`** (default) — semantic if a local index exists **and** the embeddings endpoint answers; otherwise degrades to local BM25 and prints a one-line notice to stderr. Never crashes without an endpoint.
+- **`bm25`** — always local keyword/BM25 over `title` / `description` / `tags` / body. No network, no dependencies.
+- **`semantic`** — strictly semantic; errors loudly (no silent fallback) if the index or endpoint is missing.
+
+Semantic search uses any OpenAI-compatible `/v1/embeddings` server:
+
+| Env | Purpose |
+|-----|---------|
+| `OKF_EMBED_URL` | Endpoint URL (Ollama, LM Studio, OpenAI, a local server, …) |
+| `OKF_EMBED_MODEL` | Model name sent in the request body |
+| `OKF_EMBED_KEY` | Optional `Authorization: Bearer …` |
+| `OKF_EMBED_DIM` | Optional; if set, the response vector length is validated |
+
+Build the index once after setting the endpoint: `node tools/okf-recall.mjs index`.
 
 ## Compatibility
 
