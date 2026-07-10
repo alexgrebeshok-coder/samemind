@@ -1,0 +1,17 @@
+# local-only tiers — never commit real content
+# keep folder templates so the skeleton is usable out of the box
+/secret/**
+!/secret/
+!/secret/_template.md
+/mirror/**
+
+# generated artifacts
+tools/.index/
+inbox/_consolidation-report.md
+
+# node
+node_modules/
+
+# os / editor noise
+.DS_Store
+*.log
