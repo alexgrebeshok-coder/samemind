@@ -37,3 +37,11 @@ OKF_ROOT=demo node tools/okf-query.mjs links
 ## Concepts (linked)
 
 - [Retrieval strategy](/concepts/retrieval-strategy.md) ↔ [Context budget](/concepts/context-budget.md)
+
+## Knowledge cycle (docs/knowledge-cycle.md)
+
+- [Mirror staleness tracks engine idle time](/concepts/analysis-mirror-staleness.md) (Analysis)
+  `informs` →
+- [Mirror sync mechanism — cron pull vs. push adapter](/concepts/research-mirror-sync-mechanism.md)
+  (Research, `spawned_by` the Analysis above) `informs` →
+- [Cron-sync adapters for engine mirrors](/concepts/idea-cron-sync-adapters.md) (Idea, `incubating`)

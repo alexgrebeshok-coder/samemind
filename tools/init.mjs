@@ -50,6 +50,12 @@ Work discipline (docs/work-discipline.md): [\`_decision-template.md\`](_decision
 a decision and its context (append-only); [\`_session-template.md\`](_session-template.md) —
 a session summary (\`## Done\` / \`## Decided\` / \`## Next\`).
 
+Knowledge cycle (docs/knowledge-cycle.md): [\`_analysis-template.md\`](_analysis-template.md) —
+a conclusion from observed facts (\`relations.informs\` → an Idea);
+[\`_research-template.md\`](_research-template.md) — a deeper dig (\`spawned_by\` an
+Analysis, \`informs\` → an Idea); [\`_idea-template.md\`](_idea-template.md) — a
+candidate (\`spark → incubating → adopted/rejected\`, \`## Reflections\` from agents).
+
 List concepts: \`npx samemind query list\`
 `;
 
@@ -250,6 +256,116 @@ One line: the span of work this session covered.
 - What the next session should pick up.
 `;
 
+const ANALYSIS_TEMPLATE = `---
+type: Analysis
+title:
+description:
+visibility: internal
+period:                           # date range the facts below were observed over (YYYY-MM-DD/YYYY-MM-DD)
+tags: [analysis]
+timestamp:
+source:
+relations:
+  informs: []
+  # e.g. informs: /concepts/<idea>.md — the Idea(s) this analysis feeds
+---
+
+> Copy this file, drop the \`_\` prefix (→ concepts/<analysis-name>.md), fill it in.
+> An Analysis is a conclusion drawn from observed facts — no \`status\` field, a
+> point-in-time write-up like a Decision/Session. Point \`relations.informs\` at
+> the Idea(s) it feeds. See docs/knowledge-cycle.md and
+> demo/concepts/analysis-mirror-staleness.md.
+
+# <analysis name>
+
+## Facts observed
+
+- Concrete, dated observations — not interpretation yet.
+
+## Pattern
+
+What the facts above have in common; the shape of the problem.
+
+## Implications
+
+What this means going forward — the seed of an Idea (or several).
+`;
+
+const RESEARCH_TEMPLATE = `---
+type: Research
+title:
+description:
+visibility: internal
+tags: [research]
+timestamp:
+source:
+relations:
+  spawned_by: []
+  # e.g. spawned_by: /concepts/<analysis>.md — the Analysis whose pattern triggered this dig
+  informs: []
+  # e.g. informs: /concepts/<idea>.md — the Idea(s) this research feeds
+---
+
+> Copy this file, drop the \`_\` prefix (→ concepts/<research-name>.md), fill it in.
+> Research is a deeper dig into one question — no \`status\` field, point-in-time
+> like a Decision/Session. \`source\` holds the citations (URLs or bundle paths,
+> scalar or list). Set \`relations.spawned_by\` if an Analysis's pattern prompted
+> this dig. See docs/knowledge-cycle.md and
+> demo/concepts/research-mirror-sync-mechanism.md.
+
+# <research name>
+
+## Question
+
+The single question this research answers.
+
+## Findings
+
+- Finding, with its source (a URL, a paper, a bundle path) right next to it.
+
+## Verdict
+
+The answer, stated as a position — and what it feeds into (an Idea, a Decision).
+`;
+
+const IDEA_TEMPLATE = `---
+type: Idea
+title:
+description:
+visibility: internal
+status: spark                     # spark | incubating | adopted | rejected
+rejected_reason:                  # REQUIRED (non-empty) when status is rejected
+tags: [idea]
+timestamp:
+source:
+relations:
+  led_to: []
+  # filled once adopted: led_to: /projects/<plan>.md — the Plan this idea became
+---
+
+> Copy this file, drop the \`_\` prefix (→ concepts/<idea-name>.md), fill it in.
+> An Idea starts as a \`spark\`, matures in \`## Reflections\` (agents append dated
+> notes here when they curate a reflection out of the inbox — see
+> docs/memory-protocol.md), then either \`adopted\` (set \`relations.led_to\` to
+> the Plan it becomes) or \`rejected\` (\`rejected_reason\` REQUIRED). See
+> docs/knowledge-cycle.md and demo/concepts/idea-cron-sync-adapters.md.
+
+# <idea name>
+
+## Essence
+
+One or two sentences: what this idea is.
+
+## Why now
+
+The fact, pattern, or gap (often from an Analysis/Research node's
+\`relations.informs\`) that makes this worth considering now.
+
+## Reflections
+
+- (agents append dated notes here during inbox curation — see docs/memory-protocol.md)
+`;
+
 const PROJECTS_TEMPLATE = `---
 type: Project
 title:
@@ -393,7 +509,8 @@ node_modules/
 const DASHBOARD_PLACEHOLDER = `# Dashboard
 
 _Empty — this is a placeholder._ Generate the kanban from work-discipline state (Plan / Task /
-Decision / Session — see docs/work-discipline.md):
+Decision / Session — see docs/work-discipline.md) and the knowledge-cycle Ideas section
+(Analysis / Research / Idea — see docs/knowledge-cycle.md):
 
 \`\`\`sh
 npx samemind board --write        # write it into this DASHBOARD.md (committed to git)
@@ -513,6 +630,9 @@ export function runInit({ targetDir = '.', demo = false, packageRoot = PACKAGE_R
   writeFileSync(join(dir, 'concepts', '_engine-rule-template.md'), ENGINE_RULE_TEMPLATE, 'utf8');
   writeFileSync(join(dir, 'concepts', '_decision-template.md'), DECISION_TEMPLATE, 'utf8');
   writeFileSync(join(dir, 'concepts', '_session-template.md'), SESSION_TEMPLATE, 'utf8');
+  writeFileSync(join(dir, 'concepts', '_analysis-template.md'), ANALYSIS_TEMPLATE, 'utf8');
+  writeFileSync(join(dir, 'concepts', '_research-template.md'), RESEARCH_TEMPLATE, 'utf8');
+  writeFileSync(join(dir, 'concepts', '_idea-template.md'), IDEA_TEMPLATE, 'utf8');
   writeFileSync(join(dir, 'concepts', 'index.md'), CONCEPTS_INDEX, 'utf8');
   writeFileSync(join(dir, 'entities', '_template.md'), ENTITIES_TEMPLATE, 'utf8');
   writeFileSync(join(dir, 'entities', '_user-template.md'), USER_TEMPLATE, 'utf8');

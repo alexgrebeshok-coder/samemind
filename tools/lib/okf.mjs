@@ -269,3 +269,48 @@ export function disciplineChecks(docs) {
   }
   return warns;
 }
+
+/**
+ * Knowledge-cycle status dictionary (see docs/knowledge-cycle.md).
+ * Only `Idea` carries a status lifecycle; `Analysis` and `Research` are
+ * point-in-time write-ups (like `Decision`/`Session` in the work-discipline
+ * layer) and intentionally have none. Kept as its own frozen map — separate
+ * from STATUS_DICTIONARIES above — so that map's shape stays exactly
+ * `{Plan, Task}` for existing consumers/tests.
+ */
+export const KNOWLEDGE_STATUS_DICTIONARIES = Object.freeze({
+  Idea: ['spark', 'incubating', 'adopted', 'rejected'],
+});
+
+/**
+ * Knowledge-cycle checks → warning strings (never errors; same severity as
+ * disciplineChecks). Fires for `Idea` only:
+ *   - missing `status`
+ *   - `status` value outside the dictionary
+ *   - `status: rejected` without a non-empty `rejected_reason`
+ */
+export function knowledgeChecks(docs) {
+  const warns = [];
+  const byLowerType = new Map(
+    Object.entries(KNOWLEDGE_STATUS_DICTIONARIES).map(([t, v]) => [t.toLowerCase(), v])
+  );
+  for (const d of docs) {
+    if (d.reserved) continue;
+    const typeRaw = String(d.fm?.type || '').trim();
+    const dict = byLowerType.get(typeRaw.toLowerCase());
+    if (!dict) continue;                       // type carries no status lifecycle (Analysis/Research)
+    const status = String(d.fm?.status || '').trim();
+    if (!status) {
+      warns.push(`${d.id}: ${typeRaw} missing 'status'`);
+      continue;                                // missing ≠ outside dictionary
+    }
+    if (!dict.includes(status.toLowerCase())) {
+      warns.push(`${d.id}: ${typeRaw} 'status' outside dictionary (${dict.join('|')}): "${status}"`);
+    }
+    if (typeRaw.toLowerCase() === 'idea' && status.toLowerCase() === 'rejected') {
+      const reason = String(d.fm?.rejected_reason || '').trim();
+      if (!reason) warns.push(`${d.id}: Idea 'rejected' missing 'rejected_reason'`);
+    }
+  }
+  return warns;
+}

@@ -113,6 +113,25 @@ outside the type's dictionary, or a blocked `Task` with no `blocked_reason`.
 
 ---
 
+## Knowledge cycle — reacting to an immature Idea
+
+The bundle also holds **candidates**, not only work and facts: `Analysis` /
+`Research` / `Idea` (full spec: [`docs/knowledge-cycle.md`](knowledge-cycle.md)),
+linked by `informs` / `spawned_by` / `led_to`. Any agent that lands on an
+`Idea` with `status: spark` or `status: incubating` touching its own domain
+should **react**, not read past it:
+
+- Write a reflection to your **own inbox** (`memory_write_inbox`), never edit
+  the Idea node — `target: /concepts/<idea>.md` in the frontmatter, body
+  proposing a path forward (adopt, reject, or what evidence would decide it).
+- Curation merges reflections into the Idea's `## Reflections` section; only
+  curation (or the owner) flips `status` or sets `relations.led_to` once
+  `adopted`. `rejected` requires a non-empty `rejected_reason`.
+- `samemind query validate` warns on `Idea` missing `status`, bad `status`, or
+  `rejected` without a reason — same severity as the work-discipline checks.
+
+---
+
 ## Token discipline
 
 | Phase | Cost | Rule |

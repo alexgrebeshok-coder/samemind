@@ -39,7 +39,7 @@ Real output, trimmed for length — no gif needed:
 ```sh
 $ npx samemind init --demo
 ✓ bundle created: ./samemind-demo
-  --demo: copied 19 demo concepts
+  --demo: copied 22 demo concepts
   git init + initial commit done
 
 $ npx samemind brief --engine claude-code
@@ -243,12 +243,14 @@ first, voice next, everything else trimmed first with a `truncated — see
 ## Board
 
 A kanban over the work-discipline layer (Plan / Task / Decision / Session — see
-[`docs/work-discipline.md`](docs/work-discipline.md)): what's queued, what's moving,
-what's **blocked** (and for how long — blocks older than 7 days are flagged `aging`),
-what just landed, and what was recently agreed. Pure markdown — reads in the terminal,
-renders on GitHub. `--write` atomically refreshes `DASHBOARD.md` in the bundle root
-(a committed artifact; `samemind init` seeds a placeholder); `--project` scopes the four
-task columns to one project (Plans / Recent / Sessions stay portfolio-wide).
+[`docs/work-discipline.md`](docs/work-discipline.md)) plus the knowledge-cycle
+`💡 Ideas` section (see "The knowledge flywheel" below): what's queued, what's
+moving, what's **blocked** (and for how long — blocks older than 7 days are
+flagged `aging`), what just landed, what was recently agreed, and what candidate
+ideas are incubating. Pure markdown — reads in the terminal, renders on GitHub.
+`--write` atomically refreshes `DASHBOARD.md` in the bundle root (a committed
+artifact; `samemind init` seeds a placeholder); `--project` scopes the four
+task columns to one project (Plans / Ideas / Recent / Sessions stay portfolio-wide).
 
 ```sh
 npx samemind board                              # print the kanban to stdout
@@ -276,6 +278,25 @@ Shortened example, run against the demo bundle:
 - [Lumen sync kickoff (2026-07-09)](/concepts/session-2026-07-09-lumen-sync.md) · 2026-07-09 — Working session that agreed the sync plan…
 ```
 
+## The knowledge flywheel
+
+Ideas die in someone's head, not in the bundle. Three more concept types —
+`Analysis`, `Research`, `Idea` (see [`docs/knowledge-cycle.md`](docs/knowledge-cycle.md))
+— make the cycle **Analysis → Research → Idea → Plan** visible in the graph
+instead of in a chat transcript. An `Analysis` notices a pattern in observed
+facts and `informs` an `Idea`; an `Idea` sometimes needs a deeper dig first —
+a `Research` node `spawned_by` the `Analysis`, which also `informs` the same
+`Idea`; an `Idea` matures (`spark → incubating`) with agents appending
+`## Reflections` as they encounter it, until it's `adopted` (`led_to` a
+`Plan`) or `rejected` (with a reason, so it isn't re-proposed next week). Any
+agent on any engine can spot an immature `Idea` in its domain and react —
+write a reflection to its own inbox rather than reading past it (full
+protocol: [`docs/memory-protocol.md`](docs/memory-protocol.md)). `samemind
+board` surfaces it: incubating ideas first, then sparks, adopted ideas
+pointing at the Plan they became, rejected ones off the board but not
+deleted. See `demo/` for a linked, worked example (mirror-staleness →
+sync-mechanism research → cron-sync-adapters idea).
+
 ## Tools
 
 | Command | Purpose |
@@ -287,7 +308,7 @@ Shortened example, run against the demo bundle:
 | `samemind brief [--engine <id>] [--budget <n>] [--inject <file>]` | Compact Identity+User+EngineRule digest — see [Identity layer](#identity-layer) |
 | `samemind handoff [--project <path>] [--days N]` | Work-state brief (tasks/plans/decisions/session) — see [docs/compaction-recipe.md](docs/compaction-recipe.md) |
 | `samemind forget <id>` | Soft-deprecate a concept (`deprecated: true` in frontmatter) — never deletes the file. See [Memory hygiene](docs/memory-hygiene.md) |
-| `samemind board [--write] [--project <path>]` | Kanban over the work-discipline layer (Backlog / In progress / Done / Blocked+aging, Plans, Recent) — `--write` → `DASHBOARD.md` — see [Board](#board) |
+| `samemind board [--write] [--project <path>]` | Kanban over the work-discipline layer (Backlog / In progress / Done / Blocked+aging, Plans, Recent) plus knowledge-cycle Ideas — `--write` → `DASHBOARD.md` — see [Board](#board) |
 | `samemind install --agent <id>\|all [--target <dir>]` | Wire brief+protocol into an engine's instruction file(s), idempotently — see [Compatibility](#compatibility), [docs/adapters.md](docs/adapters.md) |
 | `samemind export <dir> [--visibility public\|internal] [--dry-run] [--to-gbrain]` | Shareable OKF-bundle (strips `secret/`/`mirror/`/`inbox/`); gbrain page mapping — see [docs/interop.md](docs/interop.md) |
 | `samemind import <dir> [--into inbox\|concepts]` | Accept a foreign OKF-bundle (default → curated `inbox/import-<date>.md`; never overwrites) — see [docs/interop.md](docs/interop.md) |
