@@ -8,6 +8,7 @@
 # generated artifacts
 tools/.index/
 inbox/_consolidation-report.md
+.samemind-capture-state.json
 
 # node
 node_modules/

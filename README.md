@@ -315,15 +315,16 @@ sync-mechanism research → cron-sync-adapters idea).
 | `samemind install --agent <id>\|all [--target <dir>]` | Wire brief+protocol into an engine's instruction file(s), idempotently — see [Compatibility](#compatibility), [docs/adapters.md](docs/adapters.md). Unknown id needs `--file <path>` for a generic install. |
 | `samemind export <dir> [--visibility public\|internal] [--dry-run] [--to-gbrain]` | Shareable OKF-bundle (strips `secret/`/`mirror/`/`inbox/`); gbrain page mapping — see [docs/interop.md](docs/interop.md) |
 | `samemind import <dir> [--into inbox\|concepts]` | Accept a foreign OKF-bundle (default → curated `inbox/import-<date>.md`; never overwrites) — see [docs/interop.md](docs/interop.md) |
+| `samemind capture --engine <id> [--source <path>] [--since <ts>] [--dry-run]` | Read-only capture of a live engine session store (Claude Code JSONL transcripts, any directory of markdown diaries) into a distilled `inbox/<engine>.md` — see [docs/session-capture.md](docs/session-capture.md) |
 | `samemind serve` | MCP stdio server: `memory_search/get/list/write_inbox/handoff/health` — see [MCP](#mcp) |
 | `tools/consolidate.mjs` | Gap map: inbox/mirror → candidates for promotion into the canon, plus a same-type "contradictions" section (dev-mode only, run from a checkout) |
 
-`query`/`recall`/`gde`/`brief`/`board`/`handoff`/`forget`/`install`/`export`/`import`/`serve` run against `OKF_ROOT` if set, otherwise your
+`query`/`recall`/`gde`/`brief`/`board`/`handoff`/`forget`/`install`/`export`/`import`/`capture`/`serve` run against `OKF_ROOT` if set, otherwise your
 current directory — so they operate on your own bundle, not on the samemind package itself.
 
 Under the hood: `bin/samemind.mjs` routes to `tools/okf-query.mjs`, `tools/okf-recall.mjs`,
 `tools/gde.mjs`, `tools/init.mjs`, `tools/brief.mjs`, `tools/board.mjs`, `tools/handoff.mjs`,
-`tools/forget.mjs`, `tools/install.mjs`, `tools/export.mjs`, `tools/import.mjs`,
+`tools/forget.mjs`, `tools/install.mjs`, `tools/export.mjs`, `tools/import.mjs`, `tools/capture.mjs`,
 `tools/mcp-server.mjs`. Shared libraries: `tools/lib/` (okf, recall, bm25, hygiene, mcp,
 injection, **html-render** — the `--html` projection for board/handoff), `lib/` (atomic write,
 safe paths, mirror sync).
@@ -448,9 +449,13 @@ refreshes whichever of these files already exist in a project, without blindly
 creating all twelve. `INSTALL_FOR_AGENTS.md` is a step-by-step self-install
 protocol written for an agent to run against its own project, no human typing.
 
-Adapters that import *live* engine memory into `mirror/` (e.g. syncing an
-engine's own session notes back into the bundle) are out of scope for this
-public skeleton; the format and tools to build one are ready.
+Pulling an engine's own *live* session store into the bundle is
+`samemind capture --engine <id>` (see [docs/session-capture.md](docs/session-capture.md)):
+read-only, distilled, into `inbox/<engine>.md` — the same curated queue every
+other write path in this package uses, not a direct write into `mirror/`. A
+full always-synced `mirror/` (auto-updated zeroconf, no curation step) is
+still project-specific glue, same shape as the `gbrain/adapters/import-*.mjs`
+scripts this framework generalizes from.
 
 ## samemind vs. gbrain (Garry Tan) — when to use which
 

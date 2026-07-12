@@ -91,3 +91,4 @@ project's own `mcp add`/config-file docs — the JSON/TOML shape is the same
 - [`INSTALL_FOR_AGENTS.md`](../INSTALL_FOR_AGENTS.md) — self-install protocol for an agent to run against its own project.
 - [docs/identity-layer.md](identity-layer.md) — what `samemind install` actually embeds (Identity/User/EngineRule → `samemind brief`).
 - [docs/memory-protocol.md](memory-protocol.md) — the recall→read→cite→gaps protocol embedded in every instruction file.
+- [docs/session-capture.md](session-capture.md) — the other direction: pulling an engine's own *live* session store (JSONL transcripts, markdown diaries) into the bundle read-only, via `samemind capture --engine <id>`.
