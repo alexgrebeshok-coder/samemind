@@ -369,7 +369,9 @@ function lastSessionCard(d) {
  */
 export function renderHandoffHtml(model) {
   const { projectKey, dayWindow, active, recentDecisions, plansInForce, lastSession, blocked, sessionNext } = model;
-  const generatedAt = new Date().toISOString();
+  // время — из модели (buildHandoffModel фиксирует его один раз): рендер обязан быть чистой функцией,
+  // иначе два вызова на границе миллисекунды дают разные байты (ловилось флаки-тестом)
+  const generatedAt = new Date(model.nowMs ?? Date.now()).toISOString();
 
   // oldest → newest, left to right, for the timeline
   const timelinePoints = [...recentDecisions].reverse().map(({ d, date }) => ({

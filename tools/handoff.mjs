@@ -235,7 +235,7 @@ export function buildHandoffModel(docs, {
     ? firstBullets(extractSection(lastSession.body, /^next$/i), 5)
     : [];
 
-  return { projectKey, dayWindow, active, recentDecisions, plansInForce, lastSession, blocked, sessionNext };
+  return { projectKey, dayWindow, active, recentDecisions, plansInForce, lastSession, blocked, sessionNext, nowMs: now.getTime() };
 }
 
 /**
