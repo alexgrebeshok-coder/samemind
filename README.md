@@ -247,13 +247,15 @@ omit concepts authored by that source (anti-echo).
 
 A kanban over the work-discipline layer (Plan / Task / Decision / Session — see
 [`docs/work-discipline.md`](docs/work-discipline.md)) plus the knowledge-cycle
-`💡 Ideas` section (see "The knowledge flywheel" below): what's queued, what's
+`💡 Ideas` section (see "The knowledge flywheel" below) and a **🔥 Open failures**
+section fed by the [event ledger](docs/event-ledger.md): what's queued, what's
 moving, what's **blocked** (and for how long — blocks older than 7 days are
-flagged `aging`), what just landed, what was recently agreed, and what candidate
-ideas are incubating. Pure markdown — reads in the terminal, renders on GitHub.
-`--write` atomically refreshes `DASHBOARD.md` in the bundle root (a committed
-artifact; `samemind init` seeds a placeholder); `--project` scopes the four
-task columns to one project (Plans / Ideas / Recent / Sessions stay portfolio-wide).
+flagged `aging`), what's failed and not yet resolved, what just landed, what was
+recently agreed, and what candidate ideas are incubating. Pure markdown — reads
+in the terminal, renders on GitHub. `--write` atomically refreshes `DASHBOARD.md`
+in the bundle root (a committed artifact; `samemind init` seeds a placeholder);
+`--project` scopes the four task columns to one project (Plans / Ideas / Recent
+/ Sessions stay portfolio-wide).
 
 ```sh
 npx samemind board                              # print the kanban to stdout
@@ -316,18 +318,19 @@ sync-mechanism research → cron-sync-adapters idea).
 | `samemind export <dir> [--visibility public\|internal] [--dry-run] [--to-gbrain]` | Shareable OKF-bundle (strips `secret/`/`mirror/`/`inbox/`); gbrain page mapping — see [docs/interop.md](docs/interop.md) |
 | `samemind import <dir> [--into inbox\|concepts]` | Accept a foreign OKF-bundle (default → curated `inbox/import-<date>.md`; never overwrites) — see [docs/interop.md](docs/interop.md) |
 | `samemind capture --engine <id> [--source <path>] [--since <ts>] [--dry-run]` | Read-only capture of a live engine session store (Claude Code JSONL transcripts, any directory of markdown diaries) into a distilled `inbox/<engine>.md` — see [docs/session-capture.md](docs/session-capture.md) |
-| `samemind serve` | MCP stdio server: `memory_search/get/list/write_inbox/handoff/health` — see [MCP](#mcp) |
+| `samemind ledger append\|status\|read` | Append-only event ledger (`ledger/events.jsonl`): fine-grained "who did what step, when", 🔥 open failures until resolved — complements (never replaces) `Task.status` — see [docs/event-ledger.md](docs/event-ledger.md) |
+| `samemind serve` | MCP stdio server: `memory_search/get/list/write_inbox/handoff/health/ledger_append/ledger_status` — see [MCP](#mcp) |
 | `tools/consolidate.mjs` | Gap map: inbox/mirror → candidates for promotion into the canon, plus a same-type "contradictions" section (dev-mode only, run from a checkout) |
 
-`query`/`recall`/`gde`/`brief`/`board`/`handoff`/`forget`/`install`/`export`/`import`/`capture`/`serve` run against `OKF_ROOT` if set, otherwise your
+`query`/`recall`/`gde`/`brief`/`board`/`handoff`/`forget`/`install`/`export`/`import`/`capture`/`ledger`/`serve` run against `OKF_ROOT` if set, otherwise your
 current directory — so they operate on your own bundle, not on the samemind package itself.
 
 Under the hood: `bin/samemind.mjs` routes to `tools/okf-query.mjs`, `tools/okf-recall.mjs`,
 `tools/gde.mjs`, `tools/init.mjs`, `tools/brief.mjs`, `tools/board.mjs`, `tools/handoff.mjs`,
 `tools/forget.mjs`, `tools/install.mjs`, `tools/export.mjs`, `tools/import.mjs`, `tools/capture.mjs`,
-`tools/mcp-server.mjs`. Shared libraries: `tools/lib/` (okf, recall, bm25, hygiene, mcp,
-injection, **html-render** — the `--html` projection for board/handoff), `lib/` (atomic write,
-safe paths, mirror sync).
+`tools/ledger.mjs`, `tools/mcp-server.mjs`. Shared libraries: `tools/lib/` (okf, recall, bm25,
+hygiene, mcp, injection, ledger, **html-render** — the `--html` projection for board/handoff),
+`lib/` (atomic write, safe paths, mirror sync).
 
 ### HTML projections (`--html`)
 
@@ -393,6 +396,8 @@ if unset — same rule as `query`/`recall`/`gde`).
 | `memory_write_inbox` | `{content, title?}` → append to `inbox/<agent>.md` — the **only** writable path. |
 | `memory_handoff` | `{project?, days?}` → work-state markdown (active tasks, decisions, plans, last session, open questions). |
 | `memory_health` | `{}` → bundle root, concept count, active search mode, server version. |
+| `memory_ledger_append` | `{topic, phase, status?, action, artifact?, ref?}` → append one event to `ledger/events.jsonl`. `actor` comes from `SAMEMIND_AGENT` (default `mcp`) — same contract as `memory_write_inbox`. See [docs/event-ledger.md](docs/event-ledger.md). |
+| `memory_ledger_status` | `{}` → read-only `{topics, openFailures}` summary of the event ledger (never mutates it). |
 
 ### Security
 
@@ -402,14 +407,17 @@ if unset — same rule as `query`/`recall`/`gde`).
 - **Path safety**: any `id` passed to `memory_get` is normalized and must resolve
   strictly inside the bundle root; `..`/absolute escapes are refused outright.
 - **Write path is fixed**: `memory_write_inbox` can only ever append to
-  `inbox/<agent>.md`. The agent name comes from `SAMEMIND_AGENT` (default `mcp`),
+  `inbox/<agent>.md`, and `memory_ledger_append` only ever to `ledger/events.jsonl`.
+  The agent/actor name comes from `SAMEMIND_AGENT` (default `mcp`),
   sanitized to `[a-z0-9-]`. Every write is atomic (temp file + rename) and
   append-only — existing entries are never rewritten.
 - **Prompt-injection content is quarantined, not dropped.** Text that looks like an
   instruction-override attempt (`ignore previous instructions`, `<system>`,
   `tool_use`, "run/execute this command", …) is still written — wrapped in a
-  fenced ` ```quarantine ` block with a `quarantine: true` marker — so memory is
-  never silently lost, but no downstream reader executes it blindly.
+  fenced ` ```quarantine ` block with a `quarantine: true` marker for
+  `memory_write_inbox`, or recorded with `quarantine: true` on the event itself for
+  `memory_ledger_append` — so memory is never silently lost, but no downstream
+  reader executes it blindly.
 
 ## Compatibility
 

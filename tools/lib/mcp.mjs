@@ -1,5 +1,6 @@
 // mcp.mjs — логика MCP-инструментов samemind (транспорт-агностичная; см. ../mcp-server.mjs).
-// 6 инструментов: memory_search | memory_get | memory_list | memory_write_inbox | memory_handoff | memory_health.
+// 8 инструментов: memory_search | memory_get | memory_list | memory_write_inbox | memory_handoff
+// | memory_health | memory_ledger_append | memory_ledger_status.
 //
 // Безопасность (см. наряд N3):
 //  - visibility: secret НИКОГДА не попадает в docs, которые видят инструменты (load({includeSecret:false}))
@@ -9,6 +10,9 @@
 //  - memory_write_inbox пишет ТОЛЬКО в inbox/<agent>.md (имя агента санитизируется);
 //    атомарная запись (lib/atomic-write.mjs), append-only; контент с признаками prompt-injection
 //    не отклоняется, а оборачивается в quarantine fence (tools/lib/injection.mjs).
+//  - memory_ledger_append: тот же контракт, что write_inbox — actor из env SAMEMIND_AGENT
+//    (санитизируется), пишет ТОЛЬКО в ledger/events.jsonl, `action` сканируется на
+//    prompt-injection (issue #3, docs/event-ledger.md); события никогда не удаляются.
 import { readFileSync, existsSync } from 'node:fs';
 import { join, relative, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +24,7 @@ import {
 import { scanForInjection } from './injection.mjs';
 import { loadIdx } from '../okf-recall.mjs';
 import { buildHandoff, DEFAULT_DAYS as HANDOFF_DEFAULT_DAYS } from '../handoff.mjs';
+import { appendEvent, readEvents, summarizeLedger, PHASES, STATUSES } from './ledger.mjs';
 import { atomicWriteFileSync } from '../../lib/atomic-write.mjs';
 import { safeMdPath, assertSafeConceptId, sanitizeAgentName } from '../../lib/safe-path.mjs';
 
@@ -108,6 +113,27 @@ export const TOOLS = [
   {
     name: 'memory_health',
     description: 'Bundle root, concept count, active search mode, samemind version.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'memory_ledger_append',
+    description: 'Append one event to the append-only event ledger (ledger/events.jsonl) — fine-grained "who did what step, when", complementing (not replacing) the coarser Task.status. Actor comes from env SAMEMIND_AGENT (default "mcp"), same as memory_write_inbox. `action` is scanned for prompt-injection heuristics; flagged text is still recorded (quarantine:true), never dropped. See docs/event-ledger.md.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        topic: { type: 'string', description: 'Naryad/work-item id this event belongs to' },
+        phase: { type: 'string', enum: [...PHASES], description: 'Lifecycle phase of this event' },
+        status: { type: 'string', enum: [...STATUSES], description: 'Outcome of this event (default "ok")' },
+        action: { type: 'string', description: 'What happened, one line' },
+        artifact: { type: 'string', description: 'Optional artifact reference (branch, commit, file, URL)' },
+        ref: { type: 'string', description: 'Optional external reference (issue id, PR, ticket)' },
+      },
+      required: ['topic', 'phase', 'action'],
+    },
+  },
+  {
+    name: 'memory_ledger_status',
+    description: 'Read-only summary of the event ledger: current stage per topic (last event) and open failures — fail/block-phase events not yet closed by a later done-phase or ok-status event of the same topic — freshest first. See docs/event-ledger.md.',
     inputSchema: { type: 'object', properties: {} },
   },
 ];
@@ -254,6 +280,28 @@ async function memoryHealth() {
   };
 }
 
+async function memoryLedgerAppend({ topic, phase, status, action, artifact, ref } = {}) {
+  const actor = sanitizeAgentName(process.env.SAMEMIND_AGENT);
+  const rec = appendEvent(ROOT, { actor, topic, phase, status, action, artifact, ref });
+  return {
+    ok: true,
+    actor: rec.actor,
+    topic: rec.topic,
+    phase: rec.phase,
+    status: rec.status,
+    quarantine: rec.quarantine,
+    matches: rec.matches,
+  };
+}
+
+async function memoryLedgerStatus() {
+  const { topics, openFailures } = summarizeLedger(readEvents(ROOT));
+  return {
+    topics: topics.map(t => ({ topic: t.topic, count: t.count, open: !!t.openFail, last: t.last })),
+    openFailures,
+  };
+}
+
 const HANDLERS = {
   memory_search: memorySearch,
   memory_get: memoryGet,
@@ -261,6 +309,8 @@ const HANDLERS = {
   memory_write_inbox: memoryWriteInbox,
   memory_handoff: memoryHandoff,
   memory_health: memoryHealth,
+  memory_ledger_append: memoryLedgerAppend,
+  memory_ledger_status: memoryLedgerStatus,
 };
 
 /** Выполняет вызов инструмента, никогда не бросает — ошибки → { isError: true }. */

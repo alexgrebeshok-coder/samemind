@@ -21,9 +21,13 @@ export function walk(dir = ROOT, { includeSecret = false, includeMirror = false,
   const rootPrefix = resolve(ROOT) + sep;
   for (const name of entries) {
     // `.`/`_`-префикс = служебное (генераты, sync-блоки, отчёты); tools/demo/node_modules — не концепты
-    // графа; docs — package prose (adapters/benchmark/…), not OKF nodes (no frontmatter by design)
+    // графа; docs — package prose (adapters/benchmark/…), not OKF nodes (no frontmatter by design).
+    // ledger/ (see docs/event-ledger.md, issue #3) is an append-only *event log* — JSONL, not
+    // OKF concepts — excluded unconditionally like tools/demo/docs, not opt-in like inbox/
+    // (no consumer ever needs to walk it as graph concepts; consolidate.mjs has no ledger
+    // equivalent, there is nothing here to promote into the canon).
     if (name.startsWith('.') || name.startsWith('_') || name === 'node_modules' || name === 'tools'
-      || name === 'demo' || name === 'docs') continue;
+      || name === 'demo' || name === 'docs' || name === 'ledger') continue;
     const full = join(dir, name);
     let st;
     try { st = lstatSync(full); } catch { continue; }

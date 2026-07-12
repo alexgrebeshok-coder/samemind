@@ -17,6 +17,19 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   bundle root; secret shapes (`npm_`/`sk-`/`ghp_`/`AKIA`) masked before writing; distilled text
   runs through the same injection-quarantine as `memory_write_inbox`; `--dry-run` writes
   nothing. Adding an engine is one more `ADAPTERS` entry.
+- **Event ledger (#3)** — `samemind ledger append|status|read` (`tools/ledger.mjs`,
+  `tools/lib/ledger.mjs`, `docs/event-ledger.md`): an append-only, fine-grained event log
+  (`ledger/events.jsonl`) complementing the coarse work-discipline layer where `Task.status`
+  is edited in place. `append --actor <id> --topic <t> --phase start|step|done|fail|block|note
+  [--status ok|wip|partial|fail] --action "..." [--artifact <a>] [--ref <r>]` validates both
+  dictionaries (rejects, never silently coerces); `status` surfaces 🔥 open failures — the last
+  fail/block event of a topic not yet closed by a later `done` or `status: ok` event — before
+  every topic's current stage; `read --topic <t>` prints one topic's full history. MCP gains
+  `memory_ledger_append`/`memory_ledger_status` (same `SAMEMIND_AGENT`-as-actor and
+  injection-quarantine contract as `memory_write_inbox`). `samemind board` gains a
+  🔥 Open failures section above 🔴 Blocked (capped at 5, freshest first, full count in the
+  heading), in both markdown and `--html`. `ledger/` is a reserved tier like `inbox/`/`secret/`/
+  `mirror/` — never walked as graph concepts, so `query validate/list/get` stay unaffected.
 
 ## [0.2.1] — 2026-07-12
 

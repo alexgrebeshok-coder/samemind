@@ -24,6 +24,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load, ROOT, pathToId } from './lib/okf.mjs';
 import { atomicWriteFileSync } from '../lib/atomic-write.mjs';
+import { readEvents, summarizeLedger } from './lib/ledger.mjs';
 
 export const DASHBOARD_NAME = 'DASHBOARD.md';
 
@@ -32,6 +33,7 @@ const DEFAULT_DONE_LIMIT = 10;
 const DEFAULT_RECENT_DAYS = 7;
 const SESSION_SUMMARY_LIMIT = 3;
 export const AGING_THRESHOLD_DAYS = 7;     // blocked older than this is flagged "aging"
+export const OPEN_FAILURES_LIMIT = 5;      // event-ledger 🔥 Open failures: shown cap (see docs/event-ledger.md)
 const DESC_MAX = 140;
 
 // Plans shown on the board: active planning states. `done` and `superseded` are history
@@ -164,6 +166,13 @@ function renderSession(d) {
   return `- [${titleOf(d)}](${linkOf(d)})${date ? ` · ${date}` : ''} — ${oneline(d)}`;
 }
 
+/** One line for a 🔥 Open failures entry: `summarizeLedger`'s open-failure event, plus `topic`. */
+export function renderOpenFailure(f) {
+  const when = String(f.ts || '').slice(0, 16).replace('T', ' ');
+  const tail = f.artifact ? ` \`${f.artifact}\`` : '';
+  return `- **${f.topic}** — ${f.action} _(${f.actor}, ${f.phase}/${f.status}, ${when})_${tail}`;
+}
+
 /** Append a `## heading (n)` section with items; `_(empty)_` when empty. */
 function section(L, heading, items, render, nowMs) {
   L.push(`## ${heading} (${items.length})`, '');
@@ -185,9 +194,19 @@ export function buildBoardModel(docs, {
   doneLimit = DEFAULT_DONE_LIMIT,
   recentDays = DEFAULT_RECENT_DAYS,
   project = null,
+  openFailures = [],
 } = {}) {
   const nowMs = now instanceof Date ? now.getTime() : Number(now) || Date.now();
   const cs = (docs || []).filter(d => !d.reserved);
+
+  // Event ledger 🔥 Open failures (docs/event-ledger.md): not bundle concepts — the caller
+  // (this module's `main()`) reads `ledger/events.jsonl` and passes the already-summarized
+  // open-failure list in, so this function stays a pure function of its arguments, same as
+  // every other input here. Freshest first, capped for display; total kept for the heading.
+  const openFailuresTotal = openFailures.length;
+  const openFailuresShown = [...openFailures]
+    .sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')))
+    .slice(0, OPEN_FAILURES_LIMIT);
 
   const tasks = cs.filter(d => typeOf(d) === 'task');
   const inProject = d => taskProjectMatches(d, project);
@@ -224,6 +243,7 @@ export function buildBoardModel(docs, {
     backlog, inprog, blocked, done, plans,
     ideaIncubating, ideaSpark, ideaAdopted, ideasVisible, byId,
     recent, sessions,
+    openFailuresShown, openFailuresTotal,
   };
 }
 
@@ -237,6 +257,7 @@ export function buildBoard(docs, opts = {}) {
     nowMs, doneLimit, recentDays, project,
     backlog, inprog, blocked, done, plans,
     ideaAdopted, ideasVisible, byId, recent, sessions,
+    openFailuresShown, openFailuresTotal,
   } = m;
 
   const L = [];
@@ -244,6 +265,20 @@ export function buildBoard(docs, opts = {}) {
   L.push('> Memory kanban: what\'s in progress, what\'s done, what\'s stuck. Refresh: `samemind board --write`.');
   if (project) {
     L.push('', `> Task filter: project \`${normProj(project)}\` (Plans / Ideas / Recent / Sessions — bundle-wide).`);
+  }
+  L.push('');
+
+  // 🔥 Open failures (event ledger, docs/event-ledger.md): fail/block-phase events not yet
+  // closed by a later done/ok event of the same topic. Above Blocked — these are the
+  // fine-grained, cross-engine failure signals the coarse Task.status column can't show.
+  L.push(`## 🔥 Open failures (${openFailuresTotal})`, '');
+  if (!openFailuresShown.length) {
+    L.push('_(empty)_');
+  } else {
+    for (const f of openFailuresShown) L.push(renderOpenFailure(f));
+    if (openFailuresTotal > openFailuresShown.length) {
+      L.push(`_…and ${openFailuresTotal - openFailuresShown.length} more — \`samemind ledger status\`_`);
+    }
   }
   L.push('');
 
@@ -301,12 +336,16 @@ export function boardPath(root = ROOT) {
 export async function main(argv = process.argv.slice(2)) {
   const { write, project, html, out } = parseArgs(argv);
   const docs = load({ includeSecret: false });
+  // Event ledger (docs/event-ledger.md) is not part of the OKF graph — read it separately
+  // and summarize to open failures here, in the I/O layer, so buildBoardModel/buildBoard stay
+  // pure functions of their arguments (same reasoning as `now` being injectable).
+  const { openFailures } = summarizeLedger(readEvents(ROOT));
 
   if (html) {
     // --html: self-contained HTML projection (tools/lib/html-render.mjs) — canon stays
     // markdown, this is a generated face, never storage. See gbrain idea-html-projections.
     const { renderBoardHtml } = await import('./lib/html-render.mjs');
-    const model = buildBoardModel(docs, { now: Date.now(), project });
+    const model = buildBoardModel(docs, { now: Date.now(), project, openFailures });
     const page = renderBoardHtml(model);
     if (out) {
       atomicWriteFileSync(out, page);
@@ -317,7 +356,7 @@ export async function main(argv = process.argv.slice(2)) {
     return;
   }
 
-  const md = buildBoard(docs, { now: Date.now(), project });
+  const md = buildBoard(docs, { now: Date.now(), project, openFailures });
 
   if (write) {
     const target = boardPath(ROOT);
