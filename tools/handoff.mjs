@@ -368,6 +368,9 @@ async function main() {
     return;
   }
   // Never include secret — handoff is for session start, not secret review.
+  // inbox stays excluded too (default, no includeInbox): handoff is built purely from typed
+  // work-discipline docs (Plan/Task/Decision/Session); raw inbox notes have no `type` and were
+  // never picked up by touchesProject()/typeOf() anyway — see issue #4.
   const docs = load({ includeSecret: false, includeMirror: true });
   const { markdown, warnings } = buildHandoff(docs, {
     project: opts.project,

@@ -136,7 +136,7 @@ OKF-shaped markdown bundle:
 | `concepts/` | Ideas, rules, identity (`Concept`, `EngineRule`, `Identity`, …) |
 | `entities/` | People & orgs (`User`, `Entity`) |
 | `projects/` | Initiatives (`Project`) |
-| `inbox/` | Raw notes awaiting curation |
+| `inbox/` | Raw notes awaiting curation — excluded from the graph by default (`validate`/`list`/`links`/`rel`/`get` don't see it); `--include-inbox` opt-in |
 | `secret/` | Sensitive nodes (gitignored; `--include-secret`) |
 | `mirror/` | Live-memory mirrors per engine (gitignored; `--include-mirror`) |
 | `index.md` | Human map of the graph |

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // okf-query.mjs — структурные запросы по OKF-bundle (list/type/tag/get/links/rel/validate). Без зависимостей.
-//   list | type <T> | tag <t> | get <id> | links | rel <type> <id> [--inbound] | validate   [--include-secret]
+//   list | type <T> | tag <t> | get <id> | links | rel <type> <id> [--inbound] | validate
+//     [--include-secret] [--include-inbox]
 import { readFileSync, existsSync } from 'node:fs';
 import { relative } from 'node:path';
 import {
@@ -14,8 +15,12 @@ import {
 const args = process.argv.slice(2);
 const cmd = args[0];
 const includeSecret = args.includes('--include-secret');
+// inbox is raw material awaiting curation (see issue #4) — excluded like secret/mirror by
+// default; --include-inbox opt-in surfaces it for inspection (validate will then flag its
+// missing `type`, which is expected — inbox notes are not graph concepts).
+const includeInbox = args.includes('--include-inbox');
 const inboundOnly = args.includes('--inbound');
-const all = load({ includeSecret });
+const all = load({ includeSecret, includeInbox });
 const cs = all.filter(d => !d.reserved);
 
 function formatRow(d) {
@@ -34,7 +39,8 @@ function resolveDoc(q) {
 if (cmd === 'list') {
   const rows = cs.map(d =>
     `${(d.fm.type || '∅').padEnd(10)} ${(d.fm.visibility || '?').padEnd(9)} ${d.id}  — ${d.fm.title || ''}`);
-  console.log(`# ${rows.length} concepts${includeSecret ? ' (incl. secret)' : ''}\n` + rows.sort().join('\n'));
+  const tiers = `${includeSecret ? ' (incl. secret)' : ''}${includeInbox ? ' (incl. inbox)' : ''}`;
+  console.log(`# ${rows.length} concepts${tiers}\n` + rows.sort().join('\n'));
 
 } else if (cmd === 'type') {
   const t = (args[1] || '').toLowerCase();
@@ -191,5 +197,6 @@ if (cmd === 'list') {
   }
 
 } else {
-  console.log('Commands: list | type <T> | tag <t> | get <id> | links | rel <type> <id> [--inbound] | validate   [--include-secret]');
+  console.log('Commands: list | type <T> | tag <t> | get <id> | links | rel <type> <id> [--inbound] | validate'
+    + '   [--include-secret] [--include-inbox]');
 }

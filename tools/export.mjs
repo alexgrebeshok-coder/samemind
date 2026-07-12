@@ -243,12 +243,12 @@ export function runExport({
   // dry-run may target a non-empty path — we just report, never write
   const dir = resolve(targetDir);
 
-  // Load with secret+mirror so exclusion reasons are visible in the report;
+  // Load with secret+mirror+inbox so exclusion reasons are visible in the report;
   // selection still strips them via NEVER_EXPORT_TOP + visibility.
   const all = docs || (() => {
-    // Temporarily walk with secret/mirror if present under root.
+    // Temporarily walk with secret/mirror/inbox if present under root.
     // load() uses module ROOT; for tests pass docs explicitly or set OKF_ROOT.
-    return load({ includeSecret: true, includeMirror: true });
+    return load({ includeSecret: true, includeMirror: true, includeInbox: true });
   })();
 
   const { included, excluded } = selectExportDocs(all, { visibility: visKey });
