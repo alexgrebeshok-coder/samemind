@@ -186,6 +186,137 @@ describe('buildBrief — unit', () => {
   it('DEFAULT_BUDGET_TOKENS is the documented ~1500', () => {
     assert.equal(DEFAULT_BUDGET_TOKENS, 1500);
   });
+
+  it('--exclude-source drops concepts authored by that source (anti-echo)', () => {
+    const echo = {
+      id: 'concepts/engine-claude-code',
+      reserved: false,
+      fm: { type: 'EngineRule', title: 'Engine — claude-code', engine: 'claude-code', source: 'claude-code' },
+      body: '# Engine: claude-code\n\nECHO-MARKER role text.\n',
+    };
+    const baseline = buildBrief([NOVA, ALEX, echo], { engine: 'claude-code' });
+    assert.match(baseline.markdown, /ECHO-MARKER/);
+
+    const filtered = buildBrief([NOVA, ALEX, echo], { engine: 'claude-code', excludeSource: 'claude-code' });
+    assert.doesNotMatch(filtered.markdown, /ECHO-MARKER/, 'engine-authored rule filtered out');
+    assert.doesNotMatch(filtered.markdown, /Engine: claude-code/);
+  });
+});
+
+describe('buildBrief — smooth budget (paragraph-level trim)', () => {
+  // Identity with a long multi-paragraph Values (tier-2) section, so a budget just under the full
+  // size forces paragraph trimming of that one block (not a whole-block drop, not a hard mid-line cut).
+  const longValues = Array.from({ length: 12 }, (_, i) => {
+    const n = String(i + 1).padStart(2, '0');
+    return `VAL-${n} paragraph of values. Lorem ipsum dolor sit amet consectetur adipiscing elit eiusmod tempor incididunt ut labore.`;
+  }).join('\n\n');
+  const BIG = doc({
+    id: 'concepts/big',
+    type: 'Identity',
+    title: 'Big',
+    body: `
+# Big
+
+Big intro line.
+
+## Voice
+
+VOICE-P1 a short voice paragraph, calm and direct.
+
+## Values
+
+${longValues}
+
+## Boundaries
+
+- Never deletes files without an explicit "delete".
+- BOUND-LINE-2 second boundary kept verbatim at every budget.
+- BOUND-LINE-3 third boundary kept verbatim at every budget.
+`,
+  });
+  // A plain User with no extra sections → no "Owner — more" tier-2 block, so Values is the
+  // ONLY tier-2 block and a near-full budget must paragraph-trim it (not drop it whole).
+  const ALEX_PLAIN = doc({
+    id: 'entities/alex-doe',
+    type: 'User',
+    title: 'Alex Doe',
+    body: `
+# Alex Doe
+
+Owner of Nova.
+
+- Hates: lies, flakiness, being ignored.
+`,
+  });
+  const docs = [BIG, ALEX_PLAIN, ENGINE_CC];
+
+  it('trims the last tier-2 section by paragraphs and marks the cut', () => {
+    const full = buildBrief(docs, { engine: 'claude-code', budgetTokens: 100000 }).markdown;
+    const fullLen = full.length;
+    // target ~70% of full: tier-0 + voice + ~half of values — values is paragraph-trimmed
+    const budget = Math.floor(fullLen * 0.70 / 4);
+    const { markdown, truncated } = buildBrief(docs, { engine: 'claude-code', budgetTokens: budget });
+
+    assert.equal(truncated, true);
+    assert.match(markdown, /…truncated/);
+    // tier-0 boundaries kept verbatim (never trimmed)
+    assert.match(markdown, /BOUND-LINE-3/);
+    assert.match(markdown, /Never deletes files without an explicit "delete"/);
+    // values is prefix-trimmed: first paragraph kept, last cut
+    assert.match(markdown, /VAL-01/);
+    assert.doesNotMatch(markdown, /VAL-12/);
+    // trimmed toward the budget, strictly under the full size
+    assert.ok(markdown.length < fullLen, 'should be shorter than the full brief');
+    assert.ok(markdown.length <= budget * 4 + 220, `over budget: ${markdown.length} vs target ${budget * 4}`);
+  });
+
+  it('tier-0 alone can exceed the budget without being cut (stays intact on purpose)', () => {
+    // absurdly small budget: only tier-0 survives; it is NOT sliced mid-paragraph
+    const { markdown } = buildBrief(docs, { engine: 'claude-code', budgetTokens: 1 });
+    assert.match(markdown, /BOUND-LINE-3/);
+    assert.match(markdown, /Engine: claude-code/);
+  });
+
+  it('monotone by tier-0/1: a larger budget never drops tier-0/1 text a smaller one kept', () => {
+    const budgets = [40, 80, 120, 160, 200, 400];
+    const briefs = budgets.map(b => buildBrief(docs, { engine: 'claude-code', budgetTokens: b }).markdown);
+    // tier-0 anchors survive at every budget
+    for (const md of briefs) {
+      assert.match(md, /BOUND-LINE-2/);
+      assert.match(md, /Engine: claude-code/);
+    }
+    // content size (sans truncation ellipsis noise) is non-decreasing
+    const sizes = briefs.map(md => md.replace(/…truncated/g, '').length);
+    for (let i = 1; i < sizes.length; i++) {
+      assert.ok(sizes[i] >= sizes[i - 1] - 1, `size shrank at budget ${budgets[i]}: ${sizes[i]} < ${sizes[i - 1]}`);
+    }
+  });
+
+  it('a comfortably large budget keeps every paragraph and marks nothing truncated', () => {
+    const { markdown, truncated } = buildBrief(docs, { engine: 'claude-code', budgetTokens: 100000 });
+    assert.equal(truncated, false);
+    assert.doesNotMatch(markdown, /…truncated/);
+    assert.match(markdown, /VAL-12/);
+    assert.match(markdown, /VOICE-P1/);
+  });
+
+  it('demo bundle: brief size lands within ±10% across the working budget range', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'samemind-smooth-'));
+    try {
+      assert.equal(runInit({ targetDir: dir, demo: true }).ok, true);
+      for (const b of [450, 500, 520, 540]) {
+        const out = execFileSync(process.execPath, [BRIEF, '--engine', 'claude-code', '--budget', String(b)], {
+          env: { ...process.env, OKF_ROOT: dir },
+          encoding: 'utf8',
+        });
+        const target = b * 4;
+        const ratio = out.length / target;
+        assert.ok(ratio >= 0.9 && ratio <= 1.1, `budget ${b}: ratio ${ratio.toFixed(3)} outside ±10% (size ${out.length} vs target ${target})`);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('injectBrief — idempotent insertion', () => {

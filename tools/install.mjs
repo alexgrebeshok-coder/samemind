@@ -6,6 +6,7 @@
 //   node tools/install.mjs --list
 //   node tools/install.mjs --agent <id> [--target <dir>] [--budget <n>]
 //   node tools/install.mjs --agent all  [--target <dir>] [--budget <n>]
+//   node tools/install.mjs --agent <any-id> --file <path>   # generic install for an unsupported agent
 //
 // One shared template (protocolBlock below + buildBrief from brief.mjs) is rendered per
 // engine — not 13 hand-copied snippets. Insertion is idempotent between
@@ -152,12 +153,22 @@ function fileOwnerMap() {
 
 /**
  * Full install for one named engine: writes (creates or updates) every file it owns.
- * Returns { ok:false, reason } for an unknown engine id — never throws.
+ * For an engine id NOT in ENGINE_FILES, a `file` option is required — then a generic install
+ * (buildInstallBlock already renders an unknown id) is written into that one file. Returns
+ * { ok:false, reason } for an unknown id without --file — never throws.
  */
-export function installEngine(engineId, { targetDir = '.', docs, budgetTokens } = {}) {
+export function installEngine(engineId, { targetDir = '.', docs, budgetTokens, file } = {}) {
   const meta = ENGINE_FILES[engineId];
   if (!meta) {
-    return { ok: false, reason: `unknown engine "${engineId}" — list of supported ones: samemind install --list` };
+    if (!file) {
+      return { ok: false, reason: `unknown engine "${engineId}" — supported ones: \`samemind install --list\`; for any other agent pass \`--file <path>\` for a generic install into that instruction file` };
+    }
+    const dir = resolve(targetDir);
+    const { block, warnings } = buildInstallBlock(docs, engineId, { budgetTokens });
+    const abs = resolve(dir, file);
+    mkdirSync(dirname(abs), { recursive: true });
+    const res = injectInstallBlock(abs, block);
+    return { ok: true, id: engineId, label: engineId, generic: true, files: [{ path: file, ...res }], warnings };
   }
   const dir = resolve(targetDir);
   const { block, warnings } = buildInstallBlock(docs, engineId, { budgetTokens });
@@ -196,12 +207,13 @@ export function installAll({ targetDir = '.', docs, budgetTokens } = {}) {
 }
 
 function parseArgs(argv) {
-  const out = { agent: null, target: null, budget: DEFAULT_BUDGET_TOKENS, list: false };
+  const out = { agent: null, target: null, budget: DEFAULT_BUDGET_TOKENS, list: false, file: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--agent') out.agent = argv[++i];
     else if (a === '--target') out.target = argv[++i];
     else if (a === '--budget') out.budget = Number(argv[++i]) || DEFAULT_BUDGET_TOKENS;
+    else if (a === '--file') out.file = argv[++i];
     else if (a === '--list') out.list = true;
   }
   return out;
@@ -214,14 +226,15 @@ function printList() {
   }
   console.log('');
   console.log('  all           install into every instruction file already existing under --target');
+  console.log('  + any id via --file <path>  generic install for an unsupported agent into a file you name');
   console.log('');
   console.log('Without MCP: aider — see docs/adapters.md (CONVENTIONS.md via --read, no auto-load).');
   console.log('');
-  console.log('Flags: --target <dir> (default cwd) · --budget <n> (identity brief, tokens).');
+  console.log('Flags: --target <dir> (default cwd) · --budget <n> (identity brief, tokens) · --file <path> (required for an unknown --agent id).');
 }
 
 async function main() {
-  const { agent, target, budget, list } = parseArgs(process.argv.slice(2));
+  const { agent, target, budget, list, file } = parseArgs(process.argv.slice(2));
 
   if (list || !agent) {
     printList();
@@ -246,13 +259,13 @@ async function main() {
     return;
   }
 
-  const res = installEngine(agent, { targetDir, docs, budgetTokens: budget });
+  const res = installEngine(agent, { targetDir, docs, budgetTokens: budget, file });
   if (!res.ok) {
     console.error(`✗ ${res.reason}`);
     process.exit(1);
   }
   for (const w of res.warnings || []) console.error(`⚠ ${w}`);
-  console.log(`✓ ${res.label} (${res.id}) in ${targetDir}:`);
+  console.log(`✓ ${res.label} (${res.id})${res.generic ? ' [generic]' : ''} in ${targetDir}:`);
   for (const f of res.files) {
     const verb = f.replaced ? 'updated' : f.created ? 'created' : 'appended';
     console.log(`  ${verb} ${f.path}`);

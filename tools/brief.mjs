@@ -5,7 +5,7 @@
 // (CLAUDE.md, AGENTS.md, a system prompt, …) so it's present from the first token of a
 // session, no retrieval step required.
 //
-//   node tools/brief.mjs [--engine <id>] [--budget <tokens>] [--inject <file>]
+//   node tools/brief.mjs [--engine <id>] [--budget <tokens>] [--inject <file>] [--exclude-source <id>]
 //
 // --engine <id>    include that engine's EngineRule (matched by frontmatter `engine:`,
 //                   falling back to the `engine-<id>.md` filename convention). If omitted or
@@ -14,6 +14,7 @@
 //                   effort: Identity boundaries/hierarchy, User rules, and a matched
 //                   EngineRule are never dropped; Voice is dropped next; everything else
 //                   (Values, other sections, engine list) is trimmed first.
+// --exclude-source <id>  drop concepts whose frontmatter `source` is this id (anti-echo).
 // --inject <file>  idempotently insert/replace the brief between
 //                   <!-- samemind:brief:start --> / <!-- samemind:brief:end --> markers in
 //                   <file>. Text outside the markers is never touched; no file → created.
@@ -21,6 +22,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load } from './lib/okf.mjs';
+import { sourceMatches } from './lib/recall.mjs';
 import { atomicWriteFileSync } from '../lib/atomic-write.mjs';
 
 export const BRIEF_START = '<!-- samemind:brief:start -->';
@@ -94,8 +96,8 @@ function trim(s) { return String(s || '').trim(); }
  * budgetTokens: target size. Never throws — missing Identity/User just yields a smaller brief
  * with a warning.
  */
-export function buildBrief(docs, { engine = null, budgetTokens = DEFAULT_BUDGET_TOKENS } = {}) {
-  const cs = docs.filter(d => !d.reserved);
+export function buildBrief(docs, { engine = null, budgetTokens = DEFAULT_BUDGET_TOKENS, excludeSource = null } = {}) {
+  const cs = docs.filter(d => !d.reserved).filter(d => !sourceMatches(d, excludeSource));
   const identities = cs.filter(d => typeOf(d) === 'identity').sort((a, b) => a.id.localeCompare(b.id));
   const users = cs.filter(d => typeOf(d) === 'user').sort((a, b) => a.id.localeCompare(b.id));
   const engineRules = cs.filter(d => typeOf(d) === 'enginerule').sort((a, b) => a.id.localeCompare(b.id));
@@ -159,20 +161,55 @@ export function buildBrief(docs, { engine = null, budgetTokens = DEFAULT_BUDGET_
     blocks.push({ tier: 2, text: `## Engines\n\n${lines.join('\n')}`, note: 'run with --engine <id> for a specific role' });
   }
 
-  // --- assemble under budget: tier 2 dropped first, then tier 1, tier 0 always kept.
+  // --- assemble under budget. Two-stage, smoother than an all-or-nothing drop:
+  //   stage 1: drop whole blocks tier-2 first, then tier-1, but keep at most one of each tier
+  //            so a near-fitting block isn't thrown away entirely (that's the old step curve);
+  //   stage 2: if still over, soft-trim the kept tier-1/2 block(s) by *paragraphs* down to the
+  //            budget (±10%), marking the cut "…truncated". Tier-0 (boundaries/rules/role) is
+  //            never trimmed — if it alone exceeds the budget, the brief stays over on purpose.
   const budgetChars = Math.max(1, Math.floor(budgetTokens * CHARS_PER_TOKEN));
   const droppedNotes = [];
 
   function totalLen(list) {
     return list.map(b => b.text).join('\n\n').length;
   }
+  // ponytail: exact-but-O(n²) recompute of joined length; brief has ~10 blocks × few paras — cheap.
+  function totalWith(list, idx, text) {
+    const copy = list.slice();
+    copy[idx] = { ...copy[idx], text };
+    return copy.map(b => b.text).join('\n\n').length;
+  }
+  function trimBlockToBudget(list, idx) {
+    const paras = list[idx].text.split(/\n\n+/);
+    if (paras.length <= 1) return { trimmed: false }; // can't trim below one paragraph
+    const marker = '\n\n…truncated';
+    const acc = [];
+    for (const p of paras) {
+      const text = acc.concat(p).join('\n\n') + marker;
+      if (acc.length && totalWith(list, idx, text) > budgetChars) break;
+      acc.push(p);
+    }
+    const trimmed = acc.length < paras.length;
+    return { text: acc.join('\n\n').replace(/\s+$/, '') + marker, trimmed };
+  }
 
   let kept = blocks.slice();
   for (const tier of [2, 1]) {
-    while (totalLen(kept) > budgetChars && kept.some(b => b.tier === tier)) {
+    while (totalLen(kept) > budgetChars && kept.filter(b => b.tier === tier).length > 1) {
       const idx = kept.findIndex(b => b.tier === tier);
       const [dropped] = kept.splice(idx, 1);
       if (dropped.note) droppedNotes.push(dropped.note);
+    }
+  }
+  let trimmedAny = false;
+  for (const tier of [2, 1]) {
+    if (totalLen(kept) <= budgetChars) break;
+    const idx = kept.findIndex(b => b.tier === tier);
+    if (idx < 0) continue;
+    const res = trimBlockToBudget(kept, idx);
+    if (res.trimmed) {
+      kept[idx] = { ...kept[idx], text: res.text };
+      trimmedAny = true;
     }
   }
 
@@ -181,7 +218,7 @@ export function buildBrief(docs, { engine = null, budgetTokens = DEFAULT_BUDGET_
     body += `\n\n> _(${droppedNotes.join('; ')})_`;
   }
 
-  const truncated = droppedNotes.length > 0;
+  const truncated = droppedNotes.length > 0 || trimmedAny;
   const markdown = `${BRIEF_START}\n${body}\n${BRIEF_END}`;
 
   return { markdown, truncated, warnings };
@@ -217,20 +254,21 @@ export function injectBrief(filePath, briefBlock) {
 }
 
 function parseArgs(argv) {
-  const out = { engine: null, budget: DEFAULT_BUDGET_TOKENS, inject: null };
+  const out = { engine: null, budget: DEFAULT_BUDGET_TOKENS, inject: null, excludeSource: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--engine') out.engine = argv[++i];
     else if (a === '--budget') out.budget = Number(argv[++i]) || DEFAULT_BUDGET_TOKENS;
     else if (a === '--inject') out.inject = argv[++i];
+    else if (a === '--exclude-source') out.excludeSource = argv[++i];
   }
   return out;
 }
 
 async function main() {
-  const { engine, budget, inject } = parseArgs(process.argv.slice(2));
+  const { engine, budget, inject, excludeSource } = parseArgs(process.argv.slice(2));
   const docs = load({ includeSecret: false });
-  const { markdown, truncated, warnings } = buildBrief(docs, { engine, budgetTokens: budget });
+  const { markdown, truncated, warnings } = buildBrief(docs, { engine, budgetTokens: budget, excludeSource });
 
   for (const w of warnings) console.error(`⚠ ${w}`);
   if (truncated) console.error('⚠ brief truncated to fit --budget (see notes at the end of the block)');

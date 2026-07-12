@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import {
   stripLinks, docText, contentHash, cosine, passesTier, rankByQuery,
   storageOf, storagesPresent, syncIndex, rankByKeywords, recallSearch, fetchEmbedding,
+  sourceMatches,
 } from './lib/recall.mjs';
 
 // Deterministic mock-embed: 3-dim bag of words (enough for unit tests).
@@ -240,6 +241,61 @@ describe('recall — BM25 fallback (rankByKeywords)', () => {
 
   it('returns [] when nothing matches', () => {
     assert.deepEqual(rankByKeywords(docs, 'zzznomatch', { k: 5 }), []);
+  });
+});
+
+describe('recall — exclude-source (anti-echo, issue #2)', () => {
+  it('sourceMatches: string, list, missing, and empty source', () => {
+    assert.equal(sourceMatches({ fm: { source: 'claude-code' } }, 'claude-code'), true);
+    assert.equal(sourceMatches({ fm: { source: 'claude-code' } }, 'openclaw'), false);
+    assert.equal(sourceMatches({ fm: { source: ['docs/a.md', 'claude-code'] } }, 'claude-code'), true);
+    assert.equal(sourceMatches({ fm: { source: ['docs/a.md'] } }, 'claude-code'), false);
+    assert.equal(sourceMatches({ fm: {} }, 'claude-code'), false);          // no source field
+    assert.equal(sourceMatches({ fm: { source: 'claude-code' } }, null), false); // no filter → keep
+    assert.equal(sourceMatches(null, 'claude-code'), false);
+  });
+
+  const docs = [
+    {
+      id: 'projects/lumen',
+      reserved: false,
+      fm: { title: 'Lumen Notes App', type: 'Project', visibility: 'internal', tags: ['lumen', 'notes'] },
+      body: 'Core of the Lumen notes editor.',
+    },
+    {
+      id: 'mirror/claude-code/fresh',
+      reserved: false,
+      fm: { title: 'Fresh echo', type: 'Reference', visibility: 'mirror', source: 'claude-code', tags: ['lumen'] },
+      body: 'Fresh note about the Lumen notes editor I just wrote.',
+    },
+  ];
+
+  it('rankByKeywords: excludeSource drops the echoing concept (BM25 path)', () => {
+    const baseline = rankByKeywords(docs, 'lumen notes', { k: 5, includeMirror: true });
+    assert.ok(baseline.some(r => r.id === 'mirror/claude-code/fresh'), 'echo present without filter');
+
+    const filtered = rankByKeywords(docs, 'lumen notes', { k: 5, includeMirror: true, excludeSource: 'claude-code' });
+    assert.ok(!filtered.some(r => r.id === 'mirror/claude-code/fresh'), 'echo filtered out');
+    assert.ok(filtered.some(r => r.id === 'projects/lumen'), 'canon concept stays');
+  });
+
+  it('rankByQuery: excludeSource drops the echoing concept (semantic path)', () => {
+    const items = {
+      'projects/lumen': { visibility: 'internal', vector: [2, 0], title: 'Lumen', type: 'Project' },
+      'mirror/claude-code/fresh': { visibility: 'mirror', vector: [2, 0], title: 'Fresh', type: 'Reference' },
+    };
+    const baseline = rankByQuery(items, [2, 0], { k: 5, includeMirror: true, docs });
+    assert.ok(baseline.some(r => r.id === 'mirror/claude-code/fresh'));
+
+    const filtered = rankByQuery(items, [2, 0], { k: 5, includeMirror: true, docs, excludeSource: 'claude-code' });
+    assert.ok(!filtered.some(r => r.id === 'mirror/claude-code/fresh'));
+    assert.ok(filtered.some(r => r.id === 'projects/lumen'));
+  });
+
+  it('recallSearch bm25 threads excludeSource end-to-end', async () => {
+    const r = await recallSearch({ docs, query: 'lumen notes', mode: 'bm25', k: 5, includeMirror: true, excludeSource: 'claude-code' });
+    assert.equal(r.mode, 'bm25');
+    assert.ok(!r.hits.some(h => h.id === 'mirror/claude-code/fresh'));
   });
 });
 

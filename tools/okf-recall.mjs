@@ -54,10 +54,13 @@ export function parseArgs(argv = process.argv.slice(2)) {
   if (!MODES.includes(mode)) {
     throw new Error(`unknown --mode: ${mode} (allowed: ${MODES.join('|')})`);
   }
+  const ei = argv.indexOf('--exclude-source');
+  const excludeSource = ei >= 0 ? argv[ei + 1] : null;
   const positional = argv.filter((a, i) => !a.startsWith('-')
     && !(ki >= 0 && i === ki + 1)
-    && !(mi >= 0 && i === mi + 1));
-  return { positional, k, includeSecret, includeMirror, includeInbox, mode };
+    && !(mi >= 0 && i === mi + 1)
+    && !(ei >= 0 && i === ei + 1));
+  return { positional, k, includeSecret, includeMirror, includeInbox, mode, excludeSource };
 }
 
 async function buildIndex(includeSecret, includeMirror, includeInbox) {
@@ -73,12 +76,12 @@ async function buildIndex(includeSecret, includeMirror, includeInbox) {
   console.log(`index: ${built} new/changed, ${reused} unchanged, ${total} total (model ${MODEL})`);
 }
 
-async function query(q, k, includeSecret, includeMirror, includeInbox, mode) {
+async function query(q, k, includeSecret, includeMirror, includeInbox, mode, excludeSource) {
   // BM25 ranks over concept bodies, so we load the bundle in every mode.
   const docs = load({ includeSecret, includeMirror, includeInbox }).filter(d => !d.reserved);
   const idx = loadIdx();
   const { hits, mode: used, warning } = await recallSearch({
-    docs, query: q, mode, embed, idx, k, includeSecret, includeMirror,
+    docs, query: q, mode, embed, idx, k, includeSecret, includeMirror, excludeSource,
   });
   if (warning) console.error(`⚠ ${warning}`);
   console.log(`# "${q}" → top-${k} [${used}]`);
@@ -90,11 +93,11 @@ async function query(q, k, includeSecret, includeMirror, includeInbox, mode) {
 
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
-  const { positional, k, includeSecret, includeMirror, includeInbox, mode } = parseArgs();
+  const { positional, k, includeSecret, includeMirror, includeInbox, mode, excludeSource } = parseArgs();
   try {
     if (positional[0] === 'index') await buildIndex(includeSecret, includeMirror, includeInbox);
-    else if (positional.length) await query(positional.join(' '), k, includeSecret, includeMirror, includeInbox, mode);
-    else console.log('Usage: okf-recall.mjs index | "<query>" [-k N] [--mode bm25|semantic|auto] [--include-mirror] [--include-secret] [--include-inbox]');
+    else if (positional.length) await query(positional.join(' '), k, includeSecret, includeMirror, includeInbox, mode, excludeSource);
+    else console.log('Usage: okf-recall.mjs index | "<query>" [-k N] [--mode bm25|semantic|auto] [--include-mirror] [--include-secret] [--include-inbox] [--exclude-source <id>]');
   } catch (e) {
     console.error('Error:', e.message);
     if (mode !== 'bm25') console.error('Hint: --mode bm25 searches without an endpoint; --mode auto (default) enables semantic search when OKF_EMBED_URL is set.');

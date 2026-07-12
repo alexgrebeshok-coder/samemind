@@ -40,6 +40,20 @@ tags: [vault]
 
 ${TOP_SECRET_MARKER} — this body must never reach any MCP response.
 `, 'utf8');
+  // concept authored by an engine — used by the exclude_source anti-echo filter
+  writeFileSync(join(BUNDLE_DIR, 'projects', 'engine-echo.md'), `---
+type: Concept
+title: Engine Echo Note
+description: lumen notes the engine just wrote
+visibility: internal
+source: claude-code
+tags: [lumen, notes]
+---
+
+# Engine Echo Note
+
+A fresh note about the Lumen notes editor that claude-code just wrote.
+`, 'utf8');
 });
 
 after(() => {
@@ -244,6 +258,61 @@ describe('MCP stdio — memory_search', () => {
       await initialized(client);
       const res = await client.request('tools/call', { name: 'memory_search', arguments: {} });
       assert.equal(res.result.isError, true);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('exclude_source filters out concepts authored by that source (anti-echo)', async () => {
+    const client = startClient({ OKF_EMBED_URL: '' });
+    try {
+      await initialized(client);
+      // baseline: the engine-authored echo concept is searchable
+      const base = await client.request('tools/call', {
+        name: 'memory_search',
+        arguments: { query: 'lumen notes', k: 10 },
+      });
+      const basePayload = toolPayload(base);
+      assert.ok(basePayload.results.some(r => r.id === 'projects/engine-echo'), JSON.stringify(basePayload));
+
+      // with exclude_source='claude-code' the engine's own echo is gone, canon stays
+      const filtered = await client.request('tools/call', {
+        name: 'memory_search',
+        arguments: { query: 'lumen notes', k: 10, exclude_source: 'claude-code' },
+      });
+      const fPayload = toolPayload(filtered);
+      assert.ok(!fPayload.results.some(r => r.id === 'projects/engine-echo'), 'echo filtered');
+      assert.ok(fPayload.results.some(r => r.id === 'projects/lumen'), 'canon concept stays');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('exclude_source is validated to [a-z0-9-] — bad value → isError', async () => {
+    const client = startClient();
+    try {
+      await initialized(client);
+      for (const bad of ['Bad ID', 'with/slash', 'space here', 'UPPER']) {
+        const res = await client.request('tools/call', {
+          name: 'memory_search',
+          arguments: { query: 'lumen', exclude_source: bad },
+        });
+        assert.equal(res.result.isError, true, `${bad} should be rejected`);
+        assert.match(res.result.content[0].text, /exclude_source/);
+      }
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('memory_search advertises exclude_source in its input schema', async () => {
+    const client = startClient();
+    try {
+      await initialized(client);
+      const res = await client.request('tools/list', {});
+      const search = res.result.tools.find(t => t.name === 'memory_search');
+      assert.ok(search.inputSchema.properties.exclude_source, 'exclude_source property declared');
+      assert.match(search.inputSchema.properties.exclude_source.pattern, /\[a-z0-9-\]/);
     } finally {
       await client.close();
     }
