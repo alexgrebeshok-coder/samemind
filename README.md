@@ -306,9 +306,9 @@ sync-mechanism research → cron-sync-adapters idea).
 | `samemind recall "<query>"` | Search: `--mode bm25\|semantic\|auto` (default `auto`). BM25 works zero-dep; semantic needs `OKF_EMBED_URL` + `index`. |
 | `samemind gde "<query>"` | Human search: semantic when an index exists, BM25 fallback otherwise |
 | `samemind brief [--engine <id>] [--budget <n>] [--inject <file>]` | Compact Identity+User+EngineRule digest — see [Identity layer](#identity-layer) |
-| `samemind handoff [--project <path>] [--days N]` | Work-state brief (tasks/plans/decisions/session) — see [docs/compaction-recipe.md](docs/compaction-recipe.md) |
+| `samemind handoff [--project <path>] [--days N] [--html [--out <file>]]` | Work-state brief (tasks/plans/decisions/session) — see [docs/compaction-recipe.md](docs/compaction-recipe.md); `--html` → self-contained page (no CDN/JS, light+dark) |
 | `samemind forget <id>` | Soft-deprecate a concept (`deprecated: true` in frontmatter) — never deletes the file. See [Memory hygiene](docs/memory-hygiene.md) |
-| `samemind board [--write] [--project <path>]` | Kanban over the work-discipline layer (Backlog / In progress / Done / Blocked+aging, Plans, Recent) plus knowledge-cycle Ideas — `--write` → `DASHBOARD.md` — see [Board](#board) |
+| `samemind board [--write] [--project <path>] [--html [--out <file>]]` | Kanban over the work-discipline layer (Backlog / In progress / Done / Blocked+aging, Plans, Recent) plus knowledge-cycle Ideas — `--write` → `DASHBOARD.md`, `--html` → self-contained page with an SVG kanban chart — see [Board](#board) |
 | `samemind install --agent <id>\|all [--target <dir>]` | Wire brief+protocol into an engine's instruction file(s), idempotently — see [Compatibility](#compatibility), [docs/adapters.md](docs/adapters.md) |
 | `samemind export <dir> [--visibility public\|internal] [--dry-run] [--to-gbrain]` | Shareable OKF-bundle (strips `secret/`/`mirror/`/`inbox/`); gbrain page mapping — see [docs/interop.md](docs/interop.md) |
 | `samemind import <dir> [--into inbox\|concepts]` | Accept a foreign OKF-bundle (default → curated `inbox/import-<date>.md`; never overwrites) — see [docs/interop.md](docs/interop.md) |
@@ -322,7 +322,23 @@ Under the hood: `bin/samemind.mjs` routes to `tools/okf-query.mjs`, `tools/okf-r
 `tools/gde.mjs`, `tools/init.mjs`, `tools/brief.mjs`, `tools/board.mjs`, `tools/handoff.mjs`,
 `tools/forget.mjs`, `tools/install.mjs`, `tools/export.mjs`, `tools/import.mjs`,
 `tools/mcp-server.mjs`. Shared libraries: `tools/lib/` (okf, recall, bm25, hygiene, mcp,
-injection), `lib/` (atomic write, safe paths, mirror sync).
+injection, **html-render** — the `--html` projection for board/handoff), `lib/` (atomic write,
+safe paths, mirror sync).
+
+### HTML projections (`--html`)
+
+`board` and `handoff` are markdown by default (git-native, terminal-readable); `--html` renders
+the *same* data model (`buildBoardModel`/`buildHandoffModel` — one source of truth, no
+re-parsing) as a self-contained page instead: inline CSS, light+dark via
+`prefers-color-scheme`, zero JavaScript, zero external resources, plus a small SVG chart (a
+kanban bar chart + Ideas strip for the board, a decision timeline for handoff). The canon stays
+markdown — HTML is always a generated face, never storage (see
+[gbrain/concepts/idea-html-projections.md](https://github.com/alexgrebeshok-coder/gbrain)).
+
+```sh
+npx samemind board --html --out DASHBOARD.html      # write a self-contained kanban page
+npx samemind handoff --html | pbcopy                # pipe the handoff page anywhere
+```
 
 ### Recall modes & env
 
