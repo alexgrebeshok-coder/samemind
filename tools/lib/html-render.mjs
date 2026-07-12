@@ -231,6 +231,13 @@ function taskCard(d, nowMs, badgeCls, badgeLabel) {
   return `<div class="card">${parts.join('')}</div>`;
 }
 
+/** Event-ledger 🔥 Open failures card (docs/event-ledger.md) — reuses the blocked (red) badge. */
+function openFailureCard(f) {
+  const when = esc(String(f.ts || '').slice(0, 16).replace('T', ' '));
+  const artifact = f.artifact ? `<div class="desc"><code>${esc(f.artifact)}</code></div>` : '';
+  return `<div class="card"><div class="card-head"><span class="badge badge-blocked">${esc(f.phase)}/${esc(f.status)}</span><span class="card-title">${esc(f.topic)}</span><span class="cite">${esc(f.actor)}, ${when}</span></div><div class="desc">${esc(f.action)}</div>${artifact}</div>`;
+}
+
 function planCard(d) {
   const desc = oneline(d);
   return `<div class="card"><div class="card-head"><span class="badge badge-plan">${esc(statusOf(d) || '?')}</span><span class="card-title">${esc(titleOf(d))}</span><span class="cite">${esc(linkOf(d))}</span></div>${desc ? `<div class="desc">${esc(desc)}</div>` : ''}</div>`;
@@ -280,6 +287,7 @@ export function renderBoardHtml(model) {
     backlog, inprog, blocked, done, plans,
     ideaIncubating, ideaSpark, ideaAdopted, ideasVisible, byId,
     recent, sessions,
+    openFailuresShown, openFailuresTotal,
   } = model;
 
   const kanbanSvg = svgKanbanBars([
@@ -303,6 +311,11 @@ export function renderBoardHtml(model) {
   if (project) body += `<p class="muted">Task filter: project <code>${esc(normProj(project))}</code> (Plans / Ideas / Recent / Sessions — bundle-wide).</p>`;
 
   body += `<div class="viz-block">${kanbanSvg}</div>`;
+
+  const openFailuresNote = openFailuresTotal > (openFailuresShown?.length || 0)
+    ? `<p class="muted">…and ${openFailuresTotal - openFailuresShown.length} more — <code>samemind ledger status</code></p>`
+    : '';
+  body += `<h2>🔥 Open failures <span class="count">(${openFailuresTotal})</span></h2>${cardsOrEmpty(openFailuresShown || [], openFailureCard)}${openFailuresNote}`;
 
   body += `<h2>🆕 Backlog <span class="count">(${backlog.length})</span></h2>${cardsOrEmpty(backlog, d => taskCard(d, nowMs, 'backlog', 'backlog'))}`;
   body += `<h2>🔧 In progress <span class="count">(${inprog.length})</span></h2>${cardsOrEmpty(inprog, d => taskCard(d, nowMs, 'inprogress', 'in progress'))}`;

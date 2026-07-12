@@ -12,6 +12,7 @@
 //   npx samemind export <dir> [...]      → tools/export.mjs      (shareable OKF-bundle / --to-gbrain; no secrets)
 //   npx samemind import <dir> [...]      → tools/import.mjs      (accept foreign OKF; default → inbox)
 //   npx samemind capture --engine <id>   → tools/capture.mjs     (read-only capture of a live engine session store → inbox)
+//   npx samemind ledger <cmd> ...        → tools/ledger.mjs      (append-only event ledger: append|status|read)
 //   npx samemind serve                   → tools/mcp-server.mjs  (MCP stdio server: memory_* tools)
 //
 // query/recall/gde are routed with OKF_ROOT defaulted to the caller's cwd, so the tools
@@ -37,6 +38,7 @@ const ROUTES = {
   export: 'tools/export.mjs',
   import: 'tools/import.mjs',
   capture: 'tools/capture.mjs',
+  ledger: 'tools/ledger.mjs',
   serve: 'tools/mcp-server.mjs',
 };
 
@@ -56,7 +58,8 @@ function usage() {
   console.log('  export <dir> [...]    shareable OKF-bundle (no secret/mirror/inbox); --visibility public|internal --dry-run --to-gbrain');
   console.log('  import <dir> [...]    accept a foreign OKF-bundle; --into inbox|concepts (default inbox) — see docs/interop.md');
   console.log('  capture --engine <id> [--source <path>] [--since <ts>] [--dry-run]   read-only capture of a live engine session store → inbox/<engine>.md — see docs/session-capture.md');
-  console.log('  serve                 MCP stdio server (memory_search/get/list/write_inbox/handoff/health) — connect it as an MCP tool');
+  console.log('  ledger <cmd> ...      append-only event ledger: append --actor .. --topic .. --phase .. [--status ..] --action ".." | status | read --topic <t> — see docs/event-ledger.md');
+  console.log('  serve                 MCP stdio server (memory_search/get/list/write_inbox/handoff/health/ledger_append/ledger_status) — connect it as an MCP tool');
 }
 
 export function main(argv = process.argv.slice(2)) {
