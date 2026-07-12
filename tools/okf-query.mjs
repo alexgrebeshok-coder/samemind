@@ -6,7 +6,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { relative } from 'node:path';
 import {
   ROOT, load, resolveLink, resolveRelationPath, pathToId,
-  collectRelationEdges, findById, disciplineChecks,
+  collectRelationEdges, findById, disciplineChecks, knowledgeChecks,
 } from './lib/okf.mjs';
 import {
   buildSupersededMap, hygieneBanner, detectSupersedeCycles, collectSupersedeEdges,
@@ -166,6 +166,8 @@ if (cmd === 'list') {
   }
   // work-discipline status checks → warnings (Plan/Task only); see docs/work-discipline.md
   const disciplineWarns = disciplineChecks(cs);
+  // knowledge-cycle status checks → warnings (Idea only); see docs/knowledge-cycle.md
+  const knowledgeWarns = knowledgeChecks(cs);
   // supersedes: show chains for visibility, warn (not fail) on dangling targets and cycles —
   // same severity as broken relations above (see docs/memory-hygiene.md).
   const supersedeEdges = collectSupersedeEdges(cs);
@@ -188,6 +190,9 @@ if (cmd === 'list') {
   }
   if (disciplineWarns.length) {
     console.log(`⚠️ Work discipline (${disciplineWarns.length}):\n` + disciplineWarns.join('\n'));
+  }
+  if (knowledgeWarns.length) {
+    console.log(`⚠️ Knowledge cycle (${knowledgeWarns.length}):\n` + knowledgeWarns.join('\n'));
   }
   if (supersedeChains.length) {
     console.log(`\n# Supersede chains (${supersedeChains.length}):\n` + supersedeChains.join('\n'));

@@ -27,3 +27,10 @@ The bundle holds **work**, not only facts (spec: `docs/work-discipline.md`).
 - Task status changed → edit the `Task` **in place**; `status: blocked` needs a non-empty `blocked_reason`.
 
 `samemind query validate` warns on Plan/Task missing `status`, bad `status`, or a blocked Task without reason.
+
+## Knowledge cycle (SHOULD)
+
+`Analysis` / `Research` / `Idea` are concepts too (`docs/knowledge-cycle.md`), linked via `informs` / `spawned_by` / `led_to`.
+
+- See an immature `Idea` (`status: spark|incubating`) in your domain → write a reflection to your own inbox (`memory_write_inbox`), `target: /concepts/<idea>.md`, proposing a path forward. Don't edit the Idea directly — curation merges reflections into its `## Reflections`.
+- `validate` warns on `Idea` missing `status`, bad `status`, or `rejected` without `rejected_reason`.

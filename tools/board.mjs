@@ -1,23 +1,25 @@
 #!/usr/bin/env node
 // board.mjs — samemind board: a human-facing kanban over the work-discipline layer
-// (Plan / Task / Decision / Session — see docs/work-discipline.md). Reads the bundle's
-// current state and renders a markdown board: who owes what, what's moving, what's
-// blocked (and for how long), what just landed, what was recently agreed.
+// (Plan / Task / Decision / Session — see docs/work-discipline.md) plus the
+// knowledge-cycle layer (Analysis / Research / Idea — see docs/knowledge-cycle.md).
+// Reads the bundle's current state and renders a markdown board: who owes what,
+// what's moving, what's blocked (and for how long), what just landed, what was
+// recently agreed, and what candidate ideas are incubating.
 //
 //   node tools/board.mjs [--write] [--project <path>]
 //
 // --write            atomic-write the board to <bundle-root>/DASHBOARD.md (committed
 //                     feature — DASHBOARD.md is tracked, not gitignored). Default: stdout.
 // --project <path>   scope the four task columns to one project (matched against the
-//                     Task `relations.project` field). Plans / Recent / Sessions stay
-//                     portfolio-wide — they are cross-cutting state, not project-scoped.
+//                     Task `relations.project` field). Plans / Ideas / Recent / Sessions
+//                     stay portfolio-wide — they are cross-cutting state, not project-scoped.
 //
 // The board is a pure function of parsed docs (lib/okf.mjs `load()`); `now` is injectable
 // so aging/davnost is deterministic in tests. No volatile timestamp is baked into the
 // output, so `--write` is idempotent: same bundle state → same bytes.
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { load, ROOT } from './lib/okf.mjs';
+import { load, ROOT, pathToId } from './lib/okf.mjs';
 import { atomicWriteFileSync } from '../lib/atomic-write.mjs';
 
 export const DASHBOARD_NAME = 'DASHBOARD.md';
@@ -123,6 +125,29 @@ function renderPlan(d) {
   return `- **[${titleOf(d)}](${linkOf(d)})** · ${statusOf(d) || '?'} — ${oneline(d)}`;
 }
 
+/** First bundle path out of a relation value (scalar or list), or null. */
+function firstRelPath(d, key) {
+  const rel = d.relations || d.fm?.relations || {};
+  const v = rel[key];
+  const first = Array.isArray(v) ? v[0] : v;
+  return first ? String(first).trim() : null;
+}
+
+function renderIdea(d) {
+  return `- **[${titleOf(d)}](${linkOf(d)})** — ${oneline(d)}`;
+}
+
+/** Adopted idea → compact line pointing at the Plan it became (`relations.led_to`). */
+function renderAdoptedIdea(d, byId) {
+  const target = firstRelPath(d, 'led_to');
+  let arrow = '';
+  if (target) {
+    const plan = byId.get(pathToId(target));
+    arrow = plan ? ` → [${titleOf(plan)}](${linkOf(plan)})` : ` → ${target}`;
+  }
+  return `- **[${titleOf(d)}](${linkOf(d)})** · adopted${arrow}`;
+}
+
 function renderRecent(d) {
   const t = String(d.fm?.type || '').trim() || '—';
   return `- **[${titleOf(d)}](${linkOf(d)})** · ${t} — ${oneline(d)}`;
@@ -166,6 +191,16 @@ export function buildBoard(docs, {
   const plans = cs.filter(d => typeOf(d) === 'plan' && ACTIVE_PLAN_STATUS.has(statusOf(d)))
     .sort(byTsDesc);
 
+  // Knowledge-cycle Ideas (see docs/knowledge-cycle.md): incubating shown first (actively being
+  // weighed), then spark (first mentions); adopted moves into a compact "Adopted → Plans" line
+  // via relations.led_to; rejected is hidden entirely (dead, but not deleted from the bundle).
+  const ideasAll = cs.filter(d => typeOf(d) === 'idea');
+  const ideaIncubating = ideasAll.filter(d => statusOf(d) === 'incubating').sort(byTsDesc);
+  const ideaSpark = ideasAll.filter(d => statusOf(d) === 'spark').sort(byTsDesc);
+  const ideaAdopted = ideasAll.filter(d => statusOf(d) === 'adopted').sort(byTsDesc);
+  const ideasVisible = [...ideaIncubating, ...ideaSpark];
+  const byId = new Map(cs.map(d => [d.id, d]));
+
   const recentCutoff = nowMs - recentDays * DAY_MS;
   const recent = cs.filter(d => {
     const t = tsOf(d);
@@ -178,7 +213,7 @@ export function buildBoard(docs, {
   L.push('# Dashboard', '');
   L.push('> Memory kanban: what\'s in progress, what\'s done, what\'s stuck. Refresh: `samemind board --write`.');
   if (project) {
-    L.push('', `> Task filter: project \`${normProj(project)}\` (Plans / Recent / Sessions — bundle-wide).`);
+    L.push('', `> Task filter: project \`${normProj(project)}\` (Plans / Ideas / Recent / Sessions — bundle-wide).`);
   }
   L.push('');
 
@@ -187,6 +222,15 @@ export function buildBoard(docs, {
   section(L, '🔴 Blocked', blocked, renderTask, nowMs);
   section(L, `✅ Done · last ${doneLimit}`, done, renderTask, nowMs);
   section(L, '📋 Plans', plans, renderPlan);
+
+  L.push(`## 💡 Ideas (${ideasVisible.length})`, '');
+  if (!ideasVisible.length) { L.push('_(empty)_'); }
+  else { for (const it of ideasVisible) L.push(renderIdea(it)); }
+  if (ideaAdopted.length) {
+    L.push('', `**Adopted → Plans (${ideaAdopted.length})**`, '');
+    for (const it of ideaAdopted) L.push(renderAdoptedIdea(it, byId));
+  }
+  L.push('');
 
   L.push(`## 🕒 Recent (last ${recentDays}d, ${recent.length})`, '');
   if (recent.length) {
