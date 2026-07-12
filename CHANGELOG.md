@@ -3,6 +3,21 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Session capture (#1)** — `samemind capture --engine <id> [--source <path>] [--since <ts>]
+  [--dry-run]` (`tools/capture.mjs`, `docs/session-capture.md`): read-only adapter framework
+  that pulls a live engine's own session store into `inbox/<engine>.md`, closing the last
+  bespoke per-engine sync bridge from dogfooding. MVP adapters: `claude-code` (distills each
+  JSONL transcript's final assistant text + session id/project/message-count meta) and
+  `generic-markdown` (any directory of `.md` diaries → title + first lines + path pointer
+  notes, e.g. OpenClaw's `memory/*.md`). Idempotent via `.samemind-capture-state.json` in the
+  bundle root; secret shapes (`npm_`/`sk-`/`ghp_`/`AKIA`) masked before writing; distilled text
+  runs through the same injection-quarantine as `memory_write_inbox`; `--dry-run` writes
+  nothing. Adding an engine is one more `ADAPTERS` entry.
+
 ## [0.2.1] — 2026-07-12
 
 ### Added
