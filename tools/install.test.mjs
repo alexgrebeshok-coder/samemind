@@ -358,6 +358,81 @@ describe('samemind install — CLI (demo bundle)', () => {
     }
   });
 
+  it('unknown --agent without --file mentions --file in the error', () => {
+    const bundle = makeDemoBundle();
+    const target = tmp('install-cli-target-nofile');
+    try {
+      execFileSync(process.execPath, [INSTALL, '--agent', 'future-agent', '--target', target], {
+        env: { ...process.env, OKF_ROOT: bundle },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      throw new Error('expected install to exit non-zero');
+    } catch (e) {
+      assert.equal(e.status, 1);
+      const stderr = String(e.stderr || '');
+      assert.match(stderr, /--file/);
+      assert.match(stderr, /future-agent/);
+    } finally {
+      rmSync(bundle, { recursive: true, force: true });
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+
+  it('--list advertises that any id works via --file', () => {
+    const out = execFileSync(process.execPath, [INSTALL, '--list'], { encoding: 'utf8' });
+    assert.match(out, /any id via --file/);
+  });
+
+  it('unknown --agent with --file writes a marker-wrapped block and is idempotent', () => {
+    const bundle = makeDemoBundle();
+    const target = tmp('install-cli-target-generic');
+    try {
+      const args = [INSTALL, '--agent', 'future-agent', '--target', target, '--file', 'INSTRUCTIONS.md'];
+      execFileSync(process.execPath, args, { env: { ...process.env, OKF_ROOT: bundle }, encoding: 'utf8' });
+      const file = join(target, 'INSTRUCTIONS.md');
+      assert.ok(existsSync(file), 'generic file created');
+      const once = readFileSync(file, 'utf8');
+      assert.match(once, new RegExp(INSTALL_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      assert.match(once, /future-agent/);
+      assert.match(once, /## samemind memory/);          // protocol block present
+      assert.match(once, /Write discipline/);
+
+      // second run is a byte-for-byte no-op, no stacked blocks
+      execFileSync(process.execPath, args, { env: { ...process.env, OKF_ROOT: bundle }, encoding: 'utf8' });
+      const twice = readFileSync(file, 'utf8');
+      assert.equal(once, twice, 'second generic install run must not change the file');
+      assert.equal((twice.match(/samemind:install:start/g) || []).length, 1);
+    } finally {
+      rmSync(bundle, { recursive: true, force: true });
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+
+  it('installEngine — unknown id without --file returns a clear ok:false reason (unit)', async () => {
+    const { installEngine } = await import('./install.mjs');
+    const res = installEngine('never-heard-of-it', { docs: [NOVA, ALEX, ENGINE_CC] });
+    assert.equal(res.ok, false);
+    assert.match(res.reason, /never-heard-of-it/);
+    assert.match(res.reason, /--file/);
+  });
+
+  it('installEngine — unknown id with --file writes the block, generic: true (unit)', async () => {
+    const { installEngine } = await import('./install.mjs');
+    const dir = tmp('install-unit-generic');
+    try {
+      const res = installEngine('watson-x', { targetDir: dir, docs: [NOVA, ALEX, ENGINE_CC], file: 'WATSON.md' });
+      assert.equal(res.ok, true);
+      assert.equal(res.generic, true);
+      assert.equal(res.files[0].path, 'WATSON.md');
+      const content = readFileSync(join(dir, 'WATSON.md'), 'utf8');
+      assert.match(content, /watson-x/);
+      assert.match(content, /samemind:install:start/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('bin/samemind.mjs routes "install" to tools/install.mjs', () => {
     const bundle = makeDemoBundle();
     const target = tmp('install-cli-target-bin');

@@ -48,13 +48,14 @@ function readableDocs() {
 export const TOOLS = [
   {
     name: 'memory_search',
-    description: 'Search the memory bundle (semantic if an index exists and answers, BM25 fallback otherwise). Never returns secret-visibility concepts.',
+    description: 'Search the memory bundle (semantic if an index exists and answers, BM25 fallback otherwise). Never returns secret-visibility concepts. Pass exclude_source (an engine id like "claude-code") to filter out concepts authored by that source — anti-echo, so an engine does not get back what it just wrote.',
     inputSchema: {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'Search query' },
         k: { type: 'integer', minimum: 1, description: 'Max results (default 5)' },
         mode: { type: 'string', enum: ['bm25', 'semantic', 'auto'], description: 'Search mode (default auto)' },
+        exclude_source: { type: 'string', pattern: '^[a-z0-9-]+$', description: 'Drop concepts whose frontmatter `source` is this id (anti-echo). Lowercase letters, digits, hyphens only.' },
       },
       required: ['query'],
     },
@@ -111,14 +112,21 @@ export const TOOLS = [
   },
 ];
 
-async function memorySearch({ query, k = 5, mode = 'auto' } = {}) {
+async function memorySearch({ query, k = 5, mode = 'auto', exclude_source } = {}) {
   if (!query || !String(query).trim()) throw new Error('memory_search: "query" is required');
   const kk = Number.isFinite(Number(k)) && Number(k) > 0 ? Math.floor(Number(k)) : 5;
+  let excludeSource = null;
+  if (exclude_source !== undefined && exclude_source !== null && String(exclude_source).trim()) {
+    excludeSource = String(exclude_source);
+    if (!/^[a-z0-9-]+$/.test(excludeSource)) {
+      throw new Error(`memory_search: "exclude_source" must match [a-z0-9-] (got "${excludeSource}")`);
+    }
+  }
   const docs = readableDocs();
   const docById = new Map(docs.map(d => [d.id, d]));
   const idx = loadIdx();
   const { hits, mode: used, warning } = await recallSearch({
-    docs, query, mode, embed, idx, k: kk, includeSecret: false, includeMirror: true,
+    docs, query, mode, embed, idx, k: kk, includeSecret: false, includeMirror: true, excludeSource,
   });
   const results = hits.map(h => {
     const doc = docById.get(h.id);

@@ -65,6 +65,16 @@ export function passesTier(visibility, { includeSecret = false, includeMirror = 
   return true;
 }
 
+/** Совпадает ли источник концепта (frontmatter `source`) с id? source может быть строкой или
+ *  списком (см. demo — `source: demo` или `source: [docs/a.md, docs/b.md]`). Анти-эхо: движок,
+ *  только что записавший в bundle, исключает своё через excludeSource, чтобы не получить своё же. */
+export function sourceMatches(doc, source) {
+  if (!source) return false;
+  const s = doc?.fm?.source;
+  if (Array.isArray(s)) return s.some(x => String(x) === source);
+  return s != null && String(s) === source;
+}
+
 /**
  * Ранжирование по косинусу с учётом тиров + гигиены памяти (supersedes/deprecated/importance/decay
  * — см. docs/memory-hygiene.md). `docs` — полные распарсенные концепты (для fm.supersedes и т.п.);
@@ -72,12 +82,13 @@ export function passesTier(visibility, { includeSecret = false, includeMirror = 
  * где этих полей нет.
  */
 export function rankByQuery(items, queryVector, {
-  k = 5, includeSecret = false, includeMirror = false, docs = [],
+  k = 5, includeSecret = false, includeMirror = false, docs = [], excludeSource = null,
 } = {}) {
   const docsById = new Map(docs.map(d => [d.id, d]));
   const supersededMap = buildSupersededMap(docs);
   return Object.entries(items)
     .filter(([, v]) => passesTier(v.visibility, { includeSecret, includeMirror }))
+    .filter(([id]) => !sourceMatches(docsById.get(id), excludeSource))
     .map(([id, v]) => {
       const doc = docsById.get(id);
       const rawScore = cosine(queryVector, v.vector);
@@ -208,10 +219,11 @@ export function keywordScore(text, query) {
 /** Единый fallback-ранкер: BM25 по title/description/tags/телу концептов (docText), с той же
  *  гигиеной ранга, что и rankByQuery (supersedes/deprecated/importance/decay).
  *  Без сети, без зависимостей. Используется и gde, и okf-recall — один механизм фолбэба. */
-export function rankByKeywords(docs, query, { k = 5, includeSecret = false, includeMirror = true } = {}) {
+export function rankByKeywords(docs, query, { k = 5, includeSecret = false, includeMirror = true, excludeSource = null } = {}) {
   const pool = docs
     .filter(d => !d.reserved)
-    .filter(d => passesTier(d.fm.visibility, { includeSecret, includeMirror }));
+    .filter(d => passesTier(d.fm.visibility, { includeSecret, includeMirror }))
+    .filter(d => !sourceMatches(d, excludeSource));
   if (!pool.length) return [];
   const corpus = buildCorpus(pool, { textOf: docText });
   const supersededMap = buildSupersededMap(docs);
@@ -246,9 +258,9 @@ const FALLBACK_WARN_OFF = 'semantic off, BM25 fallback — set OKF_EMBED_URL for
  */
 export async function recallSearch({
   docs, query, mode = 'auto', embed = null, idx = { items: {} },
-  k = 5, includeSecret = false, includeMirror = false,
+  k = 5, includeSecret = false, includeMirror = false, excludeSource = null,
 }) {
-  const bm25 = () => rankByKeywords(docs, query, { k, includeSecret, includeMirror });
+  const bm25 = () => rankByKeywords(docs, query, { k, includeSecret, includeMirror, excludeSource });
   const hasIndex = !!(idx && idx.items && Object.keys(idx.items).length > 0);
 
   if (mode === 'bm25') return { hits: bm25(), mode: 'bm25', warning: null };
@@ -257,14 +269,14 @@ export async function recallSearch({
     if (!hasIndex) throw new Error('semantic mode requires an index: run `okf-recall.mjs index` (needs OKF_EMBED_URL)');
     if (!embed) throw new Error('semantic mode requires an embeddings endpoint (OKF_EMBED_URL)');
     const qv = await embed(query);
-    return { hits: rankByQuery(idx.items, qv, { k, includeSecret, includeMirror, docs }), mode: 'semantic', warning: null };
+    return { hits: rankByQuery(idx.items, qv, { k, includeSecret, includeMirror, docs, excludeSource }), mode: 'semantic', warning: null };
   }
 
   // auto
   if (hasIndex && embed) {
     try {
       const qv = await embed(query);
-      return { hits: rankByQuery(idx.items, qv, { k, includeSecret, includeMirror, docs }), mode: 'semantic', warning: null };
+      return { hits: rankByQuery(idx.items, qv, { k, includeSecret, includeMirror, docs, excludeSource }), mode: 'semantic', warning: null };
     } catch (e) {
       return { hits: bm25(), mode: 'bm25', warning: `semantic unavailable (${e.message}) — BM25 fallback` };
     }

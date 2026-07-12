@@ -3,6 +3,22 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Exclude-by-source (anti-echo, #2)** — an engine no longer gets back what it just wrote.
+  MCP `memory_search` accepts `exclude_source` (validated to `[a-z0-9-]`); `recall`/`gde`/`brief`
+  gain `--exclude-source <id>`. Concepts whose frontmatter `source` matches the id are filtered
+  from the result (works for both string and list `source`, in BM25 and semantic paths).
+- **Smooth brief budget** — `brief --budget` no longer drops whole sections in a step curve.
+  After tier selection, the last kept tier-1/2 section is trimmed by *paragraphs* to land within
+  ±10% of the budget, marked `…truncated`. Tier-0 (boundaries / owner rules / engine role) is
+  never trimmed. Size now grows monotonically with the budget instead of jumping.
+- **Generic install** — `install --agent <any-id> --file <path>` installs into any instruction
+  file for an unsupported agent (generic brief + protocol block, idempotent between the markers).
+  `--file` is required for an unknown id; `--list` advertises `+ any id via --file`.
+
 ## [0.2.0] — 2026-07-12 «The Flywheel»
 
 ### Added

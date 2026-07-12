@@ -237,8 +237,11 @@ On this engine Nova does terminal development: reads, edits, runs, verifies — 
 `--inject <file>` replaces only the content between the two marker comments —
 text outside them is never touched, running it twice is a no-op. Priority
 under `--budget` (default ~1500 tokens): boundaries/owner-rules/engine-role
-first, voice next, everything else trimmed first with a `truncated — see
-/concepts/…` pointer back to the source.
+first, voice next, everything else trimmed first. When the budget still
+overflows after tier selection, the last kept tier-1/2 section is trimmed
+*by paragraph* to land within ±10% (marked `…truncated`) instead of being
+dropped whole — tier-0 is never trimmed. Pass `--exclude-source <id>` to
+omit concepts authored by that source (anti-echo).
 
 ## Board
 
@@ -303,13 +306,13 @@ sync-mechanism research → cron-sync-adapters idea).
 |------|---------|
 | `samemind init [dir] [--demo]` | Scaffold a fresh bundle (empty dir only; `--demo` adds the Nova example) |
 | `samemind query <cmd>` | Structural queries: `list`, `type`, `tag`, `get`, `links`, `rel`, `validate` |
-| `samemind recall "<query>"` | Search: `--mode bm25\|semantic\|auto` (default `auto`). BM25 works zero-dep; semantic needs `OKF_EMBED_URL` + `index`. |
-| `samemind gde "<query>"` | Human search: semantic when an index exists, BM25 fallback otherwise |
-| `samemind brief [--engine <id>] [--budget <n>] [--inject <file>]` | Compact Identity+User+EngineRule digest — see [Identity layer](#identity-layer) |
+| `samemind recall "<query>"` | Search: `--mode bm25\|semantic\|auto` (default `auto`). BM25 works zero-dep; semantic needs `OKF_EMBED_URL` + `index`. `--exclude-source <id>` drops an engine's own concepts (anti-echo). |
+| `samemind gde "<query>"` | Human search: semantic when an index exists, BM25 fallback otherwise. `--exclude-source <id>` supported. |
+| `samemind brief [--engine <id>] [--budget <n>] [--inject <file>] [--exclude-source <id>]` | Compact Identity+User+EngineRule digest — see [Identity layer](#identity-layer) |
 | `samemind handoff [--project <path>] [--days N] [--html [--out <file>]]` | Work-state brief (tasks/plans/decisions/session) — see [docs/compaction-recipe.md](docs/compaction-recipe.md); `--html` → self-contained page (no CDN/JS, light+dark) |
 | `samemind forget <id>` | Soft-deprecate a concept (`deprecated: true` in frontmatter) — never deletes the file. See [Memory hygiene](docs/memory-hygiene.md) |
 | `samemind board [--write] [--project <path>] [--html [--out <file>]]` | Kanban over the work-discipline layer (Backlog / In progress / Done / Blocked+aging, Plans, Recent) plus knowledge-cycle Ideas — `--write` → `DASHBOARD.md`, `--html` → self-contained page with an SVG kanban chart — see [Board](#board) |
-| `samemind install --agent <id>\|all [--target <dir>]` | Wire brief+protocol into an engine's instruction file(s), idempotently — see [Compatibility](#compatibility), [docs/adapters.md](docs/adapters.md) |
+| `samemind install --agent <id>\|all [--target <dir>]` | Wire brief+protocol into an engine's instruction file(s), idempotently — see [Compatibility](#compatibility), [docs/adapters.md](docs/adapters.md). Unknown id needs `--file <path>` for a generic install. |
 | `samemind export <dir> [--visibility public\|internal] [--dry-run] [--to-gbrain]` | Shareable OKF-bundle (strips `secret/`/`mirror/`/`inbox/`); gbrain page mapping — see [docs/interop.md](docs/interop.md) |
 | `samemind import <dir> [--into inbox\|concepts]` | Accept a foreign OKF-bundle (default → curated `inbox/import-<date>.md`; never overwrites) — see [docs/interop.md](docs/interop.md) |
 | `samemind serve` | MCP stdio server: `memory_search/get/list/write_inbox/handoff/health` — see [MCP](#mcp) |
@@ -383,7 +386,7 @@ if unset — same rule as `query`/`recall`/`gde`).
 
 | Tool | Purpose |
 |------|---------|
-| `memory_search` | `{query, k?, mode?}` → recall (semantic if an index exists and answers, BM25 otherwise). Returns `{id, type, title, score, snippet}[]`. |
+| `memory_search` | `{query, k?, mode?, exclude_source?}` → recall (semantic if an index exists and answers, BM25 otherwise). Returns `{id, type, title, score, snippet}[]`. `exclude_source` (`[a-z0-9-]`) drops an engine's own concepts — anti-echo. |
 | `memory_get` | `{id}` → one concept, full frontmatter + body. |
 | `memory_list` | `{type?, tag?}` → concept ids/titles, optionally filtered. |
 | `memory_write_inbox` | `{content, title?}` → append to `inbox/<agent>.md` — the **only** writable path. |

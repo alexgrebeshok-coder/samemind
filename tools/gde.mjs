@@ -42,9 +42,13 @@ export function parseArgs(argv = process.argv.slice(2)) {
   const reindex = argv.includes('--reindex');
   const ki = argv.indexOf('-k');
   const k = ki >= 0 ? parseInt(argv[ki + 1], 10) || 7 : 7;
-  const positional = argv.filter((a, i) => !a.startsWith('-') && !(ki >= 0 && i === ki + 1));
+  const ei = argv.indexOf('--exclude-source');
+  const excludeSource = ei >= 0 ? argv[ei + 1] : null;
+  const positional = argv.filter((a, i) => !a.startsWith('-')
+    && !(ki >= 0 && i === ki + 1)
+    && !(ei >= 0 && i === ei + 1));
   const query = positional.join(' ').trim();
-  return { query, k, includeSecret, includeMirror: true, reindex };
+  return { query, k, includeSecret, includeMirror: true, reindex, excludeSource };
 }
 
 export async function buildIndex({ includeSecret, includeMirror }) {
@@ -95,7 +99,7 @@ export function formatResults(query, results, { k, mode, staleWarning }) {
 }
 
 export async function search(query, opts) {
-  const { k, includeSecret, includeMirror, reindex, mode = 'auto' } = opts;
+  const { k, includeSecret, includeMirror, reindex, mode = 'auto', excludeSource = null } = opts;
   const docs = load({ includeSecret, includeMirror }).filter(d => !d.reserved);
   const docById = new Map(docs.map(d => [d.id, d]));
   let staleWarning = null;
@@ -114,7 +118,7 @@ export async function search(query, opts) {
 
   // Единый механизм поиска/фолбэка — из lib (разделяется с okf-recall).
   const { hits, mode: used, warning } = await recallSearch({
-    docs, query, mode, embed, idx: loadIdx(), k, includeSecret, includeMirror,
+    docs, query, mode, embed, idx: loadIdx(), k, includeSecret, includeMirror, excludeSource,
   });
   if (warning) console.error(`⚠ ${warning}`);
   const results = enrichResults(hits, docById, query);
@@ -124,7 +128,7 @@ export async function search(query, opts) {
 async function main() {
   const opts = parseArgs();
   if (!opts.query) {
-    console.log('Usage: node tools/gde.mjs "<query>" [-k N] [--secret] [--reindex]');
+    console.log('Usage: node tools/gde.mjs "<query>" [-k N] [--secret] [--reindex] [--exclude-source <id>]');
     console.log('  mirror is included by default; secret — only with --secret');
     process.exit(0);
   }
