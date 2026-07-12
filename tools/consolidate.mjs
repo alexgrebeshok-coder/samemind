@@ -78,7 +78,10 @@ export function findContradictions(canonDocs, { threshold = CONTRADICTION_SIM } 
 }
 
 function main() {
-  const docs = load({ includeSecret: true, includeMirror: true }).filter(d => !d.reserved);
+  // includeInbox: true — inbox is this tool's whole reason to exist (raw → canon gap map).
+  // Since issue #4, inbox is a reserved tier excluded by default everywhere else; consolidate
+  // is the one place that must opt in.
+  const docs = load({ includeSecret: true, includeMirror: true, includeInbox: true }).filter(d => !d.reserved);
   // канон-цели = концепты в подпапках (entities/projects/concepts/references/secret);
   // top-level README/ARCHITECTURE — документация, не темы для дедупа, в цели не берём.
   const canon = docs.filter(d => engineOf(d.id) === 'canon' && d.id.includes('/'));
@@ -97,7 +100,9 @@ function main() {
 
   // семантика по уже построенному индексу: ближайший канон-сосед для пробелов. Канон-цели в
   // индексе = не-mirror и в подпапке (secret ВКЛЮЧЁН — иначе зеркало секретного файла находит
-  // соседом родственный публичный концепт вместо настоящего секретного). Индекс: index --include-mirror --include-secret.
+  // соседом родственный публичный концепт вместо настоящего секретного). Индекс должен покрывать
+  // и inbox (иначе у сырых заметок просто нет вектора и nearestCanon молча вернёт null): index
+  // --include-mirror --include-secret --include-inbox.
   let idx = null;
   try { idx = existsSync(IDX) ? JSON.parse(readFileSync(IDX, 'utf8')) : null; } catch {}
   const items = idx ? Object.entries(idx.items) : [];
@@ -105,11 +110,15 @@ function main() {
     .filter(([id, v]) => v.visibility !== 'mirror' && id.includes('/'))
     .map(([id, v]) => ({ id, title: v.title, vector: v.vector }));
   // индекс перестраивается под флаги последнего `index`-запуска; для консолидатора нужны и mirror,
-  // и secret. Если их нет — семантика частична, честно предупреждаем (а не молча врём соседями).
+  // и secret, и inbox (сырьё — единственные документы, для которых nearestCanon вообще имеет
+  // смысл). Если их нет — семантика частична, честно предупреждаем (а не молча врём соседями).
   const hasMirror = items.some(([, v]) => v.visibility === 'mirror');
   const hasSecret = items.some(([id]) => id.startsWith('secret/'));
+  const hasInbox = items.some(([id]) => id.startsWith('inbox/'));
   const idxWarn = !idx ? 'no index'
-    : (!hasMirror || !hasSecret) ? `index incomplete (mirror:${hasMirror?'yes':'NO'} secret:${hasSecret?'yes':'NO'})` : '';
+    : (!hasMirror || !hasSecret || !hasInbox)
+      ? `index incomplete (mirror:${hasMirror?'yes':'NO'} secret:${hasSecret?'yes':'NO'} inbox:${hasInbox?'yes':'NO'})`
+      : '';
   const nearestCanon = (sampleId) => {
     if (!idx || !canonVecs.length) return null;
     const v = idx.items[sampleId]?.vector;
@@ -146,7 +155,7 @@ function main() {
   L.push(`- 🔴 gaps in ≥2 sources (strong candidates): ${strong.length}`);
   L.push(`- 🟡 gaps in a single source: ${single.length}`);
   L.push(`- ⚔️ contradictions in canon (similar title/tags, no supersedes): ${contradictions.length}`);
-  if (idxWarn) L.push(`- ⚠ _semantics partial: ${idxWarn}. Rebuild: node tools/okf-recall.mjs index --include-mirror --include-secret_`);
+  if (idxWarn) L.push(`- ⚠ _semantics partial: ${idxWarn}. Rebuild: node tools/okf-recall.mjs index --include-mirror --include-secret --include-inbox_`);
   L.push('');
   L.push(`## 🔴 Gaps — known by SEVERAL sources (promote these first)`);
   L.push(strong.length ? '' : '_none_');

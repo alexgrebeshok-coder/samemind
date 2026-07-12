@@ -15,7 +15,7 @@ export const RESERVED = new Set([
   'CLAUDE.md', 'AGENTS.md', 'GEMINI.md',
 ]);
 
-export function walk(dir = ROOT, { includeSecret = false, includeMirror = false } = {}, acc = []) {
+export function walk(dir = ROOT, { includeSecret = false, includeMirror = false, includeInbox = false } = {}, acc = []) {
   let entries;
   try { entries = readdirSync(dir); } catch { return acc; }
   const rootPrefix = resolve(ROOT) + sep;
@@ -36,8 +36,12 @@ export function walk(dir = ROOT, { includeSecret = false, includeMirror = false 
     const top = relative(ROOT, full).split('/')[0];
     if (!includeSecret && top === 'secret') continue;   // секретный слой — только по флагу
     if (!includeMirror && top === 'mirror') continue;    // зеркало живой памяти — только по флагу
+    // inbox — сырьё, ждущее курации (см. issue #4): не концепты графа, поэтому — reserved-тир,
+    // как secret/mirror, только по флагу includeInbox. Иначе первая же memory_write_inbox запись
+    // (frontmatter без `type`) валит `validate` для всего bundle.
+    if (!includeInbox && top === 'inbox') continue;
     try {
-      if (statSync(full).isDirectory()) walk(full, { includeSecret, includeMirror }, acc);
+      if (statSync(full).isDirectory()) walk(full, { includeSecret, includeMirror, includeInbox }, acc);
       else if (name.endsWith('.md')) acc.push(full);
     } catch { continue; }
   }

@@ -38,6 +38,9 @@ const embed = text => fetchEmbedding(text, { url: EMBED_URL, model: EMBED_MODEL 
 
 // Документы, которые вообще видны MCP-инструментам: НИКОГДА secret, mirror включён (единая
 // база памяти агента может законно содержать зеркало живой памяти — не блокируем).
+// inbox тоже НИКОГДА (default includeInbox: false, не передаём) — это сырьё, ждущее курации
+// (см. issue #4): memory_search/get/list не должны его отдавать. memory_write_inbox — единственный
+// путь, который его касается, и это чистая запись в файл, в load() не ходит.
 function readableDocs() {
   return load({ includeSecret: false, includeMirror: true }).filter(d => !d.reserved);
 }
