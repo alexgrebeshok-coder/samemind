@@ -6,13 +6,16 @@
 // what's moving, what's blocked (and for how long), what just landed, what was
 // recently agreed, and what candidate ideas are incubating.
 //
-//   node tools/board.mjs [--write] [--project <path>]
+//   node tools/board.mjs [--write] [--project <path>] [--html [--out <file>]]
 //
 // --write            atomic-write the board to <bundle-root>/DASHBOARD.md (committed
 //                     feature — DASHBOARD.md is tracked, not gitignored). Default: stdout.
 // --project <path>   scope the four task columns to one project (matched against the
 //                     Task `relations.project` field). Plans / Ideas / Recent / Sessions
 //                     stay portfolio-wide — they are cross-cutting state, not project-scoped.
+// --html             render a self-contained HTML projection instead of markdown (no CDN/JS,
+//                     light+dark via prefers-color-scheme) — see tools/lib/html-render.mjs.
+//                     Prints to stdout, or atomic-writes to --out <file>.
 //
 // The board is a pure function of parsed docs (lib/okf.mjs `load()`); `now` is injectable
 // so aging/davnost is deterministic in tests. No volatile timestamp is baked into the
@@ -28,7 +31,7 @@ const DAY_MS = 86_400_000;
 const DEFAULT_DONE_LIMIT = 10;
 const DEFAULT_RECENT_DAYS = 7;
 const SESSION_SUMMARY_LIMIT = 3;
-const AGING_THRESHOLD_DAYS = 7;            // blocked older than this is flagged "aging"
+export const AGING_THRESHOLD_DAYS = 7;     // blocked older than this is flagged "aging"
 const DESC_MAX = 140;
 
 // Plans shown on the board: active planning states. `done` and `superseded` are history
@@ -37,19 +40,22 @@ const DESC_MAX = 140;
 const ACTIVE_PLAN_STATUS = new Set(['draft', 'agreed', 'in-progress']);
 
 const typeOf = d => String(d.fm?.type || '').trim().toLowerCase();
-const statusOf = d => String(d.fm?.status || '').trim().toLowerCase();
+export const statusOf = d => String(d.fm?.status || '').trim().toLowerCase();
 
-function titleOf(d) {
+// The following small accessors are exported (not just module-private) so the `--html`
+// projection (tools/lib/html-render.mjs) can render exactly the same fields the markdown
+// board does, without re-deriving or re-parsing anything.
+export function titleOf(d) {
   return String(d.fm?.title || '').trim() || String(d.id).split('/').pop();
 }
 
 /** Bundle-absolute markdown link to a doc: /projects/foo.md */
-function linkOf(d) {
+export function linkOf(d) {
   return `/${d.id}.md`;
 }
 
 /** One-line description: frontmatter `description`, falling back to the first prose line of the body. */
-function oneline(d) {
+export function oneline(d) {
   let s = String(d.fm?.description || '').trim();
   if (!s) {
     for (const line of String(d.body || '').split('\n')) {
@@ -73,14 +79,14 @@ function tsOf(d) {
 }
 
 /** Whole days between `now` and the doc's timestamp (>= 0 if the doc is in the past). NaN if unknown. */
-function ageDays(d, nowMs) {
+export function ageDays(d, nowMs) {
   const t = tsOf(d);
   if (!Number.isFinite(t)) return NaN;
   return Math.floor((nowMs - t) / DAY_MS);
 }
 
 /** YYYY-MM-DD for display (prefers `date`, falls back to the timestamp day). */
-function dateOf(d) {
+export function dateOf(d) {
   const raw = String(d.fm?.date || '').trim();
   if (raw) return raw.slice(0, 10);
   const t = tsOf(d);
@@ -91,7 +97,7 @@ const byTsDesc = (a, b) => (tsOf(b) || 0) - (tsOf(a) || 0);
 const byTsAsc = (a, b) => (tsOf(a) || 0) - (tsOf(b) || 0);   // oldest first (surface stale blockers)
 
 /** Normalize a project path/id to a comparable stem: `/projects/lumen.md` → `projects/lumen`. */
-function normProj(p) {
+export function normProj(p) {
   return String(p || '').trim().replace(/^\/+/, '').replace(/\.md$/, '');
 }
 
@@ -126,7 +132,7 @@ function renderPlan(d) {
 }
 
 /** First bundle path out of a relation value (scalar or list), or null. */
-function firstRelPath(d, key) {
+export function firstRelPath(d, key) {
   const rel = d.relations || d.fm?.relations || {};
   const v = rel[key];
   const first = Array.isArray(v) ? v[0] : v;
@@ -167,10 +173,14 @@ function section(L, heading, items, render, nowMs) {
 }
 
 /**
- * Build the kanban markdown for a bundle. Pure function of `docs` (from lib/okf.mjs `load()`)
- * and options. `now` (epoch ms or Date) is injectable so davnost/aging is deterministic in tests.
+ * Build the board's data model for a bundle: the same filtering/sorting/columns that
+ * `buildBoard` renders to markdown, but as plain arrays/maps — no rendering. This is the
+ * single source of truth for both the markdown board and the `--html` projection
+ * (tools/lib/html-render.mjs): both consume this model, neither re-derives it nor re-parses
+ * the other's output. Pure function of `docs` (from lib/okf.mjs `load()`) and options; `now`
+ * (epoch ms or Date) is injectable so davnost/aging is deterministic in tests.
  */
-export function buildBoard(docs, {
+export function buildBoardModel(docs, {
   now = Date.now(),
   doneLimit = DEFAULT_DONE_LIMIT,
   recentDays = DEFAULT_RECENT_DAYS,
@@ -208,6 +218,26 @@ export function buildBoard(docs, {
   }).sort(byTsDesc);
 
   const sessions = cs.filter(d => typeOf(d) === 'session').sort(byTsDesc).slice(0, SESSION_SUMMARY_LIMIT);
+
+  return {
+    nowMs, doneLimit, recentDays, project,
+    backlog, inprog, blocked, done, plans,
+    ideaIncubating, ideaSpark, ideaAdopted, ideasVisible, byId,
+    recent, sessions,
+  };
+}
+
+/**
+ * Build the kanban markdown for a bundle. Pure function of `docs` (from lib/okf.mjs `load()`)
+ * and options. `now` (epoch ms or Date) is injectable so davnost/aging is deterministic in tests.
+ */
+export function buildBoard(docs, opts = {}) {
+  const m = buildBoardModel(docs, opts);
+  const {
+    nowMs, doneLimit, recentDays, project,
+    backlog, inprog, blocked, done, plans,
+    ideaAdopted, ideasVisible, byId, recent, sessions,
+  } = m;
 
   const L = [];
   L.push('# Dashboard', '');
@@ -252,11 +282,13 @@ export function buildBoard(docs, {
 }
 
 function parseArgs(argv) {
-  const out = { write: false, project: null };
+  const out = { write: false, project: null, html: false, out: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--write') out.write = true;
     else if (a === '--project') out.project = argv[++i] || null;
+    else if (a === '--html') out.html = true;
+    else if (a === '--out') out.out = argv[++i] || null;
   }
   return out;
 }
@@ -267,8 +299,24 @@ export function boardPath(root = ROOT) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
-  const { write, project } = parseArgs(argv);
+  const { write, project, html, out } = parseArgs(argv);
   const docs = load({ includeSecret: false });
+
+  if (html) {
+    // --html: self-contained HTML projection (tools/lib/html-render.mjs) — canon stays
+    // markdown, this is a generated face, never storage. See gbrain idea-html-projections.
+    const { renderBoardHtml } = await import('./lib/html-render.mjs');
+    const model = buildBoardModel(docs, { now: Date.now(), project });
+    const page = renderBoardHtml(model);
+    if (out) {
+      atomicWriteFileSync(out, page);
+      console.log(`✓ board HTML written: ${out}`);
+    } else {
+      console.log(page);
+    }
+    return;
+  }
+
   const md = buildBoard(docs, { now: Date.now(), project });
 
   if (write) {

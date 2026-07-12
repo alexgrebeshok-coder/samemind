@@ -3,10 +3,14 @@
 // can continue without re-explaining. Built from the work-discipline layer
 // (Plan / Decision / Task / Session — see docs/work-discipline.md).
 //
-//   node tools/handoff.mjs [--project <path>] [--days N]
+//   node tools/handoff.mjs [--project <path>] [--days N] [--html [--out <file>]]
 //
 // NOT the same as `samemind brief` (identity/personality). This is about *what is in
 // progress* — active tasks, recent decisions, plans in force, last session, open questions.
+//
+// --html   render a self-contained HTML projection instead of markdown (no CDN/JS, light+dark
+//          via prefers-color-scheme) — see tools/lib/html-render.mjs. Prints to stdout, or
+//          atomic-writes to --out <file>.
 //
 // Target size ≤ ~2000 tokens (~8000 chars). Each line carries a path citation.
 import { fileURLToPath } from 'node:url';
@@ -17,16 +21,20 @@ export const DEFAULT_BUDGET_TOKENS = 2000;
 export const CHARS_PER_TOKEN = 4;
 
 const typeOf = d => String(d.fm?.type || '').toLowerCase();
-const statusOf = d => String(d.fm?.status || '').trim().toLowerCase();
+export const statusOf = d => String(d.fm?.status || '').trim().toLowerCase();
+
+// cite/extractSection/firstBullets/oneLine/docDate are exported (not just module-private)
+// so the `--html` projection (tools/lib/html-render.mjs) renders the exact same fields the
+// markdown handoff does, without re-deriving or re-parsing anything.
 
 /** Bundle path form for citations: `/projects/x.md` */
-function cite(doc) {
+export function cite(doc) {
   const id = doc.id || '';
   return id.startsWith('/') ? `${id}.md`.replace(/\.md\.md$/, '.md') : `/${id}.md`;
 }
 
 /** Content between a `## ` heading matching `re` and the next heading of any level. */
-function extractSection(body, re) {
+export function extractSection(body, re) {
   const lines = String(body || '').split('\n');
   let capturing = false;
   const out = [];
@@ -43,7 +51,7 @@ function extractSection(body, re) {
 }
 
 /** First non-empty bullet / line from a section, one compact line. */
-function firstBullets(sectionText, max = 3) {
+export function firstBullets(sectionText, max = 3) {
   const lines = String(sectionText || '')
     .split('\n')
     .map(l => l.replace(/^[-*+]\s+/, '').replace(/^\d+\.\s+/, '').trim())
@@ -53,7 +61,7 @@ function firstBullets(sectionText, max = 3) {
 }
 
 /** Collapse whitespace + truncate for one-line list items. */
-function oneLine(s, max = 120) {
+export function oneLine(s, max = 120) {
   const t = String(s || '').replace(/\s+/g, ' ').trim();
   if (t.length <= max) return t;
   return `${t.slice(0, max - 1)}…`;
@@ -120,7 +128,7 @@ function touchesProject(doc, projectKey, relatedIds) {
 }
 
 /** ISO date (YYYY-MM-DD) from agreed_on / date / timestamp — best effort. */
-function docDate(doc) {
+export function docDate(doc) {
   const fm = doc.fm || {};
   for (const key of ['agreed_on', 'date', 'timestamp']) {
     const v = fm[key];
@@ -141,24 +149,25 @@ function daysAgo(isoDate, now) {
 }
 
 /**
- * Build the work-state handoff markdown from pre-loaded OKF docs.
+ * Build the handoff's data model from pre-loaded OKF docs: the same filtering/sorting
+ * (Active, Last decisions, Plans in force, Last session, Open questions) that `buildHandoff`
+ * renders to markdown, but as plain arrays/objects — no rendering. This is the single source
+ * of truth for both the markdown handoff and the `--html` projection (tools/lib/html-render.mjs):
+ * both consume this model, neither re-derives it nor re-parses the other's output.
  *
  * @param {object[]} docs - from load(); secret already excluded by caller
- * @param {{ project?: string|null, days?: number, now?: Date, budgetTokens?: number }} opts
- * @returns {{ markdown: string, sections: object, warnings: string[] }}
+ * @param {{ project?: string|null, days?: number, now?: Date }} opts
  */
-export function buildHandoff(docs, {
+export function buildHandoffModel(docs, {
   project = null,
   days = DEFAULT_DAYS,
   now = new Date(),
-  budgetTokens = DEFAULT_BUDGET_TOKENS,
 } = {}) {
   const cs = (docs || []).filter(d => d && !d.reserved);
   const projectKey = normalizeProjectKey(project);
   const dayWindow = Number.isFinite(Number(days)) && Number(days) > 0
     ? Math.floor(Number(days))
     : DEFAULT_DAYS;
-  const warnings = [];
 
   const allTasks = cs.filter(d => typeOf(d) === 'task');
   const allPlans = cs.filter(d => typeOf(d) === 'plan');
@@ -225,6 +234,27 @@ export function buildHandoff(docs, {
   const sessionNext = lastSession
     ? firstBullets(extractSection(lastSession.body, /^next$/i), 5)
     : [];
+
+  return { projectKey, dayWindow, active, recentDecisions, plansInForce, lastSession, blocked, sessionNext };
+}
+
+/**
+ * Build the work-state handoff markdown from pre-loaded OKF docs.
+ *
+ * @param {object[]} docs - from load(); secret already excluded by caller
+ * @param {{ project?: string|null, days?: number, now?: Date, budgetTokens?: number }} opts
+ * @returns {{ markdown: string, sections: object, warnings: string[] }}
+ */
+export function buildHandoff(docs, {
+  project = null,
+  days = DEFAULT_DAYS,
+  now = new Date(),
+  budgetTokens = DEFAULT_BUDGET_TOKENS,
+} = {}) {
+  const {
+    projectKey, dayWindow, active, recentDecisions, plansInForce, lastSession, blocked, sessionNext,
+  } = buildHandoffModel(docs, { project, days, now });
+  const warnings = [];
 
   // --- Assemble markdown ---
   const lines = [];
@@ -349,11 +379,13 @@ export function buildHandoff(docs, {
 }
 
 function parseArgs(argv) {
-  const out = { project: null, days: DEFAULT_DAYS };
+  const out = { project: null, days: DEFAULT_DAYS, html: false, outFile: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--project') out.project = argv[++i];
     else if (a === '--days') out.days = Number(argv[++i]) || DEFAULT_DAYS;
+    else if (a === '--html') out.html = true;
+    else if (a === '--out') out.outFile = argv[++i] || null;
     else if (a === '--help' || a === '-h') out.help = true;
   }
   return out;
@@ -365,6 +397,8 @@ async function main() {
     console.log('samemind handoff — work-state brief (Plan/Task/Decision/Session)');
     console.log('  --project <path>   filter by project (e.g. lumen or /projects/lumen.md)');
     console.log(`  --days N           decision window in days (default ${DEFAULT_DAYS})`);
+    console.log('  --html             self-contained HTML projection instead of markdown');
+    console.log('  --out <file>       with --html, atomic-write the page here instead of stdout');
     return;
   }
   // Never include secret — handoff is for session start, not secret review.
@@ -372,6 +406,23 @@ async function main() {
   // work-discipline docs (Plan/Task/Decision/Session); raw inbox notes have no `type` and were
   // never picked up by touchesProject()/typeOf() anyway — see issue #4.
   const docs = load({ includeSecret: false, includeMirror: true });
+
+  if (opts.html) {
+    // --html: self-contained HTML projection (tools/lib/html-render.mjs) — canon stays
+    // markdown, this is a generated face, never storage. See gbrain idea-html-projections.
+    const { renderHandoffHtml } = await import('./lib/html-render.mjs');
+    const { atomicWriteFileSync } = await import('../lib/atomic-write.mjs');
+    const model = buildHandoffModel(docs, { project: opts.project, days: opts.days });
+    const page = renderHandoffHtml(model);
+    if (opts.outFile) {
+      atomicWriteFileSync(opts.outFile, page);
+      console.log(`✓ handoff HTML written: ${opts.outFile}`);
+    } else {
+      console.log(page);
+    }
+    return;
+  }
+
   const { markdown, warnings } = buildHandoff(docs, {
     project: opts.project,
     days: opts.days,
