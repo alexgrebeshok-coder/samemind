@@ -4,9 +4,36 @@
 
 **Your personal universal memory for every AI agent. Switch engines. Same mind.**
 
-Git-native, zero-infra, plain markdown. One OKF-shaped bundle that every agent
-you run — Claude Code, OpenClaw, Hermes, opencode, Codex, Cursor, and the rest —
-can read and write.
+Wire-compatible with [Google's Open Knowledge Format](docs/interop.md) (OKF
+v0.1) — the piece no git+markdown memory tool has — and identity, an
+append-only work-ledger, and a kanban board live in the same plain-markdown
+bundle, with no integration glue between them.
+
+Also git-native and zero-infra: no database, no daemon, just one bundle that
+every agent you run — Claude Code, OpenClaw, Hermes, opencode, Codex, Cursor,
+and the rest — can read and write.
+
+## Why samemind (vs. the git-markdown crowd)
+
+Markdown + git + BM25 + zero-dep memory for coding agents stopped being a
+differentiator in 2026 — Letta shipped a git-backed MemFS, and a dozen smaller
+forks pitch the same shape. What samemind still has that they don't:
+
+| | git-markdown memory tools (Letta MemFS and similar) | samemind |
+|---|---|---|
+| Storage | plain markdown + git | same |
+| Keyword search | BM25, zero-dep | same, plus an optional semantic index |
+| MCP server | some do | yes |
+| Wire format | ad hoc, tool-specific | [Google OKF v0.1](docs/interop.md) — `export`/`import` speak it directly |
+| Identity | none — memory is undifferentiated notes | `Identity`/`User`/`EngineRule` concepts, compressed into a budget-bounded `brief` |
+| Work tracking | none, or a separate tool | append-only [event ledger](docs/event-ledger.md) + [kanban board](#board) in the same bundle, no glue |
+| Multi-engine install | usually one client | 12 engines via `samemind install`, each written into its own instruction file |
+| Session capture | — | `samemind capture` pulls a live engine transcript in, read-only |
+
+Nothing in the left column is a knock — plain markdown + git + BM25 is good
+design, which is why samemind does it too. The right-column rows are what's
+still ours as of 12.07.2026: OKF wire-compatibility, and identity + ledger +
+kanban living in one bundle instead of three separate tools glued together.
 
 ## Quick start
 
@@ -81,7 +108,9 @@ $ npx samemind board
 
 No daemon, no API key, no network call. `brief` and `board` read straight off
 the markdown `init --demo` just wrote; `recall` degrades to local BM25 because
-`OKF_EMBED_URL` isn't set. Four commands, zero infra — that's the whole pitch.
+`OKF_EMBED_URL` isn't set. Four commands, zero infra to try them — what's
+actually different from the rest of the git-markdown crowd is the
+[OKF wire-compatibility and the identity/ledger/kanban bundle](#why-samemind-vs-the-git-markdown-crowd).
 
 ## The protocol
 
