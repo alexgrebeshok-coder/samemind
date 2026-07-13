@@ -16,3 +16,10 @@ node_modules/
 # os / editor noise
 .DS_Store
 *.log
+
+# bench/longmemeval — per-question JSONL traces are huge (hundreds of MB for a full n=500 run)
+# and are local audit scratch, not repo content. Summary result JSONs (small, one per run) ARE
+# committed as evidence.
+bench/longmemeval/results/**/*.jsonl
+__pycache__/
+*.pyc

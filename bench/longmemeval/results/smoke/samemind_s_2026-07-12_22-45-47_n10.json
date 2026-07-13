@@ -1,0 +1,374 @@
+{
+  "meta": {
+    "timestamp": "2026-07-13T03:45:47.299492+00:00",
+    "adapter": "samemind",
+    "dataset": "longmemeval-s",
+    "granularity": "turn-level",
+    "n_questions": 10,
+    "top_k_values": [
+      1,
+      5,
+      10
+    ],
+    "workers": 2,
+    "elapsed_s": 1.0
+  },
+  "metrics": {
+    "n_total": 10,
+    "n_answerable": 9,
+    "n_abstention": 1,
+    "overall": {
+      "recall@1": 100.0,
+      "recall@5": 100.0,
+      "recall@10": 100.0
+    },
+    "abstention": {
+      "precision@1": 100.0,
+      "precision@5": 100.0,
+      "precision@10": 100.0
+    },
+    "by_type": {
+      "knowledge-update": {
+        "n": 4,
+        "recall@1": 100.0,
+        "recall@5": 100.0,
+        "recall@10": 100.0
+      },
+      "multi-session": {
+        "n": 2,
+        "recall@1": 100.0,
+        "recall@5": 100.0,
+        "recall@10": 100.0
+      },
+      "single-session-assistant": {
+        "n": 1,
+        "recall@1": 100.0,
+        "recall@5": 100.0,
+        "recall@10": 100.0
+      },
+      "single-session-user": {
+        "n": 2,
+        "recall@1": 100.0,
+        "recall@5": 100.0,
+        "recall@10": 100.0
+      }
+    }
+  },
+  "results": [
+    {
+      "question_id": "dfde3500",
+      "question_type": "knowledge-update",
+      "abstention": false,
+      "n_indexed": 480,
+      "n_retrieved": 10,
+      "recall": {
+        "1": true,
+        "5": true,
+        "10": true
+      },
+      "evidence_sessions": [
+        "answer_35d6c0be_1",
+        "answer_35d6c0be_2"
+      ],
+      "retrieved_sessions": [
+        "answer_35d6c0be_1",
+        "answer_35d6c0be_1",
+        "answer_35d6c0be_2",
+        "answer_35d6c0be_1",
+        "answer_35d6c0be_1",
+        "answer_35d6c0be_1",
+        "answer_35d6c0be_1",
+        "answer_35d6c0be_1",
+        "answer_35d6c0be_1",
+        "answer_35d6c0be_1"
+      ],
+      "hypothesis": "I had a language exchange class at a local language school, where I'm paired with a Colombian tutor named Juan. We meet every Wednesday evening, and he helps me with my Spanish pronunciation and grammar while I assist him with his English vocabulary. Now I remember! My language exchange class with Juan is on Wednesday evening.",
+      "error": null,
+      "elapsed_s": 0.15484362497227266,
+      "extra": {}
+    },
+    {
+      "question_id": "488d3006",
+      "question_type": "single-session-assistant",
+      "abstention": false,
+      "n_indexed": 509,
+      "n_retrieved": 10,
+      "recall": {
+        "1": true,
+        "5": true,
+        "10": true
+      },
+      "evidence_sessions": [
+        "answer_ultrachat_275993"
+      ],
+      "retrieved_sessions": [
+        "answer_ultrachat_275993",
+        "answer_ultrachat_275993",
+        "answer_ultrachat_275993",
+        "ce19df54_3",
+        "answer_ultrachat_275993",
+        "a68090b0_2",
+        "answer_ultrachat_275993",
+        "answer_ultrachat_275993",
+        "answer_ultrachat_275993",
+        "answer_ultrachat_275993"
+      ],
+      "hypothesis": "Certainly! One of the best hiking trails with breathtaking views in the Natural Park of the Moncayo mountain in Aragón is the GR-90. This trail takes you through the park's most stunning landscapes and offers panoramic views of the surrounding mountainside.\n\nThe GR-90 is a circular hiking trail that runs for approximately 36 kilometers, and it takes between two to three days to complete. The trail passes through several small towns and villages in the area and offers the opportunity to learn more about the local culture and history. \n\nSome highlights of this trail include reaching the summit of Moncayo mountain, which is the highest peak in the park, and experiencing the beautiful Fuenfría waterfall. Along the trail, you'll also get to see beautiful meadows, forests, and rock formations.\n\nOverall, the GR-90 is an unforgettable hiking experience that combines beautiful nature, stunning views, and cultural and historical landmarks.",
+      "error": null,
+      "elapsed_s": 0.1290912500116974,
+      "extra": {}
+    },
+    {
+      "question_id": "edced276_abs",
+      "question_type": "multi-session",
+      "abstention": true,
+      "n_indexed": 544,
+      "n_retrieved": 10,
+      "recall": {
+        "1": false,
+        "5": false,
+        "10": false
+      },
+      "evidence_sessions": [],
+      "retrieved_sessions": [
+        "answer_60e8941a_abs_2",
+        "answer_60e8941a_abs_1",
+        "8e8288b3",
+        "sharegpt_FACr5j1_0",
+        "answer_60e8941a_abs_2",
+        "508d552e_7",
+        "answer_60e8941a_abs_2",
+        "answer_60e8941a_abs_2",
+        "ultrachat_410709",
+        "ultrachat_211643"
+      ],
+      "hypothesis": "I'm thinking of staying in Europe for around 7-10 days. I've also considered visiting Barcelona or Amsterdam, but I'm not sure yet. I'll have to do some more research and see what each city has to offer. But I definitely want to spend a few days in Paris and try to see the Eiffel Tower and the Louvre. And in Rome, I want to visit the Colosseum and try some authentic Italian food.",
+      "error": null,
+      "elapsed_s": 0.15007112501189113,
+      "extra": {}
+    },
+    {
+      "question_id": "42ec0761",
+      "question_type": "knowledge-update",
+      "abstention": false,
+      "n_indexed": 521,
+      "n_retrieved": 10,
+      "recall": {
+        "1": true,
+        "5": true,
+        "10": true
+      },
+      "evidence_sessions": [
+        "answer_e3892371_1",
+        "answer_e3892371_2"
+      ],
+      "retrieved_sessions": [
+        "answer_e3892371_2",
+        "answer_e3892371_2",
+        "answer_e3892371_1",
+        "answer_e3892371_2",
+        "answer_e3892371_1",
+        "answer_e3892371_1",
+        "answer_e3892371_1",
+        "answer_e3892371_1",
+        "answer_e3892371_2",
+        "answer_e3892371_1"
+      ],
+      "hypothesis": "I think I'll go with Backblaze, thanks for the info. By the way, I need to open up my laptop to clean the fans soon, do I have a spare screwdriver for that?",
+      "error": null,
+      "elapsed_s": 0.1437535000150092,
+      "extra": {}
+    },
+    {
+      "question_id": "945e3d21",
+      "question_type": "knowledge-update",
+      "abstention": false,
+      "n_indexed": 489,
+      "n_retrieved": 10,
+      "recall": {
+        "1": true,
+        "5": true,
+        "10": true
+      },
+      "evidence_sessions": [
+        "answer_6a4f8626_1",
+        "answer_6a4f8626_2"
+      ],
+      "retrieved_sessions": [
+        "answer_6a4f8626_2",
+        "answer_6a4f8626_1",
+        "9bbd38a6",
+        "9bbd38a6",
+        "answer_6a4f8626_2",
+        "ultrachat_518638",
+        "answer_6a4f8626_1",
+        "5fcca8bc_1",
+        "sharegpt_E7VUcfj_0",
+        "sharegpt_E7VUcfj_0"
+      ],
+      "hypothesis": "I've got a bunch of projects going on, including a marketing campaign, a report due next Friday, and some website updates. I'd say the marketing campaign is the priority, but the report is time-sensitive. I think each task will take around 2-3 days to complete. As for work hours, I'm available from 9am-5pm, but I try to take a lunch break from 12-1pm. I've also got a meeting on Wednesday from 2-3pm. Oh, and I've noticed that I'm more focused on days when I attend yoga classes, which is three times a week - it really helps me clear my head.",
+      "error": null,
+      "elapsed_s": 0.10101929199299775,
+      "extra": {}
+    },
+    {
+      "question_id": "0862e8bf",
+      "question_type": "single-session-user",
+      "abstention": false,
+      "n_indexed": 490,
+      "n_retrieved": 10,
+      "recall": {
+        "1": true,
+        "5": true,
+        "10": true
+      },
+      "evidence_sessions": [
+        "answer_c6fd8ebd"
+      ],
+      "retrieved_sessions": [
+        "answer_c6fd8ebd",
+        "answer_c6fd8ebd",
+        "2442d5b9",
+        "answer_c6fd8ebd",
+        "answer_c6fd8ebd",
+        "answer_c6fd8ebd",
+        "sharegpt_2I1TxKW_0",
+        "answer_c6fd8ebd",
+        "answer_c6fd8ebd",
+        "answer_c6fd8ebd"
+      ],
+      "hypothesis": "By the way, my cat's name is Luna, and she's been such a sweetie throughout all the changes we've been making to her environment. I'm just glad I can provide her with a happy and healthy home.",
+      "error": null,
+      "elapsed_s": 0.12456704198848456,
+      "extra": {}
+    },
+    {
+      "question_id": "67e0d0f2",
+      "question_type": "multi-session",
+      "abstention": false,
+      "n_indexed": 510,
+      "n_retrieved": 10,
+      "recall": {
+        "1": true,
+        "5": true,
+        "10": true
+      },
+      "evidence_sessions": [
+        "answer_3a5010af_1",
+        "answer_3a5010af_2"
+      ],
+      "retrieved_sessions": [
+        "answer_3a5010af_1",
+        "answer_3a5010af_1",
+        "answer_3a5010af_1",
+        "answer_3a5010af_2",
+        "answer_3a5010af_1",
+        "b192ae00_2",
+        "sharegpt_RziX6kj_0",
+        "b192ae00_2",
+        "b192ae00_2",
+        "b192ae00_2"
+      ],
+      "hypothesis": "Excellent to hear that you've already completed some courses on Coursera! You've got a solid foundation to build upon. Here are some online resources and courses that can help you take your data analysis skills to the next level:\n\n**Online Courses:**\n\n1. **DataCamp**: DataCamp offers interactive courses and tutorials on data science, machine learning, and data visualization. Their courses are hands-on, and you'll work on real-world projects to reinforce your learning.\n2. **edX - MicroMasters in Data Science**: This MicroMasters program, offered by edX, is a series of courses that cover advanced topics in data science, including machine learning, statistics, and data visualization.\n3. **Kaggle Learn**: Kaggle is a popular platform for data science competitions, and their Learn section offers a range of courses and tutorials on data science, machine learning, and visualization.\n4. **Udemy - Advanced Data Analysis**: This course on Udemy covers advanced topics in data analysis, including data mining, predictive modeling, and data visualization.\n\n**Specialized Courses:**\n\n1. **Data Visualization**:\n\t* **Tableau's Data Visualization Certification**: This certification program covers data visualization best practices and hands-on training with Tableau.\n\t* **Data Visualization with Python** on DataCamp: This course covers data visualization using Python libraries like Matplotlib, Seaborn, and Plotly.\n2. **Machine Learning**:\n\t* **Stanford University's Machine Learning Course** on Stanford Online: This course covers advanced machine learning topics, including deep learning and natural language processing.\n\t* **Machine Learning with Python** on DataCamp: This course covers machine learning concepts using Python libraries like Scikit-learn and TensorFlow.\n3. **Statistics**:\n\t* **Statistical Modeling** on edX: This course covers advanced statistical modeling techniques, including regression, time series analysis, and Bayesian methods.\n\t* **Statistics in Python** on DataCamp: This course covers statistical analysis using Python libraries like NumPy, SciPy, and Statsmodels.\n\n**Practice and Projects:**\n\n1. **Kaggle Competitions**: Participate in Kaggle competitions to practice your data analysis and machine learning skills on real-world datasets.\n2. **Data Science Projects** on GitHub: Explore open-source data science projects on GitHub and practice working with different datasets and tools.\n3. **UCI Machine Learning Repository**: This repository offers a collection of datasets that you can use to practice your machine learning and data analysis skills.\n\n**Books and Blogs:**\n\n1. **\"Python Data Science Handbook\" by Jake VanderPlas**: This book covers the entire data science workflow using Python.\n2. **\"Hands-On Machine Learning with Scikit-Learn, Keras, and TensorFlow\" by Aurélien Géron**: This book covers machine learning concepts using Python libraries.\n3. **Data Science blogs**: Follow blogs like KDnuggets, DataCamp, and Towards Data Science to stay updated on the latest trends and techniques in data science.\n\nRemember, practice is key to improving your data analysis skills. Focus on applying your knowledge to real-world projects and datasets, and you'll see significant growth in your skills.",
+      "error": null,
+      "elapsed_s": 0.10296320900670253,
+      "extra": {}
+    },
+    {
+      "question_id": "29f2956b",
+      "question_type": "single-session-user",
+      "abstention": false,
+      "n_indexed": 496,
+      "n_retrieved": 10,
+      "recall": {
+        "1": true,
+        "5": true,
+        "10": true
+      },
+      "evidence_sessions": [
+        "answer_7cc5362f"
+      ],
+      "retrieved_sessions": [
+        "answer_7cc5362f",
+        "00842aad_2",
+        "00842aad_2",
+        "answer_7cc5362f",
+        "00842aad_2",
+        "answer_7cc5362f",
+        "00842aad_2",
+        "c4ed2287_3",
+        "00842aad_2",
+        "46548fab_3"
+      ],
+      "hypothesis": "I'm looking to improve my guitar playing and was wondering if you could recommend some online resources for learning more about music theory and fingerpicking techniques. By the way, I've been practicing guitar for 30 minutes daily, and it's been helping me progress nicely.",
+      "error": null,
+      "elapsed_s": 0.15752870801952668,
+      "extra": {}
+    },
+    {
+      "question_id": "6a1eabeb",
+      "question_type": "knowledge-update",
+      "abstention": false,
+      "n_indexed": 413,
+      "n_retrieved": 10,
+      "recall": {
+        "1": true,
+        "5": true,
+        "10": true
+      },
+      "evidence_sessions": [
+        "answer_a25d4a91_1",
+        "answer_a25d4a91_2"
+      ],
+      "retrieved_sessions": [
+        "answer_a25d4a91_2",
+        "answer_a25d4a91_2",
+        "answer_a25d4a91_1",
+        "answer_a25d4a91_2",
+        "answer_a25d4a91_2",
+        "9b3a7f2c_1",
+        "answer_a25d4a91_1",
+        "d03995c6",
+        "d03995c6",
+        "59a6150d_1"
+      ],
+      "hypothesis": "I'm getting ready for a charity 5K run and I was wondering if you could give me some tips on how to improve my endurance. By the way, I'm hoping to beat my personal best time this time around.",
+      "error": null,
+      "elapsed_s": 0.14014191599562764,
+      "extra": {}
+    },
+    {
+      "question_id": "60472f9c",
+      "question_type": "multi-session",
+      "abstention": false,
+      "n_indexed": 454,
+      "n_retrieved": 10,
+      "recall": {
+        "1": true,
+        "5": true,
+        "10": true
+      },
+      "evidence_sessions": [
+        "answer_e7fe8c8b_1",
+        "answer_e7fe8c8b_2",
+        "answer_e7fe8c8b_3"
+      ],
+      "retrieved_sessions": [
+        "answer_e7fe8c8b_1",
+        "answer_e7fe8c8b_1",
+        "answer_e7fe8c8b_3",
+        "answer_e7fe8c8b_1",
+        "answer_e7fe8c8b_2",
+        "answer_e7fe8c8b_2",
+        "answer_e7fe8c8b_2",
+        "answer_e7fe8c8b_1",
+        "3929e6cc_2",
+        "answer_e7fe8c8b_1"
+      ],
+      "hypothesis": "That's great to hear! It's fantastic that you're using Trello to manage your projects, including your Master's thesis in AI and healthcare. Creating separate boards for each project is a great way to keep your tasks and deadlines organized.\n\nUsing Trello for academic projects can be incredibly beneficial, especially when working on multiple projects simultaneously. By having a visual representation of your tasks and deadlines, you can:\n\n1. **Stay organized:** Keep all your tasks, deadlines, and resources in one place, making it easy to access and update them.\n2. **Prioritize tasks:** Use Trello's prioritization features, such as labels and due dates, to focus on the most critical tasks first.\n3. **Track progress:** Visualize your progress and identify areas where you need to focus more attention.\n4. **Collaborate:** Share boards with your supervisor, colleagues, or teammates to facilitate collaboration and feedback.\n5. **Manage time:** Allocate time for each task and set realistic deadlines to ensure you're meeting your project milestones.\n\nIt's excellent that you're finding Trello helpful in staying organized and prioritizing tasks. If you have any specific questions or need further assistance with using Trello for your projects, feel free to ask!\n\nBy the way, AI and healthcare is a fascinating field, and I'm sure your Master's thesis will contribute valuable insights to the community. What specific area of AI in healthcare are you focusing on for your thesis?",
+      "error": null,
+      "elapsed_s": 0.10738400000263937,
+      "extra": {}
+    }
+  ]
+}

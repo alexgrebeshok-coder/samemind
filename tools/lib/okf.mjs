@@ -26,8 +26,10 @@ export function walk(dir = ROOT, { includeSecret = false, includeMirror = false,
     // OKF concepts — excluded unconditionally like tools/demo/docs, not opt-in like inbox/
     // (no consumer ever needs to walk it as graph concepts; consolidate.mjs has no ledger
     // equivalent, there is nothing here to promote into the canon).
+    // bench/ (see bench/longmemeval/README.md) holds third-party benchmark harness adapters —
+    // package prose + result JSON, same category as docs/, not OKF nodes.
     if (name.startsWith('.') || name.startsWith('_') || name === 'node_modules' || name === 'tools'
-      || name === 'demo' || name === 'docs' || name === 'ledger') continue;
+      || name === 'demo' || name === 'docs' || name === 'ledger' || name === 'bench') continue;
     const full = join(dir, name);
     let st;
     try { st = lstatSync(full); } catch { continue; }
