@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { load, findById } from './lib/okf.mjs';
 import { atomicWriteFileSync } from '../lib/atomic-write.mjs';
+import { withFileLock } from '../lib/file-lock.mjs';
 
 /**
  * Insert/replace `deprecated:` + `deprecated_on:` lines inside an existing frontmatter block.
@@ -59,11 +60,17 @@ export function forget(id, { includeSecret = false, includeMirror = false, docs,
     throw new Error(`ambiguous: ${hits.length} matches for "${id}":\n${hits.map(d => d.id).join('\n')}`);
   }
   const doc = hits[0];
-  const raw = readFileSync(doc.file, 'utf8');
-  const alreadyDeprecated = /^deprecated:\s*true\s*$/m.test(raw);
   const timestamp = now.toISOString();
-  const next = setDeprecated(raw, timestamp);
-  atomicWriteFileSync(doc.file, next);
+  // withFileLock: guards the read-modify-write against a second `forget` (or any other tool
+  // editing the same concept file) running at the same instant — otherwise a lost update
+  // could silently drop the `deprecated:` flag one of the two callers meant to set.
+  const alreadyDeprecated = withFileLock(doc.file, () => {
+    const raw = readFileSync(doc.file, 'utf8');
+    const already = /^deprecated:\s*true\s*$/m.test(raw);
+    const next = setDeprecated(raw, timestamp);
+    atomicWriteFileSync(doc.file, next);
+    return already;
+  });
   return { id: doc.id, file: doc.file, deprecatedOn: timestamp, alreadyDeprecated };
 }
 

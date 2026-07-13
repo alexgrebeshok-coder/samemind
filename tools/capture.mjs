@@ -30,6 +30,7 @@ import os from 'node:os';
 import { ROOT } from './lib/okf.mjs';
 import { scanForInjection } from './lib/injection.mjs';
 import { atomicWriteFileSync } from '../lib/atomic-write.mjs';
+import { withFileLock } from '../lib/file-lock.mjs';
 
 const STATE_FILE = '.samemind-capture-state.json';
 const MAX_DISTILL_CHARS = 1500;
@@ -250,11 +251,16 @@ function appendInbox(root, engine, blocks) {
   const inboxDir = join(root, 'inbox');
   mkdirSync(inboxDir, { recursive: true });
   const target = join(inboxDir, `${engine}.md`);
-  const existing = existsSync(target)
-    ? readFileSync(target, 'utf8')
-    : `---\nokf_version: "0.1"\n---\n\n# Inbox — ${engine}\n\nAppend-only notes captured via \`samemind capture --engine ${engine}\`.\n\n`;
-  const next = `${existing.replace(/\n*$/, '\n\n')}${blocks.join('\n')}\n`;
-  atomicWriteFileSync(target, next);
+  // Same lock key (the target path) as memoryWriteInbox (tools/lib/mcp.mjs) — both write
+  // inbox/<name>.md via read-modify-write, so they must mutually exclude each other too, not
+  // just other `capture` invocations.
+  withFileLock(target, () => {
+    const existing = existsSync(target)
+      ? readFileSync(target, 'utf8')
+      : `---\nokf_version: "0.1"\n---\n\n# Inbox — ${engine}\n\nAppend-only notes captured via \`samemind capture --engine ${engine}\`.\n\n`;
+    const next = `${existing.replace(/\n*$/, '\n\n')}${blocks.join('\n')}\n`;
+    atomicWriteFileSync(target, next);
+  });
   return target;
 }
 

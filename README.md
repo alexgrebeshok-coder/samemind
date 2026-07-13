@@ -448,6 +448,27 @@ if unset — same rule as `query`/`recall`/`gde`).
   `memory_ledger_append` — so memory is never silently lost, but no downstream
   reader executes it blindly.
 
+### Concurrency
+
+**Safe for a fleet of agents writing the same bundle at once.** The three
+read-modify-write paths that a busy fleet actually hits concurrently —
+`memory_ledger_append` (`ledger/events.jsonl`), `memory_write_inbox` /
+`samemind capture` (`inbox/<agent>.md`), and `samemind forget` (a concept's
+frontmatter) — are each guarded by `lib/file-lock.mjs`, a zero-dependency
+mkdir-based mutual-exclusion lock keyed on the target file path (`mkdir` is an
+atomic exclusive-create on every platform we run on, no npm lockfile package
+needed). A lock left behind by a crashed process is reclaimed automatically —
+immediately if the holder's pid is dead, or after 30s if it's merely old — so
+one abandoned writer can never wedge the bundle for everyone else; waiters
+back off with a capped exponential retry and give up after 10s rather than
+hang forever. Combined with the existing atomic writes (temp file + rename —
+`lib/atomic-write.mjs`), this closes both halves of the concurrent-write
+problem: no torn/corrupt files (already true before this) and no silently
+lost updates when two writers race (the actual gap this closes — see
+`tools/concurrency.test.mjs`, which spawns real OS processes, not just async
+promises, since a lost-update race is invisible to a single Node process's
+cooperative scheduler).
+
 ## Compatibility
 
 **Zero-level fallback, true for everything below:** the bundle is plain markdown

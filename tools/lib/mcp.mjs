@@ -13,7 +13,7 @@
 //  - memory_ledger_append: тот же контракт, что write_inbox — actor из env SAMEMIND_AGENT
 //    (санитизируется), пишет ТОЛЬКО в ledger/events.jsonl, `action` сканируется на
 //    prompt-injection (issue #3, docs/event-ledger.md); события никогда не удаляются.
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, relative, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -26,6 +26,7 @@ import { loadIdx } from '../okf-recall.mjs';
 import { buildHandoff, DEFAULT_DAYS as HANDOFF_DEFAULT_DAYS } from '../handoff.mjs';
 import { appendEvent, readEvents, summarizeLedger, PHASES, STATUSES } from './ledger.mjs';
 import { atomicWriteFileSync } from '../../lib/atomic-write.mjs';
+import { withFileLock } from '../../lib/file-lock.mjs';
 import { safeMdPath, assertSafeConceptId, sanitizeAgentName } from '../../lib/safe-path.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -208,6 +209,7 @@ async function memoryWriteInbox({ content, title } = {}) {
   }
   const agent = sanitizeAgentName(process.env.SAMEMIND_AGENT);
   const inboxDir = join(ROOT, 'inbox');
+  mkdirSync(inboxDir, { recursive: true }); // must exist before acquireLock's mkdir(`${target}.lock`)
   const target = safeMdPath(inboxDir, agent);
 
   const text = String(content);
@@ -232,12 +234,18 @@ async function memoryWriteInbox({ content, title } = {}) {
       '',
     ].join('\n');
 
-  const existing = existsSync(target)
-    ? readFileSync(target, 'utf8')
-    : `---\nokf_version: "0.1"\n---\n\n# Inbox — ${agent}\n\nAppend-only notes written via samemind MCP (memory_write_inbox).\n\n`;
+  // withFileLock: read-modify-write guarded against concurrent writers of the SAME inbox file
+  // (the fleet all writing as one agent name, or `capture.mjs`'s appendInbox racing this same
+  // path — both key the lock off `target`, so they mutually exclude each other too).
+  const next = withFileLock(target, () => {
+    const existing = existsSync(target)
+      ? readFileSync(target, 'utf8')
+      : `---\nokf_version: "0.1"\n---\n\n# Inbox — ${agent}\n\nAppend-only notes written via samemind MCP (memory_write_inbox).\n\n`;
 
-  const next = `${existing.replace(/\n*$/, '\n\n')}${block}\n`;
-  atomicWriteFileSync(target, next);
+    const body = `${existing.replace(/\n*$/, '\n\n')}${block}\n`;
+    atomicWriteFileSync(target, body);
+    return body;
+  });
 
   return {
     ok: true,

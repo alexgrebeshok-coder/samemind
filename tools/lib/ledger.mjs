@@ -14,6 +14,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWriteFileSync } from '../../lib/atomic-write.mjs';
+import { withFileLock } from '../../lib/file-lock.mjs';
 import { scanForInjection } from './injection.mjs';
 
 export const LEDGER_DIR_NAME = 'ledger';
@@ -72,20 +73,23 @@ export function buildEvent({ actor, topic, phase, status = 'ok', action, artifac
 }
 
 /**
- * Appends one validated event to <root>/ledger/events.jsonl. Read-modify-write through
- * `atomicWriteFileSync` (temp file + rename) — the same best-effort-atomic contract this
- * package already uses for `memory_write_inbox` (tools/lib/mcp.mjs): safe against partial/
- * corrupted writes, not a distributed lock against two truly simultaneous writers (accepted
- * tradeoff already present elsewhere in samemind — see docs/event-ledger.md).
+ * Appends one validated event to <root>/ledger/events.jsonl. Read-modify-write, guarded by
+ * `withFileLock` (lib/file-lock.mjs — mkdir-based mutual exclusion + stale-lock takeover) so
+ * two agents appending at the same instant can't clobber each other's line, then written
+ * through `atomicWriteFileSync` (temp file + rename) so a crash mid-write never corrupts the
+ * file. Together: safe against both a concurrent fleet of writers AND partial writes (closes
+ * alexgrebeshok-coder/samemind concurrent-write hardening; see docs/event-ledger.md).
  */
 export function appendEvent(root, fields) {
   const rec = buildEvent(fields);
   const dir = ledgerDir(root);
   mkdirSync(dir, { recursive: true });
   const file = ledgerFile(root);
-  const existing = existsSync(file) ? readFileSync(file, 'utf8') : '';
-  const next = existing + JSON.stringify(rec) + '\n';
-  atomicWriteFileSync(file, next);
+  withFileLock(file, () => {
+    const existing = existsSync(file) ? readFileSync(file, 'utf8') : '';
+    const next = existing + JSON.stringify(rec) + '\n';
+    atomicWriteFileSync(file, next);
+  });
   return rec;
 }
 

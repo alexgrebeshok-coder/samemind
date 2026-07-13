@@ -3,6 +3,26 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Concurrent-write safety** — `lib/file-lock.mjs`: a zero-dependency mkdir-based mutual-
+  exclusion lock (atomic exclusive-create, no npm lockfile package) with automatic stale-lock
+  takeover (dead pid → immediate; merely old → after 30s) and a bounded, backoff-retried wait
+  (gives up after 10s rather than hang). Guards the three read-modify-write paths a fleet of
+  agents actually hits concurrently on the same bundle: `memory_ledger_append`
+  (`tools/lib/ledger.mjs`), `memory_write_inbox` / `samemind capture`
+  (`tools/lib/mcp.mjs`, `tools/capture.mjs` — both key the lock off the same target path, so
+  they mutually exclude each other too), and `samemind forget` (`tools/forget.mjs`). Closes a
+  real lost-update race: two writers reading the same "before" state and one silently
+  overwriting the other's contribution on rename — reproduced with real OS child processes
+  (8 processes × 15 writes lost ~85% of writes pre-fix; 0 lost across 80+ repeated runs
+  post-fix) in `tools/concurrency.test.mjs`, which also covers the stale-lock-takeover case
+  and a subtler TOCTOU bug found and fixed during development (a "lock already gone" observation
+  must never trigger a delayed removal — see the module header in `lib/file-lock.mjs`). See
+  README § Concurrency.
+
 ## [0.3.0] — 2026-07-12 «The Chronicle»
 
 ### Added
