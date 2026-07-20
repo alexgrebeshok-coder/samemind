@@ -7,6 +7,7 @@
 
 # generated artifacts
 tools/.index/
+demo/tools/.index/
 .samemind-capture-state.json
 
 # inbox — captured personal notes are per-user data, never commit; keep only the folder template

@@ -60,7 +60,7 @@ export const TOOLS = [
       properties: {
         query: { type: 'string', description: 'Search query' },
         k: { type: 'integer', minimum: 1, description: 'Max results (default 5)' },
-        mode: { type: 'string', enum: ['bm25', 'semantic', 'auto'], description: 'Search mode (default auto)' },
+        mode: { type: 'string', enum: ['bm25', 'semantic', 'hybrid', 'auto'], description: 'Search mode (default auto). hybrid (Ф3) fuses BM25+semantic via RRF, falls back to BM25 if the embeddings endpoint is unavailable.' },
         exclude_source: { type: 'string', pattern: '^[a-z0-9-]+$', description: 'Drop concepts whose frontmatter `source` is this id (anti-echo). Lowercase letters, digits, hyphens only.' },
       },
       required: ['query'],

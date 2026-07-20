@@ -248,12 +248,97 @@ export function rankByKeywords(docs, query, { k = 5, includeSecret = false, incl
 
 const FALLBACK_WARN_OFF = 'semantic off, BM25 fallback — set OKF_EMBED_URL for semantic search';
 
+// --- hybrid (Ф3): RRF fusion of BM25 + semantic rank, optional cross-encoder rerank -----------
+
+/** Standard RRF constant (Cormack, Clarke & Buettcher 2009). */
+export const RRF_K = 60;
+
 /**
- * Единый поиск recall: режимы bm25 | semantic | auto (дефолт auto).
+ * Reciprocal Rank Fusion — score(doc) = Σ 1/(k + rank_i) over each ranked list's POSITION, not
+ * its raw score: BM25 (unbounded) and cosine (-1..1) live on incomparable scales, so summing raw
+ * scores would let whichever ranker happens to produce bigger numbers dominate. Fusing by rank
+ * sidesteps that entirely. Each input list's hygiene/temporal multiplier (Ф2 — supersedes/
+ * deprecated/importance/decay) is already baked into ITS OWN ordering before this runs
+ * (rankByKeywords/rankByQuery both sort by hygiene-adjusted score) — so a superseded doc ranks
+ * low in both inputs and stays low after fusion; no separate hygiene pass needed here.
+ * A doc missing from one list (e.g. BM25 found zero keyword overlap) simply gets no contribution
+ * from that list — still fusable from whichever list(s) it appears in.
+ */
+export function rrfFuse(rankedLists, { k = RRF_K } = {}) {
+  const fused = new Map(); // id -> { item, rrfScore }
+  for (const list of rankedLists) {
+    list.forEach((item, i) => {
+      const add = 1 / (k + i + 1);
+      const prev = fused.get(item.id);
+      if (prev) prev.rrfScore += add;
+      else fused.set(item.id, { item, rrfScore: add });
+    });
+  }
+  return [...fused.values()]
+    .sort((a, b) => b.rrfScore - a.rrfScore)
+    .map(({ item, rrfScore }) => ({ ...item, score: rrfScore, rrfScore }));
+}
+
+export const DEFAULT_RERANK_MODEL = 'bge-reranker-v2-m3';
+const RERANK_POOL = 20; // how many post-RRF candidates get sent to the reranker
+
+/**
+ * Optional cross-encoder rerank over RRF-fused top-N. Same simple JSON/HTTP shape as
+ * fetchEmbedding (POST {model, query, documents}, Bearer via OKF_EMBED_KEY) — the common
+ * rerank-endpoint convention (Cohere/Jina/TEI): response `{ results: [{index, relevance_score}] }`.
+ * Strictly opt-in (see maybeRerank/recallSearch — only called when OKF_RERANK_URL is set); no
+ * reranker model runs on omlx today, so this path has no live server to hit here — covered by
+ * mocked-fetch unit tests instead (see recall.test.mjs).
+ */
+export async function fetchRerank(query, documents, {
+  url, model = process.env.OKF_RERANK_MODEL || DEFAULT_RERANK_MODEL, key = process.env.OKF_EMBED_KEY,
+} = {}) {
+  if (!url) throw new Error('fetchRerank: url required');
+  const headers = { 'Content-Type': 'application/json' };
+  if (key) headers['Authorization'] = `Bearer ${key}`;
+  const r = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ model, query, documents }),
+  });
+  if (!r.ok) throw new Error(`rerank HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const results = (await r.json())?.results;
+  if (!Array.isArray(results)) throw new Error('rerank: expected { results: [...] }');
+  return results;
+}
+
+/** Applies fetchRerank to the top RERANK_POOL hits when OKF_RERANK_URL is set; a no-op (identity)
+ *  otherwise, and fails OPEN (keeps RRF order) if the reranker errors — a broken/unreachable
+ *  reranker must never take hybrid search down with it, since it's an optional add-on. */
+async function maybeRerank(query, hits, docs) {
+  const url = process.env.OKF_RERANK_URL;
+  if (!url || hits.length === 0) return hits;
+  const pool = hits.slice(0, RERANK_POOL);
+  const rest = hits.slice(RERANK_POOL);
+  const docsById = new Map(docs.map(d => [d.id, d]));
+  const documents = pool.map(h => embedText(docsById.get(h.id) || { fm: { title: h.title }, body: '' }));
+  try {
+    const results = await fetchRerank(query, documents, { url });
+    const byIndex = new Map(results.map(r => [r.index, r.relevance_score]));
+    const reranked = pool
+      .map((h, i) => (byIndex.has(i) ? { ...h, score: byIndex.get(i) } : h))
+      .sort((a, b) => b.score - a.score);
+    return [...reranked, ...rest];
+  } catch (e) {
+    console.error(`⚠ rerank failed (${e.message}) — keeping RRF order`);
+    return hits;
+  }
+}
+
+/**
+ * Единый поиск recall: режимы bm25 | semantic | hybrid | auto (дефолт auto).
  * Возвращает { hits, mode, warning }. warning — честное одноразовое пояснение фолбэка
  * (клиент печатает его в stderr); в semantic-режиме при неготовности — бросает.
  *   mode='auto': индекс есть и embed отвечает → semantic; иначе BM25 (с warning).
  *   mode='semantic': требует индекс и embed (без тихого фолбэка).
+ *   mode='hybrid' (Ф3): BM25 ⊕ semantic слиты через RRF (rrfFuse, k=60), топ-N опционально
+ *     прогнан через rerank (см. maybeRerank); без индекса/embed или при сбое эндпоинта — тихий
+ *     фолбэк на BM25 (никогда не падает).
  *   mode='bm25': всегда BM25, без сети.
  */
 export async function recallSearch({
@@ -270,6 +355,29 @@ export async function recallSearch({
     if (!embed) throw new Error('semantic mode requires an embeddings endpoint (OKF_EMBED_URL)');
     const qv = await embed(query);
     return { hits: rankByQuery(idx.items, qv, { k, includeSecret, includeMirror, docs, excludeSource }), mode: 'semantic', warning: null };
+  }
+
+  if (mode === 'hybrid') {
+    if (!hasIndex || !embed) {
+      const embedUrlSet = !!process.env.OKF_EMBED_URL;
+      const warning = !hasIndex
+        ? (embedUrlSet
+          ? 'BM25 fallback — no index: run `okf-recall.mjs index` for hybrid search'
+          : FALLBACK_WARN_OFF)
+        : 'hybrid unavailable — no embeddings endpoint (OKF_EMBED_URL) — BM25 fallback';
+      return { hits: bm25(), mode: 'bm25', warning };
+    }
+    try {
+      const poolK = Math.max(docs.length, 1);
+      const bm25Full = rankByKeywords(docs, query, { k: poolK, includeSecret, includeMirror, excludeSource });
+      const qv = await embed(query);
+      const semFull = rankByQuery(idx.items, qv, { k: poolK, includeSecret, includeMirror, docs, excludeSource });
+      const fused = rrfFuse([bm25Full, semFull]);
+      const reranked = await maybeRerank(query, fused, docs);
+      return { hits: reranked.slice(0, k), mode: 'hybrid', warning: null };
+    } catch (e) {
+      return { hits: bm25(), mode: 'bm25', warning: `hybrid unavailable (${e.message}) — BM25 fallback` };
+    }
   }
 
   // auto

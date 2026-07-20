@@ -2,9 +2,11 @@
 // okf-recall.mjs — search over an OKF bundle: semantic (any OpenAI-compatible embeddings endpoint)
 //   or a local BM25 fallback with no network and no dependencies. The embeddings index is local.
 //   node tools/okf-recall.mjs index [--include-mirror] [--include-secret] [--include-inbox]   # build the semantic index (needs OKF_EMBED_URL)
-//   node tools/okf-recall.mjs "<query>" [-k N] [--mode bm25|semantic|auto] [--include-mirror] [--include-secret] [--include-inbox]
+//   node tools/okf-recall.mjs "<query>" [-k N] [--mode bm25|semantic|hybrid|auto] [--include-mirror] [--include-secret] [--include-inbox]
 // Modes: auto (default) — semantic if an index exists and the endpoint answers, otherwise BM25;
-//        bm25 — always local keyword/BM25; semantic — strictly semantic (no silent fallback).
+//        bm25 — always local keyword/BM25; semantic — strictly semantic (no silent fallback);
+//        hybrid (Ф3) — BM25 ⊕ semantic fused via Reciprocal Rank Fusion (k=60, see lib/recall.mjs
+//        rrfFuse); falls back to BM25 (never throws) if the index/endpoint is unavailable.
 // Tiers: curated (default) · mirror (live-memory mirror) · secret (/secret) · inbox (raw notes
 //   awaiting curation, opt-in — mainly for tools/consolidate.mjs, see issue #4).
 // Endpoint/model/key: OKF_EMBED_URL / OKF_EMBED_MODEL / OKF_EMBED_KEY (Bearer).
@@ -41,7 +43,7 @@ export function saveIdx(idx) {
   atomicWriteJsonSync(IDX, idx);
 }
 
-const MODES = ['bm25', 'semantic', 'auto'];
+const MODES = ['bm25', 'semantic', 'hybrid', 'auto'];
 
 export function parseArgs(argv = process.argv.slice(2)) {
   const includeSecret = argv.includes('--include-secret');
@@ -97,7 +99,7 @@ if (isMain) {
   try {
     if (positional[0] === 'index') await buildIndex(includeSecret, includeMirror, includeInbox);
     else if (positional.length) await query(positional.join(' '), k, includeSecret, includeMirror, includeInbox, mode, excludeSource);
-    else console.log('Usage: okf-recall.mjs index | "<query>" [-k N] [--mode bm25|semantic|auto] [--include-mirror] [--include-secret] [--include-inbox] [--exclude-source <id>]');
+    else console.log('Usage: okf-recall.mjs index | "<query>" [-k N] [--mode bm25|semantic|hybrid|auto] [--include-mirror] [--include-secret] [--include-inbox] [--exclude-source <id>]');
   } catch (e) {
     console.error('Error:', e.message);
     if (mode !== 'bm25') console.error('Hint: --mode bm25 searches without an endpoint; --mode auto (default) enables semantic search when OKF_EMBED_URL is set.');

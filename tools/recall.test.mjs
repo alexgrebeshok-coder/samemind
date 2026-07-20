@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import {
   stripLinks, docText, contentHash, cosine, passesTier, rankByQuery,
   storageOf, storagesPresent, syncIndex, rankByKeywords, recallSearch, fetchEmbedding,
-  sourceMatches,
+  sourceMatches, rrfFuse, fetchRerank,
 } from './lib/recall.mjs';
 
 // Deterministic mock-embed: 3-dim bag of words (enough for unit tests).
@@ -415,5 +415,198 @@ describe('recall — fetchEmbedding (OpenAI-compatible, stubbed fetch)', () => {
   it('malformed response (no embedding) throws', async () => {
     globalThis.fetch = stub({ data: [{}] });
     await assert.rejects(() => fetchEmbedding('hi', { dim: null }), /non-empty vector/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ф3 — hybrid retrieval: RRF fusion, hybrid mode, optional rerank hook
+// ---------------------------------------------------------------------------
+
+describe('recall — rrfFuse (pure RRF, k=60 standard)', () => {
+  it('fuses two rank-ordered lists by POSITION (classic 3-doc example)', () => {
+    const listA = [{ id: 'x' }, { id: 'y' }, { id: 'z' }]; // x#1, y#2, z#3
+    const listB = [{ id: 'y' }, { id: 'z' }, { id: 'x' }]; // y#1, z#2, x#3
+    const fused = rrfFuse([listA, listB]);
+    // score(y) = 1/62 + 1/61 = 0.032522 — highest (best rank in either list, #1 in B)
+    // score(x) = 1/61 + 1/63 = 0.032266
+    // score(z) = 1/63 + 1/62 = 0.032002
+    assert.deepEqual(fused.map(f => f.id), ['y', 'x', 'z']);
+    assert.ok(Math.abs(fused[0].score - (1 / 62 + 1 / 61)) < 1e-9);
+    assert.equal(fused[0].rrfScore, fused[0].score);
+  });
+
+  it('a doc present in only one list still gets fused (partial contribution)', () => {
+    const bm25List = [{ id: 'a' }, { id: 'b' }]; // a#1, b#2
+    const semList = [{ id: 'b' }];                // b#1, a absent (no semantic hit)
+    const fused = rrfFuse([bm25List, semList]);
+    // b: 1/62 (bm25 #2) + 1/61 (sem #1) > a: 1/61 (bm25 #1) alone
+    assert.deepEqual(fused.map(f => f.id), ['b', 'a']);
+  });
+
+  it('custom k changes the fusion weight without changing the API', () => {
+    const listA = [{ id: 'p' }, { id: 'q' }];
+    const fused = rrfFuse([listA], { k: 1 });
+    assert.ok(Math.abs(fused[0].score - 1 / 2) < 1e-9); // k=1, rank1 -> 1/(1+1)
+  });
+});
+
+describe('recall — hybrid mode: finds a paraphrase BM25 misses (Ф3 main DoD case)', () => {
+  // Doc bodies share ZERO tokens with the query — BM25 (keyword overlap) returns nothing for
+  // either doc. A toy 2-axis "semantic" mock embed (dog-signal / cat-signal) recognizes the
+  // paraphrase anyway, so hybrid (BM25 ⊕ semantic via RRF) surfaces the right doc where a pure
+  // BM25 search would come up empty.
+  const docs = [
+    { id: 'concepts/dog', reserved: false, fm: { title: 'Dog', type: 'Concept', visibility: 'internal' }, body: 'A loyal canine companion.' },
+    { id: 'concepts/cat', reserved: false, fm: { title: 'Cat', type: 'Concept', visibility: 'internal' }, body: 'An independent feline pet.' },
+  ];
+  const idx = { items: {
+    'concepts/dog': { visibility: 'internal', vector: [1, 0], title: 'Dog', type: 'Concept' },
+    'concepts/cat': { visibility: 'internal', vector: [0, 1], title: 'Cat', type: 'Concept' },
+  } };
+  const query = 'faithful four-legged friend'; // no literal overlap with either doc body
+  const mockSemanticEmbed = async t => {
+    const x = t.toLowerCase();
+    const dogSignal = /dog|canine|loyal|faithful|companion|friend/.test(x) ? 1 : 0;
+    const catSignal = /cat|feline|independent|pet/.test(x) ? 1 : 0;
+    return [dogSignal + 0.01, catSignal + 0.01];
+  };
+
+  it('BM25-only mode: zero token overlap → nothing found', async () => {
+    const r = await recallSearch({ docs, query, mode: 'bm25', k: 5 });
+    assert.equal(r.hits.length, 0);
+  });
+
+  it('hybrid mode: semantic component rescues the paraphrase — dog ranks #1', async () => {
+    const r = await recallSearch({ docs, query, mode: 'hybrid', idx, embed: mockSemanticEmbed, k: 5 });
+    assert.equal(r.mode, 'hybrid');
+    assert.equal(r.hits[0].id, 'concepts/dog');
+  });
+});
+
+describe('recall — hybrid mode preserves Ф2 hygiene (superseded stays down after fusion)', () => {
+  it('superseded doc ranks below its replacement even after RRF', async () => {
+    const docs = [
+      {
+        id: 'concepts/old', reserved: false, supersedes: [],
+        fm: { title: 'Lumen approach', type: 'Concept', visibility: 'internal' },
+        body: 'lumen lumen notes',
+      },
+      {
+        id: 'concepts/new', reserved: false, supersedes: ['/concepts/old.md'],
+        fm: { title: 'Lumen approach', type: 'Concept', visibility: 'internal' },
+        body: 'lumen lumen notes',
+      },
+    ];
+    const idx = { items: {
+      'concepts/old': { visibility: 'internal', vector: [1, 0], title: 'Lumen approach', type: 'Concept' },
+      'concepts/new': { visibility: 'internal', vector: [1, 0], title: 'Lumen approach', type: 'Concept' },
+    } };
+    const embed = async () => [1, 0]; // identical vectors — only hygiene distinguishes rank
+    const r = await recallSearch({ docs, query: 'lumen notes', mode: 'hybrid', idx, embed, k: 5 });
+    assert.equal(r.mode, 'hybrid');
+    assert.equal(r.hits[0].id, 'concepts/new');
+    assert.match(r.hits[1].label, /superseded/);
+  });
+});
+
+describe('recall — hybrid mode falls back to BM25, never throws', () => {
+  const docs = [
+    { id: 'projects/lumen', reserved: false, fm: { title: 'Lumen Notes App', type: 'Project', visibility: 'internal', tags: ['lumen', 'notes'] }, body: 'Core of the Lumen notes editor.' },
+    { id: 'projects/atlas', reserved: false, fm: { title: 'Atlas Research', type: 'Project', visibility: 'internal' }, body: 'Atlas research corpus.' },
+  ];
+
+  it('no index at all → BM25 fallback, warning mentions hybrid', async () => {
+    const r = await recallSearch({ docs, query: 'lumen notes', mode: 'hybrid', idx: { items: {} }, embed: async () => [1], k: 2 });
+    assert.equal(r.mode, 'bm25');
+    assert.equal(r.hits[0].id, 'projects/lumen');
+    assert.ok(r.warning);
+  });
+
+  it('index present but embed endpoint fails → BM25 fallback with an honest warning', async () => {
+    const idx = { items: { 'projects/lumen': { visibility: 'internal', vector: [1], title: 'Lumen Notes App', type: 'Project' } } };
+    const badEmbed = async () => { throw new Error('ECONNREFUSED 127.0.0.1:8000'); };
+    const r = await recallSearch({ docs, query: 'lumen notes', mode: 'hybrid', idx, embed: badEmbed, k: 2 });
+    assert.equal(r.mode, 'bm25');
+    assert.match(r.warning, /hybrid unavailable/);
+    assert.match(r.warning, /ECONNREFUSED/);
+    assert.equal(r.hits[0].id, 'projects/lumen');
+  });
+
+  it('no embed function at all → BM25 fallback', async () => {
+    const idx = { items: { 'projects/lumen': { visibility: 'internal', vector: [1], title: 'Lumen Notes App', type: 'Project' } } };
+    const r = await recallSearch({ docs, query: 'lumen notes', mode: 'hybrid', idx, embed: null, k: 2 });
+    assert.equal(r.mode, 'bm25');
+    assert.equal(r.hits[0].id, 'projects/lumen');
+  });
+});
+
+describe('recall — fetchRerank (optional cross-encoder rerank, stubbed fetch)', () => {
+  let saved;
+  function stub(json, ok = true, status = 200) {
+    return async () => ({ ok, status, text: async () => (ok ? '' : 'err body'), json: async () => json });
+  }
+  beforeEach(() => { saved = globalThis.fetch; });
+  afterEach(() => { globalThis.fetch = saved; });
+
+  it('requires a url (strictly opt-in)', async () => {
+    await assert.rejects(() => fetchRerank('q', ['a']), /url required/);
+  });
+
+  it('parses { results: [{index, relevance_score}] }', async () => {
+    globalThis.fetch = stub({ results: [{ index: 1, relevance_score: 0.9 }, { index: 0, relevance_score: 0.1 }] });
+    const results = await fetchRerank('q', ['doc0', 'doc1'], { url: 'http://x/rerank' });
+    assert.deepEqual(results, [{ index: 1, relevance_score: 0.9 }, { index: 0, relevance_score: 0.1 }]);
+  });
+
+  it('HTTP error throws', async () => {
+    globalThis.fetch = stub({}, false, 503);
+    await assert.rejects(() => fetchRerank('q', ['a'], { url: 'http://x/rerank' }), /HTTP 503/);
+  });
+});
+
+describe('recall — hybrid mode: rerank hook is off unless OKF_RERANK_URL is set', () => {
+  const docs = [
+    { id: 'a', reserved: false, fm: { title: 'A', type: 'Concept', visibility: 'internal' }, body: 'lumen notes' },
+    { id: 'b', reserved: false, fm: { title: 'B', type: 'Concept', visibility: 'internal' }, body: 'lumen notes' },
+  ];
+  const idx = { items: {
+    a: { visibility: 'internal', vector: [1, 0], title: 'A', type: 'Concept' },
+    b: { visibility: 'internal', vector: [1, 0], title: 'B', type: 'Concept' },
+  } };
+  const embed = async () => [1, 0]; // ties bm25+semantic between a/b — RRF keeps insertion order (a, b)
+  let saved;
+  beforeEach(() => { saved = globalThis.fetch; });
+  afterEach(() => {
+    globalThis.fetch = saved;
+    delete process.env.OKF_RERANK_URL;
+  });
+
+  it('OKF_RERANK_URL unset → RRF order kept, reranker never called', async () => {
+    let called = false;
+    globalThis.fetch = async () => { called = true; throw new Error('must not be called'); };
+    const r = await recallSearch({ docs, query: 'lumen notes', mode: 'hybrid', idx, embed, k: 2 });
+    assert.equal(r.mode, 'hybrid');
+    assert.equal(called, false);
+    assert.equal(r.hits[0].id, 'a');
+  });
+
+  it('OKF_RERANK_URL set → reorders the RRF top-N by relevance_score', async () => {
+    process.env.OKF_RERANK_URL = 'http://127.0.0.1:9/rerank';
+    globalThis.fetch = async () => ({
+      ok: true, status: 200,
+      json: async () => ({ results: [{ index: 0, relevance_score: 0.1 }, { index: 1, relevance_score: 0.9 }] }),
+    });
+    const r = await recallSearch({ docs, query: 'lumen notes', mode: 'hybrid', idx, embed, k: 2 });
+    assert.equal(r.mode, 'hybrid');
+    assert.equal(r.hits[0].id, 'b'); // RRF's #2 candidate (index 1) scored highest by the reranker
+  });
+
+  it('reranker failure fails open — keeps RRF order, does not throw or flip mode to bm25', async () => {
+    process.env.OKF_RERANK_URL = 'http://127.0.0.1:9/rerank';
+    globalThis.fetch = async () => ({ ok: false, status: 500, text: async () => 'boom' });
+    const r = await recallSearch({ docs, query: 'lumen notes', mode: 'hybrid', idx, embed, k: 2 });
+    assert.equal(r.mode, 'hybrid');
+    assert.equal(r.hits.length, 2);
+    assert.equal(r.hits[0].id, 'a'); // unchanged from the no-rerank RRF order
   });
 });
