@@ -188,3 +188,57 @@ recall/latency check (does BM25 hold up when N grows, not "how good is BM25 at r
 language recall" — that question is what the LongMemEval run above and the demo bench in
 `docs/benchmark.md` are for). Numbers will shift run-to-run for `--seed` values other than the
 recorded 42, though recall stays close given the fixed generation scheme.
+
+## Ф4 sqlite-vec N=1000/5000 — flat-JSON linear cosine vs sqlite-vec KNN
+
+Ф4 replaces the embeddings index's flat `tools/.index/embeddings.json` (whole file parsed into
+memory, cosine scored against every item in a JS loop — `rankByQuery`, `tools/lib/recall.mjs`)
+with an OPTIONAL `tools/.index/index.db` (SQLite + the [sqlite-vec](https://github.com/asg017/sqlite-vec)
+`vec0` extension, binary Float32 vectors, KNN search executed in C — `tools/lib/sqlite-index.mjs`).
+sqlite-vec ships as an `optionalDependency` behind a dynamic `import()`; unavailable on this
+platform/Node build → clean fallback to the unchanged JSON path (`sqlite-vec unavailable, JSON
+fallback`, never a crash — see `tools/okf-recall.mjs` `openBackend()`).
+
+This section runs the **same synthetic-bench harness** as "N=1000 synthetic" above, extended with
+a second, independent comparison (`runVectorIndexBench`, `tools/bench-recall.mjs`): N synthetic
+unit vectors at dim=1024 (matches the production bge-m3 embedding size), one query per sampled
+doc (own vector + small noise — ground truth nearest neighbor is that doc). Both backends are
+exercised through their REAL production code (`rankByQuery` for JSON; `openVecStore` /
+`syncVecStore` / `searchVecStore` for sqlite-vec) — not a bench-only reimplementation. Each sampled
+query pays a full **cold reload** (JSON: read + parse the file; sqlite: reopen the db + reload the
+extension) — the real per-invocation cost of this project's one-shot CLI tools (no long-running
+daemon), same "cold" methodology as the BM25 synthetic bench above.
+
+Reproduce:
+
+```sh
+node tools/bench-recall.mjs --synthetic --n=1000
+node tools/bench-recall.mjs --synthetic --n=5000
+```
+
+Recorded run (Apple Silicon, Node v22.22.3, sqlite-vec 0.1.9, 50 queries/scale, seed=42):
+
+| N | Backend | Latency p50 | Latency p95 | Recall@1 |
+|---:|---|---:|---:|---:|
+| 1000 | JSON (current default) | 108.62ms | 113.01ms | 100.0% |
+| 1000 | sqlite-vec (optional) | 3.49ms | 3.89ms | 100.0% |
+| 5000 | JSON (current default) | 540.45ms | 558.25ms | 100.0% |
+| 5000 | sqlite-vec (optional) | 12.49ms | 13.40ms | 100.0% |
+
+sqlite-vec p50 is **31.1x faster** than JSON at N=1000 and **43.3x faster** at N=5000 — the gap
+widens with N exactly as expected: JSON pays `JSON.parse` over an ever-larger array-of-floats
+blob (the "~10x heavier than binary Float32" cost) plus an O(N) JS cosine loop, while sqlite-vec's
+`vec0` scan is C-level SIMD-friendly binary comparison, largely insensitive to N at this scale.
+Recall@1 is identical (100.0%) at both N — expected, not a coincidence: `vec0`'s default index is
+an exact brute-force KNN (`distance_metric=cosine`), mathematically the same computation as the
+JSON path's linear cosine scan, not an approximate/ANN index, so there is no accuracy trade-off
+here, only a speed one. DoD met: sqlite-vec ≤ JSON at N=1000, markedly lower at N=5000, recall not
+worse at either scale.
+
+**Caveats**: synthetic random unit vectors, not real bge-m3 embeddings — this measures the INDEX
+STRUCTURE's search cost at scale (JS linear scan vs SQL/C scan), not embedding quality or
+real-corpus recall (a separate, already-covered concern — production correctness against real
+bge-m3 vectors was smoke-tested directly via `okf-recall.mjs` against the demo bundle, both
+backends returning identical top-5 results). Numbers are single-run, one seed, one machine —
+directionally reliable (the JSON path's O(N) scan vs sqlite-vec's near-flat cost is structural,
+not noise), but treat exact multipliers as illustrative, not a guarantee across hardware.

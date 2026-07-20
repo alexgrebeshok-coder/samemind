@@ -10,6 +10,14 @@
 // Tiers: curated (default) · mirror (live-memory mirror) · secret (/secret) · inbox (raw notes
 //   awaiting curation, opt-in — mainly for tools/consolidate.mjs, see issue #4).
 // Endpoint/model/key: OKF_EMBED_URL / OKF_EMBED_MODEL / OKF_EMBED_KEY (Bearer).
+//
+// Ф4 — index backend: sqlite-vec (tools/.index/index.db, binary Float32 vectors, KNN in C) is
+// tried first; a clean fallback to the flat-JSON index (tools/.index/embeddings.json, linear
+// cosine scan) kicks in whenever sqlite-vec isn't available (optionalDependency not installed, no
+// prebuilt native binary for this platform, or any load error) — never a crash, just a one-line
+// stderr note. An existing embeddings.json is migrated into index.db on first sqlite-backed run,
+// with no re-embedding (see lib/sqlite-index.mjs migrateJsonIndex). Force a backend for testing/
+// troubleshooting via OKF_INDEX_BACKEND=sqlite|json (default: auto).
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,14 +25,40 @@ import { ROOT, load } from './lib/okf.mjs';
 import {
   DEFAULT_EMBED_URL, DEFAULT_MODEL, fetchEmbedding, syncIndex, indexKey, recallSearch,
 } from './lib/recall.mjs';
+import {
+  openVecStore, closeVecStore, syncVecStore, searchVecStore, vecStoreCount, migrateJsonIndex,
+} from './lib/sqlite-index.mjs';
 import { atomicWriteJsonSync } from '../lib/atomic-write.mjs';
 
 const EMBED_URL = process.env.OKF_EMBED_URL || DEFAULT_EMBED_URL;
 const MODEL = process.env.OKF_EMBED_MODEL || DEFAULT_MODEL;
 const IDX_DIR = join(ROOT, 'tools', '.index');
 const IDX = join(IDX_DIR, 'embeddings.json');
+const IDX_DB = join(IDX_DIR, 'index.db');
+const INDEX_BACKEND = process.env.OKF_INDEX_BACKEND || 'auto'; // auto | sqlite | json
 
 const embed = text => fetchEmbedding(text, { url: EMBED_URL, model: MODEL });
+
+/** Opens the sqlite-vec store unless OKF_INDEX_BACKEND=json, migrating an existing embeddings.json
+ *  in on first use. Returns null (with an honest one-line stderr note) on ANY unavailability —
+ *  callers then use the unchanged JSON loadIdx()/saveIdx() path below. Never throws. */
+async function openBackend() {
+  if (INDEX_BACKEND === 'json') return null;
+  const store = await openVecStore({ dbPath: IDX_DB, model: MODEL });
+  if (!store.ok) {
+    console.error(`sqlite-vec unavailable, JSON fallback (${store.reason})`);
+    return null;
+  }
+  if (vecStoreCount(store) === 0 && existsSync(IDX)) {
+    const jsonIdx = loadIdx();
+    const n = Object.keys(jsonIdx.items).length;
+    if (n) {
+      migrateJsonIndex(store, jsonIdx);
+      console.error(`migrated ${n} item(s) from embeddings.json → index.db`);
+    }
+  }
+  return store;
+}
 
 export function loadIdx() {
   if (!existsSync(IDX)) return { model: MODEL, items: {} };
@@ -66,25 +100,35 @@ export function parseArgs(argv = process.argv.slice(2)) {
 }
 
 async function buildIndex(includeSecret, includeMirror, includeInbox) {
+  const docs = load({ includeSecret, includeMirror, includeInbox }).filter(d => !d.reserved);
+  const store = await openBackend();
+  if (store) {
+    const { built, reused, total } = await syncVecStore(store, docs, embed, { includeSecret, includeMirror });
+    closeVecStore(store);
+    console.log(`index (sqlite-vec): ${built} new/changed, ${reused} unchanged, ${total} total (model ${MODEL})`);
+    return;
+  }
   const idx = loadIdx();
   const key = indexKey(MODEL, EMBED_URL);
   if (idx.indexKey && idx.indexKey !== key) idx.items = {};
   else if (!idx.indexKey && idx.model && idx.model !== MODEL) idx.items = {};
   idx.indexKey = key;
   idx.model = MODEL;
-  const docs = load({ includeSecret, includeMirror, includeInbox }).filter(d => !d.reserved);
   const { built, reused, total } = await syncIndex(idx, docs, embed, { includeSecret, includeMirror });
   saveIdx(idx);
-  console.log(`index: ${built} new/changed, ${reused} unchanged, ${total} total (model ${MODEL})`);
+  console.log(`index (json): ${built} new/changed, ${reused} unchanged, ${total} total (model ${MODEL})`);
 }
 
 async function query(q, k, includeSecret, includeMirror, includeInbox, mode, excludeSource) {
   // BM25 ranks over concept bodies, so we load the bundle in every mode.
   const docs = load({ includeSecret, includeMirror, includeInbox }).filter(d => !d.reserved);
-  const idx = loadIdx();
+  const store = await openBackend();
+  const idx = store ? null : loadIdx();
   const { hits, mode: used, warning } = await recallSearch({
-    docs, query: q, mode, embed, idx, k, includeSecret, includeMirror, excludeSource,
+    docs, query: q, mode, embed, idx: idx || { items: {} }, k, includeSecret, includeMirror, excludeSource,
+    vecStore: store, vecSearch: store ? searchVecStore : null, vecCount: store ? vecStoreCount : null,
   });
+  if (store) closeVecStore(store);
   if (warning) console.error(`⚠ ${warning}`);
   // Score scale differs by mode — bm25 is unbounded BM25, semantic is cosine (-1..1), hybrid is
   // an RRF-fused rank score (Σ 1/(k+rank+1), k=60) that is SMALL BY DESIGN (~0.01-0.03 for a

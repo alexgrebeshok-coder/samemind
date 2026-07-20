@@ -76,28 +76,43 @@ export function sourceMatches(doc, source) {
 }
 
 /**
- * Ранжирование по косинусу с учётом тиров + гигиены памяти (supersedes/deprecated/importance/decay
- * — см. docs/memory-hygiene.md). `docs` — полные распарсенные концепты (для fm.supersedes и т.п.);
- * без них (или для id вне docs) множитель гигиены нейтрален (1) — обратная совместимость с индексом,
- * где этих полей нет.
+ * Shared post-processing for a list of raw semantic candidates ({id, title, type, visibility,
+ * rawScore}): tier filter, anti-echo (excludeSource), hygiene multiplier (supersedes/deprecated/
+ * importance/decay — see docs/memory-hygiene.md), sort, slice to k. Used by BOTH the in-memory
+ * JSON-index path (rankByQuery, below — candidates = every item, cosine over all of them) and the
+ * sqlite-vec backend (lib/sqlite-index.mjs searchVecStore — candidates = the overfetched KNN pool
+ * already scored by vec0's own distance metric). Keeping this in one place means the two backends
+ * can never drift on tier/hygiene semantics, only on how `rawScore` gets computed.
+ * `docs` — full parsed concepts (for fm.supersedes etc.); without them (or for an id outside docs)
+ * the hygiene multiplier is neutral (1) — same backward-compat contract as before this was split out.
  */
-export function rankByQuery(items, queryVector, {
+export function finalizeRanked(candidates, {
   k = 5, includeSecret = false, includeMirror = false, docs = [], excludeSource = null,
 } = {}) {
   const docsById = new Map(docs.map(d => [d.id, d]));
   const supersededMap = buildSupersededMap(docs);
-  return Object.entries(items)
-    .filter(([, v]) => passesTier(v.visibility, { includeSecret, includeMirror }))
-    .filter(([id]) => !sourceMatches(docsById.get(id), excludeSource))
-    .map(([id, v]) => {
-      const doc = docsById.get(id);
-      const rawScore = cosine(queryVector, v.vector);
-      const score = doc ? rawScore * hygieneMultiplier(doc, supersededMap) : rawScore;
+  return candidates
+    .filter(c => passesTier(c.visibility, { includeSecret, includeMirror }))
+    .filter(c => !sourceMatches(docsById.get(c.id), excludeSource))
+    .map(c => {
+      const doc = docsById.get(c.id);
+      const score = doc ? c.rawScore * hygieneMultiplier(doc, supersededMap) : c.rawScore;
       const label = doc ? hygieneLabel(doc, supersededMap) : '';
-      return { id, title: v.title, type: v.type, score, rawScore, label };
+      return { id: c.id, title: c.title, type: c.type, score, rawScore: c.rawScore, label };
     })
     .sort((a, b) => b.score - a.score)
     .slice(0, k);
+}
+
+/**
+ * Ранжирование по косинусу с учётом тиров + гигиены памяти — the flat-JSON index path (linear
+ * scan: cosine against every item). See finalizeRanked() for the shared tier/hygiene/sort logic.
+ */
+export function rankByQuery(items, queryVector, opts = {}) {
+  const candidates = Object.entries(items).map(([id, v]) => ({
+    id, title: v.title, type: v.type, visibility: v.visibility, rawScore: cosine(queryVector, v.vector),
+  }));
+  return finalizeRanked(candidates, opts);
 }
 
 /** Источник узла в bundle по пути: canon (корневые концепты), mirror/<engine>/…, или secret/. */
@@ -343,10 +358,23 @@ async function maybeRerank(query, hits, docs) {
  */
 export async function recallSearch({
   docs, query, mode = 'auto', embed = null, idx = { items: {} },
+  // Ф4 (opt-in, see lib/sqlite-index.mjs): when a caller passes an open sqlite-vec store + its
+  // search function, semantic ranking runs as a sqlite KNN query instead of the in-memory linear
+  // cosine scan over idx.items. Both `vecStore` and `vecSearch` must be given together (dependency
+  // injection, not a direct import — keeps this module backend-agnostic and avoids a lib/recall.mjs
+  // <-> lib/sqlite-index.mjs import cycle). Neither existing caller passes them, so every call site
+  // that predates Ф4 behaves byte-for-byte as before.
+  vecStore = null, vecSearch = null, vecCount = null,
   k = 5, includeSecret = false, includeMirror = false, excludeSource = null,
 }) {
   const bm25 = () => rankByKeywords(docs, query, { k, includeSecret, includeMirror, excludeSource });
-  const hasIndex = !!(idx && idx.items && Object.keys(idx.items).length > 0);
+  const useVec = !!(vecStore && vecSearch);
+  const hasIndex = useVec
+    ? (vecCount ? vecCount(vecStore) > 0 : true)
+    : !!(idx && idx.items && Object.keys(idx.items).length > 0);
+  const semanticRank = (qv, kk) => (useVec
+    ? vecSearch(vecStore, qv, { k: kk, includeSecret, includeMirror, docs, excludeSource })
+    : rankByQuery(idx.items, qv, { k: kk, includeSecret, includeMirror, docs, excludeSource }));
 
   if (mode === 'bm25') return { hits: bm25(), mode: 'bm25', warning: null };
 
@@ -354,7 +382,7 @@ export async function recallSearch({
     if (!hasIndex) throw new Error('semantic mode requires an index: run `okf-recall.mjs index` (needs OKF_EMBED_URL)');
     if (!embed) throw new Error('semantic mode requires an embeddings endpoint (OKF_EMBED_URL)');
     const qv = await embed(query);
-    return { hits: rankByQuery(idx.items, qv, { k, includeSecret, includeMirror, docs, excludeSource }), mode: 'semantic', warning: null };
+    return { hits: semanticRank(qv, k), mode: 'semantic', warning: null };
   }
 
   if (mode === 'hybrid') {
@@ -371,7 +399,7 @@ export async function recallSearch({
       const poolK = Math.max(docs.length, 1);
       const bm25Full = rankByKeywords(docs, query, { k: poolK, includeSecret, includeMirror, excludeSource });
       const qv = await embed(query);
-      const semFull = rankByQuery(idx.items, qv, { k: poolK, includeSecret, includeMirror, docs, excludeSource });
+      const semFull = semanticRank(qv, poolK);
       const fused = rrfFuse([bm25Full, semFull]);
       const reranked = await maybeRerank(query, fused, docs);
       return { hits: reranked.slice(0, k), mode: 'hybrid', warning: null };
@@ -384,7 +412,7 @@ export async function recallSearch({
   if (hasIndex && embed) {
     try {
       const qv = await embed(query);
-      return { hits: rankByQuery(idx.items, qv, { k, includeSecret, includeMirror, docs, excludeSource }), mode: 'semantic', warning: null };
+      return { hits: semanticRank(qv, k), mode: 'semantic', warning: null };
     } catch (e) {
       return { hits: bm25(), mode: 'bm25', warning: `semantic unavailable (${e.message}) — BM25 fallback` };
     }

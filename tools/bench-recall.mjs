@@ -9,9 +9,12 @@
 // Note: lib/okf.mjs freezes ROOT at first import, so we set OKF_ROOT *before*
 // dynamically importing load().
 import { spawnSync } from 'node:child_process';
-import { readdirSync, statSync } from 'node:fs';
+import {
+  readdirSync, statSync, mkdtempSync, writeFileSync, readFileSync, rmSync,
+} from 'node:fs';
 import { join, relative, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 
 // rankByKeywords/queryTerms come from ./lib/recall.mjs, but we do NOT import it statically
 // here (demo-harness fix 20.07, see docs/benchmark.md). ./lib/recall.mjs statically imports
@@ -26,6 +29,14 @@ import { fileURLToPath } from 'node:url';
 let _recall = null;
 async function getRecall() {
   return _recall || (_recall = await import('./lib/recall.mjs'));
+}
+
+// Same lazy-import rationale as getRecall() above: lib/sqlite-index.mjs imports lib/recall.mjs,
+// which transitively imports lib/okf.mjs (ROOT-freezing module) — deferred for consistency, even
+// though the vector bench below never touches OKF_ROOT/okf.mjs's load() at all.
+let _vecIndex = null;
+async function getVecIndex() {
+  return _vecIndex || (_vecIndex = await import('./lib/sqlite-index.mjs'));
 }
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -377,6 +388,153 @@ export function formatSyntheticResult(r) {
   ].join('\n');
 }
 
+// =========================================================================================
+// Ф4 — vector index bench: flat-JSON linear cosine (current default) vs sqlite-vec KNN
+// (optional backend, see tools/lib/sqlite-index.mjs). Exercises the REAL production code
+// (lib/recall.mjs rankByQuery, lib/sqlite-index.mjs openVecStore/syncVecStore/searchVecStore) —
+// not a bench-only reimplementation. Vectors are synthetic unit vectors at dim=1024 (matches the
+// production bge-m3 embedding size) — this measures the INDEX STRUCTURE's search latency/recall
+// at scale, not embedding quality (a separate, already-covered concern — see the BM25 bench above).
+// Each sampled query re-loads the index from scratch (JSON: read+parse the file; sqlite: reopen
+// the db + reload the extension) — the same per-CLI-invocation cost the real one-shot tools pay
+// (there is no long-running daemon here), matching the BM25 synthetic bench's "cold" methodology.
+//
+//   node tools/bench-recall.mjs --synthetic --n=1000
+//   node tools/bench-recall.mjs --synthetic --n=5000
+// (runs alongside the BM25 numbers above in the same invocation — see docs/benchmark.md)
+// =========================================================================================
+
+function genUnitVector(rng, dim) {
+  const v = new Float32Array(dim);
+  let norm = 0;
+  for (let i = 0; i < dim; i++) { v[i] = rng() * 2 - 1; norm += v[i] * v[i]; }
+  norm = Math.sqrt(norm) || 1;
+  for (let i = 0; i < dim; i++) v[i] /= norm;
+  return v;
+}
+
+/** Query vector for doc i: its own embedding + small noise — ground truth nearest neighbor is
+ *  (almost always) the doc itself, same "partial signature" idea as queryForDoc() for BM25. */
+function perturbVector(rng, v, amount = 0.05) {
+  const out = new Float32Array(v.length);
+  for (let i = 0; i < v.length; i++) out[i] = v[i] + (rng() * 2 - 1) * amount;
+  return out;
+}
+
+function sampleIndices(n, queryCount) {
+  const step = Math.max(1, Math.floor(n / queryCount));
+  const idx = [];
+  for (let i = 0; i < n && idx.length < queryCount; i += step) idx.push(i);
+  return idx;
+}
+
+/**
+ * Run the vector-index latency/recall comparison at N docs. Returns `{ n, dim, queryCount, json,
+ * sqlite }` where each of `json`/`sqlite` is `{ latencyP50Ms, latencyP95Ms, recallAt1 }` — or
+ * `sqlite: { skipped: reason }` (never a thrown error) when sqlite-vec isn't usable in this
+ * environment, mirroring the production fallback contract (okf-recall.mjs openBackend()).
+ */
+export async function runVectorIndexBench({ n = 1000, dim = 1024, queryCount = 50, seed = 42 } = {}) {
+  const { rankByQuery } = await getRecall();
+  const { openVecStore, closeVecStore, syncVecStore, searchVecStore } = await getVecIndex();
+
+  const rng = mulberry32(seed);
+  const ids = Array.from({ length: n }, (_, i) => `synthetic/vec-doc-${String(i).padStart(6, '0')}`);
+  const vectors = Array.from({ length: n }, () => genUnitVector(rng, dim));
+  const items = Object.fromEntries(ids.map((id, i) => [id, {
+    title: `Synthetic vector doc ${i}`, type: 'Concept', visibility: 'internal', vector: Array.from(vectors[i]),
+  }]));
+
+  const tmpRoot = mkdtempSync(join(tmpdir(), 'samemind-vecbench-'));
+  try {
+    // --- build the JSON index as a real file (same shape okf-recall.mjs writes) ---
+    const jsonPath = join(tmpRoot, 'embeddings.json');
+    writeFileSync(jsonPath, JSON.stringify({ model: 'bench', items }));
+
+    // --- build the sqlite-vec store via the real production sync path ---
+    const dbPath = join(tmpRoot, 'index.db');
+    const buildStore = await openVecStore({ dbPath });
+    const sqliteAvailable = buildStore.ok;
+    if (sqliteAvailable) {
+      const docs = ids.map((id, i) => ({ id, fm: { title: `T${i}`, type: 'Concept', visibility: 'internal' }, body: '' }));
+      let i = 0;
+      await syncVecStore(buildStore, docs, async () => vectors[i++]); // order-preserving: doc i -> vectors[i]
+      closeVecStore(buildStore);
+    }
+
+    const queryRng = mulberry32(seed + 1); // separate stream from corpus generation
+    const sample = sampleIndices(n, queryCount);
+
+    // --- JSON path: per query, re-read + re-parse the file (real per-invocation cost) ---
+    const jsonLatencies = [];
+    let jsonHit1 = 0;
+    for (const i of sample) {
+      const qv = Array.from(perturbVector(queryRng, vectors[i]));
+      const t0 = performance.now();
+      const idx = JSON.parse(readFileSync(jsonPath, 'utf8'));
+      const ranked = rankByQuery(idx.items, qv, { k: 10 });
+      jsonLatencies.push(performance.now() - t0);
+      if (ranked[0]?.id === ids[i]) jsonHit1++;
+    }
+    jsonLatencies.sort((a, b) => a - b);
+
+    const result = {
+      n, dim, queryCount: sample.length,
+      json: {
+        latencyP50Ms: percentile(jsonLatencies, 50),
+        latencyP95Ms: percentile(jsonLatencies, 95),
+        recallAt1: jsonHit1 / sample.length,
+      },
+    };
+
+    if (!sqliteAvailable) {
+      result.sqlite = { skipped: buildStore.reason };
+      return result;
+    }
+
+    // --- sqlite-vec path: per query, reopen the store fresh (real per-invocation cost) ---
+    const vecLatencies = [];
+    let vecHit1 = 0;
+    for (const i of sample) {
+      const qv = Array.from(perturbVector(queryRng, vectors[i]));
+      const t0 = performance.now();
+      const store = await openVecStore({ dbPath });
+      const hits = searchVecStore(store, qv, { k: 10 });
+      closeVecStore(store);
+      vecLatencies.push(performance.now() - t0);
+      if (hits[0]?.id === ids[i]) vecHit1++;
+    }
+    vecLatencies.sort((a, b) => a - b);
+    result.sqlite = {
+      latencyP50Ms: percentile(vecLatencies, 50),
+      latencyP95Ms: percentile(vecLatencies, 95),
+      recallAt1: vecHit1 / sample.length,
+    };
+    return result;
+  } finally {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  }
+}
+
+export function formatVectorIndexResult(r) {
+  const pct = x => `${(x * 100).toFixed(1)}%`;
+  const ms = x => `${x.toFixed(2)}ms`;
+  const lines = [
+    '',
+    `# samemind vector-index bench (Ф4) — JSON linear-cosine vs sqlite-vec, N=${r.n} (dim=${r.dim}), ${r.queryCount} queries`,
+    '',
+    `JSON (current default):    p50=${ms(r.json.latencyP50Ms)}  p95=${ms(r.json.latencyP95Ms)}  recall@1=${pct(r.json.recallAt1)}`,
+  ];
+  if (r.sqlite.skipped) {
+    lines.push(`sqlite-vec:                 skipped — ${r.sqlite.skipped}`);
+  } else {
+    lines.push(`sqlite-vec (optional):      p50=${ms(r.sqlite.latencyP50Ms)}  p95=${ms(r.sqlite.latencyP95Ms)}  recall@1=${pct(r.sqlite.recallAt1)}`);
+    const speedup = r.json.latencyP50Ms / r.sqlite.latencyP50Ms;
+    lines.push(`sqlite-vec p50 is ${speedup.toFixed(1)}x faster than JSON at N=${r.n}.`);
+  }
+  return lines.join('\n');
+}
+
 function pad(s, w) {
   s = String(s);
   return s.length >= w ? s.slice(0, w) : s + ' '.repeat(w - s.length);
@@ -440,12 +598,12 @@ function flagValue(name, fallback) {
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
   if (process.argv.includes('--synthetic')) {
-    const result = await runSyntheticBench({
-      n: flagValue('n', 1000),
-      queryCount: flagValue('queries', 200),
-      seed: flagValue('seed', 42),
-    });
+    const n = flagValue('n', 1000);
+    const seed = flagValue('seed', 42);
+    const result = await runSyntheticBench({ n, queryCount: flagValue('queries', 200), seed });
     console.log(formatSyntheticResult(result));
+    const vecResult = await runVectorIndexBench({ n, queryCount: flagValue('vec-queries', 50), seed });
+    console.log(formatVectorIndexResult(vecResult));
     process.exit(0);
   }
   if (!process.env.OKF_ROOT) process.env.OKF_ROOT = DEMO_ROOT;

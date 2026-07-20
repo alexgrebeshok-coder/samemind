@@ -48,5 +48,8 @@
     "CONTRIBUTING.md",
     "INSTALL_FOR_AGENTS.md",
     "LICENSE"
-  ]
+  ],
+  "optionalDependencies": {
+    "sqlite-vec": "^0.1.9"
+  }
 }
