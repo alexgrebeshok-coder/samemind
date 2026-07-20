@@ -11,6 +11,7 @@ import {
   DEFAULT_EMBED_URL, DEFAULT_MODEL, fetchEmbedding, syncIndex, indexKey,
   checkIndexStale, extractSnippet, recallSearch,
 } from './lib/recall.mjs';
+import { readEvents } from './lib/ledger.mjs';
 import { atomicWriteJsonSync } from '../lib/atomic-write.mjs';
 
 const EMBED_URL = process.env.OKF_EMBED_URL || DEFAULT_EMBED_URL;
@@ -119,6 +120,7 @@ export async function search(query, opts) {
   // Единый механизм поиска/фолбэка — из lib (разделяется с okf-recall).
   const { hits, mode: used, warning } = await recallSearch({
     docs, query, mode, embed, idx: loadIdx(), k, includeSecret, includeMirror, excludeSource,
+    events: readEvents(ROOT), // Ф5: tiered heat, same hygiene pass
   });
   if (warning) console.error(`⚠ ${warning}`);
   const results = enrichResults(hits, docById, query);

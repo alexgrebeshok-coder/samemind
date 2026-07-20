@@ -84,11 +84,15 @@ export function findContradictions(canonDocs, { threshold = CONTRADICTION_SIM } 
   return out.sort((x, y) => y.score - x.score);
 }
 
-function main() {
-  // includeInbox: true — inbox is this tool's whole reason to exist (raw → canon gap map).
-  // Since issue #4, inbox is a reserved tier excluded by default everywhere else; consolidate
-  // is the one place that must opt in.
-  const docs = load({ includeSecret: true, includeMirror: true, includeInbox: true }).filter(d => !d.reserved);
+/**
+ * Pure(ish) core of the consolidation map: canon/raw split, same-slug "covered" matches, semantic
+ * gap classification (strong = ≥2 raw sources, single = one), and Ф2 contradictions. Extracted
+ * out of main() so tools/reflect.mjs (Ф5 — reconcile + consolidate + heat, ONE proposal report)
+ * can reuse this exact classification instead of re-implementing it; main() below just renders it.
+ * Reads the on-disk semantic index directly (same IDX path main() always used) — every caller
+ * wants "the index as it sits on disk right now", so a parameter would only ever get that one value.
+ */
+export function buildConsolidationMap(docs) {
   // канон-цели = концепты в подпапках (entities/projects/concepts/references/secret);
   // top-level README/ARCHITECTURE — документация, не темы для дедупа, в цели не берём.
   const canon = docs.filter(d => engineOf(d.id) === 'canon' && d.id.includes('/'));
@@ -146,6 +150,16 @@ function main() {
   }
   const byScore = (a, b) => (b.near?.score || 0) - (a.near?.score || 0);
   strong.sort(byScore); single.sort(byScore);
+
+  return { canon, raw, byKey, covered, strong, single, contradictions, idxWarn };
+}
+
+function main() {
+  // includeInbox: true — inbox is this tool's whole reason to exist (raw → canon gap map).
+  // Since issue #4, inbox is a reserved tier excluded by default everywhere else; consolidate
+  // is the one place that must opt in.
+  const docs = load({ includeSecret: true, includeMirror: true, includeInbox: true }).filter(d => !d.reserved);
+  const { canon, raw, byKey, covered, strong, single, contradictions, idxWarn } = buildConsolidationMap(docs);
 
   const tag = n => !n ? '' :
     n.score >= SEM_DUP  ? `  ⚠ possible duplicate → ${n.id} (${n.score.toFixed(2)})`

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // hygiene.test.mjs — memory hygiene (naryad N17): supersedes, samemind forget/deprecated,
-// importance/time-decay, cycle/dangling-target detection, consolidate contradictions.
-// Run: node --test tools/hygiene.test.mjs
+// importance/time-decay, tiered heat (Ф5), cycle/dangling-target detection, consolidate
+// contradictions. Run: node --test tools/hygiene.test.mjs
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -16,7 +16,9 @@ import {
   buildSupersededMap, isSuperseded, isDeprecated, detectSupersedeCycles,
   importanceMultiplier, decayMultiplier, hygieneMultiplier, hygieneBanner, hygieneLabel,
   isExpired, hasSupersededBy, isTemporallySuperseded,
+  buildHeatIndex, heatScore, heatTier, heatMultiplier,
   SUPERSEDED_PENALTY, DEFAULT_IMPORTANCE, DECAY_AFTER_DAYS, DECAY_FULL_DAYS, DECAY_MIN_MULTIPLIER,
+  HEAT_WINDOW_DAYS,
 } from './lib/hygiene.mjs';
 import { rankByKeywords, rankByQuery, recallSearch } from './lib/recall.mjs';
 import { forget, setDeprecated } from './forget.mjs';
@@ -331,6 +333,124 @@ describe('time-decay — multiplier', () => {
     // importance override, no decay) regardless of its age.
     const map = buildSupersededMap(docs);
     assert.equal(hygieneMultiplier(docs[0], map, { now: NOW_MS }), 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4b. tiered heat (Ф5) — recency × frequency from the event ledger, additive boost only
+// ---------------------------------------------------------------------------
+
+describe('heat — buildHeatIndex / heatScore / heatTier (pure)', () => {
+  it('buildHeatIndex: groups events by topic, tracks count + latest ts', () => {
+    const events = [
+      { topic: 'concepts/hot', ts: '2026-07-01T00:00:00Z' },
+      { topic: 'concepts/hot', ts: '2026-07-05T00:00:00Z' },
+      { topic: 'concepts/other', ts: '2026-01-01T00:00:00Z' },
+    ];
+    const idx = buildHeatIndex(events);
+    assert.deepEqual(idx.get('concepts/hot'), { count: 2, lastTs: '2026-07-05T00:00:00Z' });
+    assert.equal(idx.get('concepts/other').count, 1);
+    assert.equal(idx.has('concepts/never-touched'), false);
+  });
+
+  it('heatScore: no matching ledger entry → 0 (neutral — never touched, never penalized)', () => {
+    const idx = buildHeatIndex([{ topic: 'concepts/other', ts: NOW.toISOString() }]);
+    assert.equal(heatScore({ id: 'concepts/untouched' }, idx, NOW_MS), 0);
+  });
+
+  it('heatScore: touched right now, at/above saturation frequency → max (1)', () => {
+    const events = Array.from({ length: 10 }, () => ({ topic: 'concepts/hot', ts: NOW.toISOString() }));
+    const idx = buildHeatIndex(events);
+    assert.equal(heatScore({ id: 'concepts/hot' }, idx, NOW_MS), 1);
+  });
+
+  it('heatScore: last touch outside HEAT_WINDOW_DAYS → 0 (cooled off, never below neutral)', () => {
+    const old = new Date(NOW_MS - (HEAT_WINDOW_DAYS + 1) * 86_400_000).toISOString();
+    const idx = buildHeatIndex([{ topic: 'concepts/cooled', ts: old }]);
+    assert.equal(heatScore({ id: 'concepts/cooled' }, idx, NOW_MS), 0);
+  });
+
+  it('heatScore: recency × frequency — more touches (same recency) scores higher', () => {
+    const few = buildHeatIndex([{ topic: 'concepts/a', ts: NOW.toISOString() }]);
+    const many = buildHeatIndex(Array.from({ length: 5 }, () => ({ topic: 'concepts/b', ts: NOW.toISOString() })));
+    const scoreFew = heatScore({ id: 'concepts/a' }, few, NOW_MS);
+    const scoreMany = heatScore({ id: 'concepts/b' }, many, NOW_MS);
+    assert.ok(scoreMany > scoreFew, 'a fact touched more often must score higher heat');
+  });
+
+  it('heatTier: hot (≥0.5) / warm (>0) / cold (0)', () => {
+    assert.equal(heatTier(0.9), 'hot');
+    assert.equal(heatTier(0.5), 'hot');
+    assert.equal(heatTier(0.2), 'warm');
+    assert.equal(heatTier(0), 'cold');
+  });
+
+  it('heatMultiplier: neutral (1) when untouched, >1 when hot, never below 1', () => {
+    const idx = buildHeatIndex([{ topic: 'concepts/hot', ts: NOW.toISOString() }]);
+    assert.equal(heatMultiplier({ id: 'concepts/untouched' }, idx, NOW_MS), 1);
+    assert.ok(heatMultiplier({ id: 'concepts/hot' }, idx, NOW_MS) > 1);
+  });
+});
+
+describe('heat — hygieneMultiplier folds heat in as one additive pass (Ф5)', () => {
+  it('no heatIndex passed → byte-for-byte unchanged from pre-Ф5 (backward compatible)', () => {
+    const map = new Map();
+    assert.equal(hygieneMultiplier({ fm: { type: 'Concept' } }, map, { now: NOW_MS }), 1);
+  });
+
+  it('heatIndex passed but doc untouched → still neutral (no accidental penalty)', () => {
+    const map = new Map();
+    const idx = buildHeatIndex([{ topic: 'concepts/other', ts: NOW.toISOString() }]);
+    assert.equal(hygieneMultiplier({ id: 'concepts/untouched', fm: { type: 'Concept' } }, map, { now: NOW_MS, heatIndex: idx }), 1);
+  });
+
+  it('a hot doc is boosted above its importance/decay-only score', () => {
+    const doc = { id: 'concepts/hot', fm: { type: 'Concept' } };
+    const map = new Map();
+    const idx = buildHeatIndex([{ topic: 'concepts/hot', ts: NOW.toISOString() }]);
+    const withoutHeat = hygieneMultiplier(doc, map, { now: NOW_MS });
+    const withHeat = hygieneMultiplier(doc, map, { now: NOW_MS, heatIndex: idx });
+    assert.ok(withHeat > withoutHeat);
+  });
+});
+
+describe('heat — recall: a frequently-touched fact outranks an untouched one (fixture)', () => {
+  const docs = [
+    {
+      id: 'concepts/hot', reserved: false, supersedes: [],
+      fm: { title: 'Deploy runbook', type: 'Concept', visibility: 'internal' },
+      body: 'How to deploy the service safely.',
+    },
+    {
+      id: 'concepts/cold', reserved: false, supersedes: [],
+      fm: { title: 'Deploy runbook', type: 'Concept', visibility: 'internal' },
+      body: 'How to deploy the service safely.',
+    },
+  ];
+  // concepts/hot: 5 ledger touches right now. concepts/cold: never appears in the ledger.
+  const events = Array.from({ length: 5 }, () => ({ topic: 'concepts/hot', ts: new Date().toISOString() }));
+
+  it('rankByKeywords (bm25): identical raw relevance, but the hot fact ranks first', () => {
+    const ranked = rankByKeywords(docs, 'deploy service', { k: 5, events });
+    assert.equal(ranked[0].id, 'concepts/hot');
+    assert.equal(ranked[1].id, 'concepts/cold');
+    assert.ok(Math.abs(ranked[0].rawScore - ranked[1].rawScore) < 1e-9); // same raw BM25 relevance
+    assert.ok(ranked[0].score > ranked[1].score); // only heat tells them apart
+  });
+
+  it('without an events option, both facts tie (heat is a no-op — backward compatible)', () => {
+    const ranked = rankByKeywords(docs, 'deploy service', { k: 5 });
+    assert.ok(Math.abs(ranked[0].score - ranked[1].score) < 1e-9);
+  });
+
+  it('the cold fact is NOT hidden — still returned, still findable', () => {
+    const ranked = rankByKeywords(docs, 'deploy', { k: 5, events });
+    assert.ok(ranked.some(r => r.id === 'concepts/cold'));
+  });
+
+  it('recallSearch (mode=bm25) carries heat through the shared entrypoint too', async () => {
+    const r = await recallSearch({ docs, query: 'deploy service', mode: 'bm25', k: 5, events });
+    assert.equal(r.hits[0].id, 'concepts/hot');
   });
 });
 

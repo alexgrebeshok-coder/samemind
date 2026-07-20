@@ -28,6 +28,7 @@ import {
 import {
   openVecStore, closeVecStore, syncVecStore, searchVecStore, vecStoreCount, migrateJsonIndex,
 } from './lib/sqlite-index.mjs';
+import { readEvents } from './lib/ledger.mjs';
 import { atomicWriteJsonSync } from '../lib/atomic-write.mjs';
 
 const EMBED_URL = process.env.OKF_EMBED_URL || DEFAULT_EMBED_URL;
@@ -127,6 +128,7 @@ async function query(q, k, includeSecret, includeMirror, includeInbox, mode, exc
   const { hits, mode: used, warning } = await recallSearch({
     docs, query: q, mode, embed, idx: idx || { items: {} }, k, includeSecret, includeMirror, excludeSource,
     vecStore: store, vecSearch: store ? searchVecStore : null, vecCount: store ? vecStoreCount : null,
+    events: readEvents(ROOT), // Ф5: tiered heat, same hygiene pass
   });
   if (store) closeVecStore(store);
   if (warning) console.error(`⚠ ${warning}`);

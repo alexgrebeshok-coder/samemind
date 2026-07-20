@@ -7,6 +7,23 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Tiered heat + reflection (Ф5)** — `tools/lib/hygiene.mjs` gains
+  `heatMultiplier`/`heatScore`/`heatTier`/`buildHeatIndex`: a use-driven rank
+  signal (recency × frequency, from `ledger/events.jsonl` — a ledger `topic`
+  matched against a concept `id`) folded into the SAME `hygieneMultiplier`
+  pass as supersede/importance/decay — one ranking pass for bm25/semantic/
+  hybrid, no separate heat step. Heat only ever boosts (≥1.0); a doc with no
+  ledger activity is neutral (1.0), byte-for-byte unchanged from before this
+  landed — cold facts sink only relative to hot peers, never hidden, never
+  penalized below their prior score. Tiers (`hot`/`warm`/`cold`) surface via
+  MCP `memory_health` → `heatTiers`. New `tools/reflect.mjs [--write]`: runs
+  `reconcile.mjs` + `consolidate.mjs` + a heat re-evaluation and fuses them
+  into ONE markdown proposal report (supersede / merge / cooled-off facts).
+  Same human-gate as `reconcile.mjs`/`consolidate.mjs` — never writes to a
+  concept's frontmatter, `forget.mjs` (soft-deprecate, never delete) stays
+  the one tool a human runs to act on a proposal. Not wired into cron/
+  launchd. See docs/memory-hygiene.md § Tiered heat (Ф5).
+
 - **Concurrent-write safety** — `lib/file-lock.mjs`: a zero-dependency mkdir-based mutual-
   exclusion lock (atomic exclusive-create, no npm lockfile package) with automatic stale-lock
   takeover (dead pid → immediate; merely old → after 30s) and a bounded, backoff-retried wait

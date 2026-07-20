@@ -354,6 +354,7 @@ sync-mechanism research → cron-sync-adapters idea).
 | `samemind serve` | MCP stdio server: `memory_search/get/list/write_inbox/handoff/health/ledger_append/ledger_status` — see [MCP](#mcp) |
 | `tools/consolidate.mjs` | Gap map: inbox/mirror → candidates for promotion into the canon, plus a same-type "contradictions" section (dev-mode only, run from a checkout) |
 | `tools/reconcile.mjs [--dir <subpath>] [--write]` | Bi-temporal supersede proposals (`valid_from`/`invalid_at`/`superseded_by`) — never writes to a concept's frontmatter, human-gate like `consolidate.mjs` (dev-mode only, run from a checkout) |
+| `tools/reflect.mjs [--write]` | Ф5 reflection/forgetting cycle: reconcile + consolidate + tiered-heat re-evaluation fused into ONE proposal report (merge / supersede / cooled-off facts) — human-gate, never writes to a concept's frontmatter (dev-mode only, run from a checkout). See [Memory hygiene § Tiered heat](docs/memory-hygiene.md#tiered-heat-ф5) |
 
 `query`/`recall`/`gde`/`brief`/`board`/`handoff`/`forget`/`install`/`export`/`import`/`capture`/`ledger`/`serve` run against `OKF_ROOT` if set, otherwise your
 current directory — so they operate on your own bundle, not on the samemind package itself.
@@ -433,7 +434,7 @@ if unset — same rule as `query`/`recall`/`gde`).
 | `memory_list` | `{type?, tag?}` → concept ids/titles, optionally filtered. |
 | `memory_write_inbox` | `{content, title?}` → append to `inbox/<agent>.md` — the **only** writable path. |
 | `memory_handoff` | `{project?, days?}` → work-state markdown (active tasks, decisions, plans, last session, open questions). |
-| `memory_health` | `{}` → bundle root, concept count, active search mode, server version. |
+| `memory_health` | `{}` → bundle root, concept count, active search mode, tiered-heat counts (`heatTiers: {hot, warm, cold}` — Ф5), server version. |
 | `memory_ledger_append` | `{topic, phase, status?, action, artifact?, ref?}` → append one event to `ledger/events.jsonl`. `actor` comes from `SAMEMIND_AGENT` (default `mcp`) — same contract as `memory_write_inbox`. See [docs/event-ledger.md](docs/event-ledger.md). |
 | `memory_ledger_status` | `{}` → read-only `{topics, openFailures}` summary of the event ledger (never mutates it). |
 

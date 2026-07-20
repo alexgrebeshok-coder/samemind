@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { buildCorpus, bm25Score } from './bm25.mjs';
-import { buildSupersededMap, hygieneMultiplier, hygieneLabel } from './hygiene.mjs';
+import { buildSupersededMap, buildHeatIndex, hygieneMultiplier, hygieneLabel } from './hygiene.mjs';
 
 // Размерность проверяется только если OKF_EMBED_DIM задана явно. Иначе принимаем любую
 // (OpenAI text-embedding-3-* — 1536/3072, bge-m3 — 1024, …): требование фиксированной dim
@@ -85,18 +85,23 @@ export function sourceMatches(doc, source) {
  * can never drift on tier/hygiene semantics, only on how `rawScore` gets computed.
  * `docs` — full parsed concepts (for fm.supersedes etc.); without them (or for an id outside docs)
  * the hygiene multiplier is neutral (1) — same backward-compat contract as before this was split out.
+ * `events` (Ф5, optional) — ledger events (tools/lib/ledger.mjs `readEvents()`); grouped into a
+ * heatIndex ONCE per call (not per candidate) and folded into the same hygieneMultiplier pass —
+ * no separate heat-ranking step, so bm25/semantic/hybrid all pick it up for free. Omitted (default
+ * []) → heat is a no-op, byte-for-byte identical to before Ф5.
  */
 export function finalizeRanked(candidates, {
-  k = 5, includeSecret = false, includeMirror = false, docs = [], excludeSource = null,
+  k = 5, includeSecret = false, includeMirror = false, docs = [], excludeSource = null, events = [],
 } = {}) {
   const docsById = new Map(docs.map(d => [d.id, d]));
   const supersededMap = buildSupersededMap(docs);
+  const heatIndex = events.length ? buildHeatIndex(events) : null;
   return candidates
     .filter(c => passesTier(c.visibility, { includeSecret, includeMirror }))
     .filter(c => !sourceMatches(docsById.get(c.id), excludeSource))
     .map(c => {
       const doc = docsById.get(c.id);
-      const score = doc ? c.rawScore * hygieneMultiplier(doc, supersededMap) : c.rawScore;
+      const score = doc ? c.rawScore * hygieneMultiplier(doc, supersededMap, { heatIndex }) : c.rawScore;
       const label = doc ? hygieneLabel(doc, supersededMap) : '';
       return { id: c.id, title: c.title, type: c.type, score, rawScore: c.rawScore, label };
     })
@@ -232,9 +237,9 @@ export function keywordScore(text, query) {
 }
 
 /** Единый fallback-ранкер: BM25 по title/description/tags/телу концептов (docText), с той же
- *  гигиеной ранга, что и rankByQuery (supersedes/deprecated/importance/decay).
+ *  гигиеной ранга, что и rankByQuery (supersedes/deprecated/importance/decay/heat — Ф5).
  *  Без сети, без зависимостей. Используется и gde, и okf-recall — один механизм фолбэба. */
-export function rankByKeywords(docs, query, { k = 5, includeSecret = false, includeMirror = true, excludeSource = null } = {}) {
+export function rankByKeywords(docs, query, { k = 5, includeSecret = false, includeMirror = true, excludeSource = null, events = [] } = {}) {
   const pool = docs
     .filter(d => !d.reserved)
     .filter(d => passesTier(d.fm.visibility, { includeSecret, includeMirror }))
@@ -242,6 +247,7 @@ export function rankByKeywords(docs, query, { k = 5, includeSecret = false, incl
   if (!pool.length) return [];
   const corpus = buildCorpus(pool, { textOf: docText });
   const supersededMap = buildSupersededMap(docs);
+  const heatIndex = events.length ? buildHeatIndex(events) : null;
   return pool
     .map(d => {
       const rawScore = bm25Score(query, d.id, corpus);
@@ -249,7 +255,7 @@ export function rankByKeywords(docs, query, { k = 5, includeSecret = false, incl
         id: d.id,
         title: d.fm.title,
         type: d.fm.type,
-        score: rawScore * hygieneMultiplier(d, supersededMap),
+        score: rawScore * hygieneMultiplier(d, supersededMap, { heatIndex }),
         rawScore,
         file: d.file,
         body: d.body,
@@ -365,16 +371,16 @@ export async function recallSearch({
   // <-> lib/sqlite-index.mjs import cycle). Neither existing caller passes them, so every call site
   // that predates Ф4 behaves byte-for-byte as before.
   vecStore = null, vecSearch = null, vecCount = null,
-  k = 5, includeSecret = false, includeMirror = false, excludeSource = null,
+  k = 5, includeSecret = false, includeMirror = false, excludeSource = null, events = [],
 }) {
-  const bm25 = () => rankByKeywords(docs, query, { k, includeSecret, includeMirror, excludeSource });
+  const bm25 = () => rankByKeywords(docs, query, { k, includeSecret, includeMirror, excludeSource, events });
   const useVec = !!(vecStore && vecSearch);
   const hasIndex = useVec
     ? (vecCount ? vecCount(vecStore) > 0 : true)
     : !!(idx && idx.items && Object.keys(idx.items).length > 0);
   const semanticRank = (qv, kk) => (useVec
-    ? vecSearch(vecStore, qv, { k: kk, includeSecret, includeMirror, docs, excludeSource })
-    : rankByQuery(idx.items, qv, { k: kk, includeSecret, includeMirror, docs, excludeSource }));
+    ? vecSearch(vecStore, qv, { k: kk, includeSecret, includeMirror, docs, excludeSource, events })
+    : rankByQuery(idx.items, qv, { k: kk, includeSecret, includeMirror, docs, excludeSource, events }));
 
   if (mode === 'bm25') return { hits: bm25(), mode: 'bm25', warning: null };
 

@@ -77,8 +77,12 @@ semantic/cosine) and in `gde` — one hygiene layer, shared by every ranker
 ```
 finalScore = rawScore(query, doc) × hygieneMultiplier(doc)
 
-hygieneMultiplier(doc) = supersededPenalty × importanceMultiplier × decayMultiplier
+hygieneMultiplier(doc) = supersededPenalty × importanceMultiplier × decayMultiplier × heatMultiplier
 ```
+
+`heatMultiplier` (Ф5, optional — see "Tiered heat" below) defaults to `1.0`
+(no-op) unless a `heatIndex` from the event ledger is passed in; every call
+site that predates Ф5 behaves byte-for-byte as before.
 
 **`supersededPenalty`** — `0.35` if the doc is named by another concept's
 `supersedes`, or has `deprecated: true`; `1.0` otherwise. A flat penalty, not
@@ -188,6 +192,62 @@ markdown report — `предлагаю пометить Y superseded_by X`. It 
 to a concept's frontmatter**; `--write` only saves its own report under
 `inbox/_reconcile-report.md`, for a human (or a curating agent acting on
 explicit instruction) to act on by hand.
+
+## Tiered heat (Ф5)
+
+SOTA prior art (MemoryOS): promote/demote facts by "heat" — a live, use-driven
+signal — not just by how long ago they were *written* (`timestamp`/
+`decayMultiplier` above already cover that). Source of truth: `ledger/events.jsonl`
+(`docs/event-ledger.md`) — every ledger event's `topic` is matched against a
+concept's `id`; a topic that happens to name a concept "touches" it.
+
+```
+heatScore(doc) = recencyFactor × frequencyFactor        (each in [0, 1])
+
+recencyFactor  = 1 − age_days / HEAT_WINDOW_DAYS(30)   , 0 if the last touch is older than that
+frequencyFactor = min(1, touches_in_window / HEAT_FREQ_SATURATION(5))
+
+heatMultiplier(doc) = 1 + heatScore(doc) × HEAT_BOOST_MAX(0.5)     — always ≥ 1, never a penalty
+```
+
+A doc the ledger never touched (the overwhelming majority — a ledger `topic`
+is "a free-text work-item id ... not a bundle path", so this only activates
+where a topic happens to equal a concept id) gets `heatScore = 0` →
+`heatMultiplier = 1.0`, byte-for-byte the same rank as before Ф5. **Cold is
+therefore not an absolute penalty, only the absence of a boost** — a cold
+fact sinks in rank only relative to hot peers, never below its pre-Ф5 score,
+never hidden — the same "demoted, never hidden" contract `SUPERSEDED_PENALTY`
+already uses, applied in the same one hygiene pass (no separate ranking step
+for bm25 vs. semantic/hybrid).
+
+**Tier** (`heatTier`, derived, not stored): `hot` (`heatScore ≥ 0.5`) / `warm`
+(`heatScore > 0`) / `cold` (`heatScore == 0`). Visible via MCP `memory_health`
+→ `heatTiers: { hot, warm, cold }` — a bundle-wide read of what's actively
+being touched vs. sitting cold, computed over the same `heatIndex` recall uses
+(no second pass).
+
+### `tools/reflect.mjs` — reconcile + consolidate + heat, ONE proposal report
+
+```sh
+node tools/reflect.mjs [--write]
+```
+
+The Ф5 reflection/forgetting cycle: runs `reconcile.mjs`'s supersede
+proposals, `consolidate.mjs`'s dedup/gap map, and a heat re-evaluation, and
+fuses all three into a single markdown report — "что слить" (merge
+candidates), "что пометить superseded" (supersede proposals), "что остыло в
+cold" (facts the ledger touched at some point but not in the last
+`HEAT_WINDOW_DAYS` — an FYI to re-check importance/timestamp or run
+`samemind forget`, not an automatic action). Reuses the existing tools'
+functions directly rather than re-implementing their logic — one source of
+truth for each classification.
+
+Same human-gate as `reconcile.mjs`/`consolidate.mjs`: **never writes to a
+concept's frontmatter**, and never hides/deletes anything itself — `forget.mjs`
+stays the one (still soft, `deprecated: true`, never a delete) tool a human
+runs to act on a proposal. `--write` only saves the combined report under
+`inbox/_reflect-report.md`. Not wired into cron/launchd — a manual (or
+human-triggered) run.
 
 ## Worked example
 

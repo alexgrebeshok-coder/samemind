@@ -191,7 +191,7 @@ export function migrateJsonIndex(store, jsonIdx) {
  * not worth a two-phase query for a personal-memory-bundle corpus.
  */
 export function searchVecStore(store, queryVector, {
-  k = 5, includeSecret = false, includeMirror = false, docs = [], excludeSource = null,
+  k = 5, includeSecret = false, includeMirror = false, docs = [], excludeSource = null, events = [],
 } = {}) {
   if (!store?.ok || !store.vecTableReady) return [];
   const total = vecStoreCount(store);
@@ -207,5 +207,5 @@ export function searchVecStore(store, queryVector, {
     id: r.id, title: r.title, type: r.type, visibility: r.visibility,
     rawScore: 1 - r.distance, // vec0 distance_metric=cosine: distance = 1 - cosine similarity
   }));
-  return finalizeRanked(candidates, { k, includeSecret, includeMirror, docs, excludeSource });
+  return finalizeRanked(candidates, { k, includeSecret, includeMirror, docs, excludeSource, events });
 }

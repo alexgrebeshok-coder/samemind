@@ -22,6 +22,7 @@ import {
   DEFAULT_EMBED_URL, DEFAULT_MODEL, fetchEmbedding, recallSearch, extractSnippet,
 } from './recall.mjs';
 import { scanForInjection } from './injection.mjs';
+import { buildHeatIndex, heatScore, heatTier } from './hygiene.mjs';
 import { loadIdx } from '../okf-recall.mjs';
 import { buildHandoff, DEFAULT_DAYS as HANDOFF_DEFAULT_DAYS } from '../handoff.mjs';
 import { appendEvent, readEvents, summarizeLedger, PHASES, STATUSES } from './ledger.mjs';
@@ -113,7 +114,7 @@ export const TOOLS = [
   },
   {
     name: 'memory_health',
-    description: 'Bundle root, concept count, active search mode, samemind version.',
+    description: 'Bundle root, concept count, active search mode, tiered-heat counts (hot/warm/cold — Ф5, from the event ledger), samemind version.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -152,8 +153,9 @@ async function memorySearch({ query, k = 5, mode = 'auto', exclude_source } = {}
   const docs = readableDocs();
   const docById = new Map(docs.map(d => [d.id, d]));
   const idx = loadIdx();
+  const events = readEvents(ROOT); // Ф5: ledger-derived heat, folded into the same hygiene pass
   const { hits, mode: used, warning } = await recallSearch({
-    docs, query, mode, embed, idx, k: kk, includeSecret: false, includeMirror: true, excludeSource,
+    docs, query, mode, embed, idx, k: kk, includeSecret: false, includeMirror: true, excludeSource, events,
   });
   const results = hits.map(h => {
     const doc = docById.get(h.id);
@@ -279,11 +281,18 @@ async function memoryHealth() {
   const docs = readableDocs();
   const idx = loadIdx();
   const hasIndex = !!(idx && idx.items && Object.keys(idx.items).length > 0);
+  // Ф5: tiered heat — hot/warm/cold counts over the same ledger-derived heatIndex recall uses
+  // (see tools/lib/hygiene.mjs), so `memory_health` gives a bundle-wide read of what's actively
+  // being touched vs. sitting cold, without a second ranking pass.
+  const heatIndex = buildHeatIndex(readEvents(ROOT));
+  const heatTiers = { hot: 0, warm: 0, cold: 0 };
+  for (const d of docs) heatTiers[heatTier(heatScore(d, heatIndex))]++;
   return {
     root: ROOT,
     concepts: docs.length,
     searchMode: hasIndex ? 'semantic (index present; BM25 fallback if endpoint unavailable)' : 'bm25 (no semantic index — set OKF_EMBED_URL + run recall index)',
     embedUrl: process.env.OKF_EMBED_URL || null,
+    heatTiers,
     version: SERVER_VERSION,
   };
 }
