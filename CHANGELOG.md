@@ -3,7 +3,10 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.4.0] — 2026-07-20
+
+_Memory roadmap Ф0–Ф5: search wired to real working memory, bi-temporal supersede,
+hybrid BM25⊕semantic RRF, sqlite-vec scale index (~40× at N=5000), tiered heat + reflection._
 
 ### Added
 
