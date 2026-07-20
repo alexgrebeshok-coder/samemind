@@ -86,7 +86,12 @@ async function query(q, k, includeSecret, includeMirror, includeInbox, mode, exc
     docs, query: q, mode, embed, idx, k, includeSecret, includeMirror, excludeSource,
   });
   if (warning) console.error(`⚠ ${warning}`);
-  console.log(`# "${q}" → top-${k} [${used}]`);
+  // Score scale differs by mode — bm25 is unbounded BM25, semantic is cosine (-1..1), hybrid is
+  // an RRF-fused rank score (Σ 1/(k+rank+1), k=60) that is SMALL BY DESIGN (~0.01-0.03 for a
+  // top hit) and must never be read as a cosine value — label it so nobody mistakes a healthy
+  // hybrid result for a broken/near-zero embedding.
+  const scoreKind = { bm25: 'bm25', semantic: 'cos', hybrid: 'rrf' }[used] || used;
+  console.log(`# "${q}" → top-${k} [${used}, score=${scoreKind}]`);
   for (const r of hits) {
     console.log(`${r.score.toFixed(3)}  ${(r.type || '').padEnd(10)} ${r.id} — ${r.title || ''}${r.label ? '  ' + r.label : ''}`);
   }
