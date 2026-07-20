@@ -140,7 +140,7 @@ export function injectInstallBlock(filePath, block) {
 }
 
 /** All (relative-path → owning engine ids[]) pairs, in ENGINE_FILES declaration order. */
-function fileOwnerMap() {
+export function fileOwnerMap() {
   const owners = new Map();
   for (const [id, meta] of Object.entries(ENGINE_FILES)) {
     for (const rel of meta.files) {

@@ -1,9 +1,10 @@
 // recall.mjs — чистая логика recall-индекса (okf-recall + gde + тесты).
 import { createHash } from 'node:crypto';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, statSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { buildCorpus, bm25Score } from './bm25.mjs';
 import { buildSupersededMap, buildHeatIndex, hygieneMultiplier, hygieneLabel } from './hygiene.mjs';
-import { displayTitle, displayType } from './okf.mjs';
+import { displayTitle, displayType, ROOT } from './okf.mjs';
 
 // Размерность проверяется только если OKF_EMBED_DIM задана явно. Иначе принимаем любую
 // (OpenAI text-embedding-3-* — 1536/3072, bge-m3 — 1024, …): требование фиксированной dim
@@ -16,6 +17,30 @@ export const EMBED_VECTOR_DIM = DIM_EXPLICIT ? parseInt(process.env.OKF_EMBED_DI
 export const DEFAULT_EMBED_URL = process.env.OKF_EMBED_URL || 'http://127.0.0.1:8000/v1/embeddings';
 export const DEFAULT_MODEL = process.env.OKF_EMBED_MODEL || 'bge-m3';
 export const MAX_EMBED_CHARS = 5000;
+
+/** `<root>/.samemind/config.json` (keys embedUrl/embedModel) — optional local config file for
+ *  the embeddings endpoint, an alternative to setting env vars by hand (future `setup`, U-B).
+ *  Missing/malformed file → {} (never throws). */
+function readEmbedConfigFile(root) {
+  const p = join(root, '.samemind', 'config.json');
+  if (!existsSync(p)) return {};
+  try {
+    return JSON.parse(readFileSync(p, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+/** Effective embeddings endpoint/model, precedence env > `<root>/.samemind/config.json` >
+ *  hardcoded default. No config file present → byte-identical to the pre-existing env-or-default
+ *  behavior (DEFAULT_EMBED_URL/DEFAULT_MODEL above). `root` defaults to the OKF bundle root. */
+export function resolveEmbedConfig(root = ROOT) {
+  const file = readEmbedConfigFile(root);
+  return {
+    url: process.env.OKF_EMBED_URL || file.embedUrl || 'http://127.0.0.1:8000/v1/embeddings',
+    model: process.env.OKF_EMBED_MODEL || file.embedModel || 'bge-m3',
+  };
+}
 
 export function indexKey(model, url = DEFAULT_EMBED_URL) {
   return `${model}@${sha16(url)}`;
@@ -168,16 +193,22 @@ export async function syncIndex(idx, docs, embed, { includeSecret = false, inclu
 }
 
 export async function fetchEmbedding(text, {
-  url = DEFAULT_EMBED_URL, model = DEFAULT_MODEL, key = process.env.OKF_EMBED_KEY, dim = EMBED_VECTOR_DIM,
+  url, model, key = process.env.OKF_EMBED_KEY, dim = EMBED_VECTOR_DIM, root = ROOT,
 } = {}) {
+  // url/model default through resolveEmbedConfig (env > <root>/.samemind/config.json > hardcoded)
+  // rather than the frozen-at-import DEFAULT_EMBED_URL/DEFAULT_MODEL constants, so a config file
+  // written after this module loaded is still honored — an explicit url/model always wins.
+  const resolved = resolveEmbedConfig(root);
+  const effectiveUrl = url || resolved.url;
+  const effectiveModel = model || resolved.model;
   const input = text.slice(0, MAX_EMBED_CHARS);
   const headers = { 'Content-Type': 'application/json' };
   if (key) headers['Authorization'] = `Bearer ${key}`;
   // Стандартный OpenAI /v1/embeddings: { model, input }, ответ { data: [{ embedding: [...] }] }.
-  const r = await fetch(url, {
+  const r = await fetch(effectiveUrl, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ model, input }),
+    body: JSON.stringify({ model: effectiveModel, input }),
   });
   if (!r.ok) throw new Error(`embeddings HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
   const emb = (await r.json())?.data?.[0]?.embedding;
