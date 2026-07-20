@@ -213,6 +213,153 @@ export async function runBench({ bundleRoot, k = 3, loadFn } = {}) {
   return { rows, metrics, root };
 }
 
+// =========================================================================================
+// Synthetic bench (N=1000+ generated concepts) — see bench/longmemeval/RESULTS.md
+// "N=1000 synthetic" section for a recorded run. The fixed 12-query demo bench above is a
+// micro-corpus smoke check; this exercises rankByKeywords() at a realistic personal-memory-
+// bundle scale (BM25 corpus rebuild cost grows with N — the demo bench never shows that).
+//
+//   node tools/bench-recall.mjs --synthetic              # N=1000, 200 sampled queries
+//   node tools/bench-recall.mjs --synthetic --n=5000 --queries=300
+// =========================================================================================
+
+/** Tiny seeded PRNG (mulberry32, public domain) — deterministic corpus/queries, no dependency. */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function rng() {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Filler vocabulary shared across every synthetic doc — same role real prose's connective
+// words play: high document-frequency, so BM25's IDF should discount them relative to a doc's
+// own signature words.
+const COMMON_WORDS = [
+  'system', 'project', 'update', 'report', 'meeting', 'review', 'status', 'progress',
+  'issue', 'plan', 'note', 'session', 'discussion', 'decision', 'team', 'client',
+  'schedule', 'result', 'summary', 'context', 'detail', 'draft', 'version', 'topic',
+];
+
+function randPseudoWord(rng) {
+  const letters = 'abcdefghijklmnopqrstuvwxyz';
+  const len = 4 + Math.floor(rng() * 6); // 4-9 chars
+  let w = '';
+  for (let i = 0; i < len; i++) w += letters[Math.floor(rng() * letters.length)];
+  return w;
+}
+
+/**
+ * Generate N synthetic concept docs, shape-compatible with docText()/buildCorpus() (needs
+ * `id`, `fm.{title,description,tags,visibility}`, `body`; `reserved: false` so rankByKeywords
+ * doesn't filter them out). Each doc carries:
+ *   - a 4-word "signature" unique to that doc (the query anchor — never shared with another doc)
+ *   - 3 words from a shared cluster pool (~`clusterSize` docs per cluster) — realistic
+ *     near-duplicate distractors, so recall isn't trivially 100% just because every doc is
+ *     lexically isolated
+ *   - repeated common filler words (see COMMON_WORDS) — gives BM25's IDF something to discount
+ * `_signature` is carried on the doc for query generation only; it is not read by
+ * docText()/buildCorpus() (they only look at fm.* and body) so it doesn't skew scoring.
+ */
+export function generateSyntheticCorpus(n, { seed = 42, clusterSize = 12 } = {}) {
+  const rng = mulberry32(seed);
+  const numClusters = Math.max(1, Math.ceil(n / clusterSize));
+  const clusterWords = Array.from({ length: numClusters }, () => (
+    Array.from({ length: 5 }, () => randPseudoWord(rng))
+  ));
+  const docs = [];
+  for (let i = 0; i < n; i++) {
+    const cluster = clusterWords[i % numClusters];
+    const signature = Array.from({ length: 4 }, () => randPseudoWord(rng));
+    const filler = Array.from({ length: 6 }, () => COMMON_WORDS[Math.floor(rng() * COMMON_WORDS.length)]);
+    const bag = [...signature, ...signature, ...cluster.slice(0, 3), ...filler, ...filler];
+    const sentences = [];
+    for (let s = 0; s < 4; s++) {
+      const pick = [];
+      for (let w = 0; w < 6; w++) pick.push(bag[Math.floor(rng() * bag.length)]);
+      sentences.push(pick.join(' '));
+    }
+    docs.push({
+      id: `synthetic/doc-${String(i).padStart(6, '0')}`,
+      fm: { title: `Synthetic note ${i}`, description: '', tags: [], visibility: 'internal' },
+      body: `${sentences.join('. ')}.`,
+      reserved: false,
+      _signature: signature,
+    });
+  }
+  return docs;
+}
+
+/** Query for one doc: 2 of its 4 signature words (partial — not the full signature, so
+ *  recall isn't a guaranteed 100%), framed like a natural-language note lookup. */
+function queryForDoc(doc, rng) {
+  const sig = doc._signature;
+  const a = sig[Math.floor(rng() * sig.length)];
+  const b = sig[Math.floor(rng() * sig.length)];
+  return `notes about ${a} and ${b}`;
+}
+
+function percentile(sorted, p) {
+  if (!sorted.length) return 0;
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return sorted[idx];
+}
+
+/**
+ * Run BM25 recall@1/5/10 + latency p50/p95 over a synthetic corpus of `n` docs. `queryCount`
+ * queries are sampled evenly across the corpus (deterministic given `seed` — reproducible
+ * without needing all N docs queried). Each query calls rankByKeywords() end-to-end (corpus
+ * rebuild + score), the same per-invocation cost a real single-shot CLI call pays — that's
+ * what "latency" means here, not a warmed/cached corpus.
+ */
+export function runSyntheticBench({ n = 1000, queryCount = 200, seed = 42 } = {}) {
+  const docs = generateSyntheticCorpus(n, { seed });
+  const rng = mulberry32(seed + 1); // separate stream from corpus generation
+  const step = Math.max(1, Math.floor(n / queryCount));
+  const sampleIdx = [];
+  for (let i = 0; i < n && sampleIdx.length < queryCount; i += step) sampleIdx.push(i);
+
+  const latencies = [];
+  let hit1 = 0, hit5 = 0, hit10 = 0;
+  for (const i of sampleIdx) {
+    const doc = docs[i];
+    const query = queryForDoc(doc, rng);
+    const t0 = performance.now();
+    const ranked = rankByKeywords(docs, query, { k: 10 });
+    latencies.push(performance.now() - t0);
+    const ids = ranked.map(r => r.id);
+    if (hitAt(ids, doc.id, 1)) hit1++;
+    if (hitAt(ids, doc.id, 5)) hit5++;
+    if (hitAt(ids, doc.id, 10)) hit10++;
+  }
+  latencies.sort((a, b) => a - b);
+  const qn = sampleIdx.length;
+  return {
+    n,
+    queryCount: qn,
+    recallAt1: hit1 / qn,
+    recallAt5: hit5 / qn,
+    recallAt10: hit10 / qn,
+    latencyP50Ms: percentile(latencies, 50),
+    latencyP95Ms: percentile(latencies, 95),
+  };
+}
+
+export function formatSyntheticResult(r) {
+  const pct = x => `${(x * 100).toFixed(1)}%`;
+  const ms = x => `${x.toFixed(2)}ms`;
+  return [
+    `# samemind synthetic bench — BM25, N=${r.n} generated concepts, ${r.queryCount} queries`,
+    '',
+    `recall@1:  ${pct(r.recallAt1)}`,
+    `recall@5:  ${pct(r.recallAt5)}`,
+    `recall@10: ${pct(r.recallAt10)}`,
+    `latency p50: ${ms(r.latencyP50Ms)}   p95: ${ms(r.latencyP95Ms)}`,
+  ].join('\n');
+}
+
 function pad(s, w) {
   s = String(s);
   return s.length >= w ? s.slice(0, w) : s + ' '.repeat(w - s.length);
@@ -268,8 +415,22 @@ export function formatTable({ rows, metrics }) {
   return lines.join('\n');
 }
 
+function flagValue(name, fallback) {
+  const arg = process.argv.find(a => a.startsWith(`--${name}=`));
+  return arg ? Number(arg.split('=')[1]) : fallback;
+}
+
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
+  if (process.argv.includes('--synthetic')) {
+    const result = runSyntheticBench({
+      n: flagValue('n', 1000),
+      queryCount: flagValue('queries', 200),
+      seed: flagValue('seed', 42),
+    });
+    console.log(formatSyntheticResult(result));
+    process.exit(0);
+  }
   if (!process.env.OKF_ROOT) process.env.OKF_ROOT = DEMO_ROOT;
   const result = await runBench({ bundleRoot: process.env.OKF_ROOT });
   console.log(formatTable(result));

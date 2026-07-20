@@ -221,6 +221,52 @@ describe('capture --engine generic-markdown', () => {
     assert.match(content, /Note B/);
   });
 
+  it('strips YAML frontmatter: title from description (fallback name), body has no fm soup', () => {
+    const bundleRoot = tmpDir('samemind-bundle-');
+    const src = tmpDir('samemind-md-src-');
+    mkdirSync(src, { recursive: true });
+    writeFileSync(join(src, 'rule-fm.md'), [
+      '---',
+      'name: rule-fm-test',
+      'description: Правило X — короткое описание для заголовка',
+      'metadata: ',
+      '  node_type: memory',
+      '  type: feedback',
+      '---',
+      '',
+      'Тело факта: конкретная деталь, которую нужно находить recall-ом.',
+      '',
+    ].join('\n'));
+    // no description → falls back to name
+    writeFileSync(join(src, 'rule-noname.md'), [
+      '---',
+      'name: rule-noname-test',
+      'metadata: ',
+      '  type: feedback',
+      '---',
+      '',
+      'Body without a description field.',
+      '',
+    ].join('\n'));
+
+    const result = runCapture({ engine: 'generic-markdown', source: src, root: bundleRoot });
+    assert.equal(result.ok, true);
+    assert.equal(result.captured.length, 2);
+
+    const withDesc = result.captured.find(c => c.key.endsWith('rule-fm.md'));
+    assert.equal(withDesc.heading, 'Правило X — короткое описание для заголовка');
+    const withoutDesc = result.captured.find(c => c.key.endsWith('rule-noname.md'));
+    assert.equal(withoutDesc.heading, 'rule-noname-test');
+
+    const content = readFileSync(result.inboxFile, 'utf8');
+    assert.match(content, /Правило X — короткое описание для заголовка/);
+    assert.match(content, /Тело факта: конкретная деталь/);
+    // the frontmatter soup itself must never leak into the captured note
+    assert.ok(!content.includes('node_type: memory'));
+    assert.ok(!content.includes('type: feedback'));
+    assert.ok(!content.includes('name: rule-fm-test'));
+  });
+
   it('honors --since (skips files older than the cutoff) and stays idempotent', () => {
     const bundleRoot = tmpDir('samemind-bundle-');
     const src = tmpDir('samemind-md-src-');

@@ -395,6 +395,11 @@ Semantic search uses any OpenAI-compatible `/v1/embeddings` server:
 
 Build the index once after setting the endpoint: `node tools/okf-recall.mjs index`.
 
+**Поиск по рабочей памяти:** `recall-memory "запрос"` — `bin/recall-memory.sh`, тонкая обёртка
+над `okf-recall.mjs` с дефолтным `OKF_ROOT` = память Claude Code для проекта `~/.soul`
+(переопределяется через `OKF_ROOT=<путь> recall-memory "запрос"`). Любые флаги `okf-recall.mjs`
+(`-k N`, `--mode bm25|semantic|auto`, …) проходят как есть.
+
 ## MCP
 
 `samemind serve` runs a stdio MCP server (JSON-RPC 2.0, newline-delimited, no SDK

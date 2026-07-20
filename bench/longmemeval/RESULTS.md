@@ -131,3 +131,60 @@ A fair one-line summary: this bench measured samemind's simplest, most generic c
 possible configuration (no embeddings), and it came out statistically tied with a reference BM25
 implementation on the same metric. That is a real, useful data point about the floor — it says
 nothing about the ceiling, which lives in the capabilities this benchmark cannot observe.
+
+## N=1000 synthetic (separate harness — not memory-core-eval, read this scope note first)
+
+Everything above this section is the LongMemEval/memory-core-eval run (Python harness, real
+dataset, turn-level session recall). This section is a **different, self-contained bench**:
+`tools/bench-recall.mjs --synthetic`, pure Node/ESM, zero deps, no external dataset — it
+generates its own synthetic OKF-shaped concept corpus to see how `rankByKeywords()` (samemind's
+BM25 fallback, `tools/lib/bm25.mjs`) behaves at a scale the 12-query demo bench (`docs/benchmark.md`)
+is too small to expose: corpus-rebuild cost grows with N (BM25 in this codebase rebuilds its
+corpus stats on every call — see `tools/lib/recall.mjs`'s `rankByKeywords`), so latency at
+N=1000 is a real number the demo bench (n=12) cannot show.
+
+**Corpus generator** (`generateSyntheticCorpus`, seeded `mulberry32` PRNG — deterministic,
+reproducible): each doc gets a 4-word signature unique to it (the query anchor), 3 words from a
+shared ~12-doc cluster pool (realistic near-duplicate distractors so recall isn't a trivial
+100%), and repeated common filler words (`system`, `project`, `update`, …) so BM25's IDF has
+something to discount, the way real prose's connective words do. Queries: 200 sampled evenly
+across the 1000 docs, each built from 2 of that doc's 4 signature words (a partial paraphrase,
+not the full signature) — golden = the source doc's id.
+
+Reproduce:
+
+```sh
+node tools/bench-recall.mjs --synthetic                      # N=1000, 200 queries, seed=42
+node tools/bench-recall.mjs --synthetic --n=5000 --queries=300 --seed=7   # override any of the three
+```
+
+Recorded run (`node tools/bench-recall.mjs --synthetic`, default N=1000/200 queries/seed=42):
+
+| Metric | Value |
+|---|---:|
+| N (corpus size) | 1000 |
+| Queries | 200 |
+| Recall@1 | 95.0% (190/200) |
+| Recall@5 | 95.0% (190/200) |
+| Recall@10 | 95.0% (190/200) |
+| Latency p50 | ~5.8ms / query |
+| Latency p95 | ~6.6ms / query |
+
+Recall is flat across k=1/5/10 because when `rankByKeywords()` finds the golden doc at all, its
+two matching signature words plus BM25's length-normalized IDF put it in rank 1 essentially every
+time on this corpus (isolated per-doc vocabulary, no semantic ambiguity) — the ~5% miss rate is
+queries whose 2 sampled signature words happen to collide more with a same-cluster distractor's
+shared words than with their own doc's remaining, unsampled signature words; k barely matters
+because it's rank-1-or-not-found, not a long tail of near-misses. Latency (a single
+`rankByKeywords()` call: tokenize + corpus rebuild over all 1000 docs + score) sits a couple
+milliseconds — for reference, `tools/lib/mcp.mjs`'s `readableDocs()` (used by every MCP tool
+call) rebuilds the full doc list from `tools/lib/okf.mjs` `load()` on top of this on every
+invocation; see the per-file parse cache added to `load()` (this Ф1 pass) for the walk+parse
+half of that cost — this section only measures the BM25 ranking half.
+
+**Caveats** (same spirit as the demo bench's, see above): synthetic pseudo-word vocabulary, not
+real language — no semantic ambiguity, no synonymy, no polysemy, so this is a **structural**
+recall/latency check (does BM25 hold up when N grows, not "how good is BM25 at real natural-
+language recall" — that question is what the LongMemEval run above and the demo bench in
+`docs/benchmark.md` are for). Numbers will shift run-to-run for `--seed` values other than the
+recorded 42, though recall stays close given the fixed generation scheme.
