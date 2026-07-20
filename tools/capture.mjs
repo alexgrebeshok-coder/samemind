@@ -27,7 +27,7 @@ import {
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 
-import { ROOT } from './lib/okf.mjs';
+import { ROOT, parseFrontmatter } from './lib/okf.mjs';
 import { scanForInjection } from './lib/injection.mjs';
 import { atomicWriteFileSync } from '../lib/atomic-write.mjs';
 import { withFileLock } from '../lib/file-lock.mjs';
@@ -167,6 +167,9 @@ function locateGenericMarkdown(source) {
   return walkFiles(source, name => name.endsWith('.md')).sort();
 }
 
+// YAML frontmatter block, same shape okf.mjs#parse matches (--- ... ---\n).
+const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/;
+
 function extractGenericMarkdown(files, { sourceRoot } = {}) {
   const items = [];
   for (const file of files) {
@@ -176,9 +179,15 @@ function extractGenericMarkdown(files, { sourceRoot } = {}) {
       raw = readFileSync(file, 'utf8');
       st = statSync(file);
     } catch { continue; }
-    const lines = raw.split('\n');
+    // Strip frontmatter (reuse okf.mjs's parser) so it never leaks into the preview —
+    // memory/*.md carries name:/description:/metadata: that isn't prose worth distilling.
+    const fmMatch = raw.match(FRONTMATTER_RE);
+    const fm = fmMatch ? parseFrontmatter(fmMatch[1]) : {};
+    const content = fmMatch ? fmMatch[2] : raw;
+    const lines = content.split('\n');
     const h1 = lines.find(l => /^#\s+/.test(l));
-    const title = h1 ? h1.replace(/^#\s+/, '').trim() : basename(file, '.md');
+    const title = fm.description || fm.name
+      || (h1 ? h1.replace(/^#\s+/, '').trim() : basename(file, '.md'));
     const preview = lines
       .filter(l => l.trim() && !/^#\s+/.test(l))
       .slice(0, 3)

@@ -24,7 +24,9 @@ const STOPWORDS = new Set(['the', 'a', 'an', 'and', 'of', 'for', 'to', 'in', 'on
 const WRITE = process.argv.includes('--write');
 
 const slugOf = id => id.split('/').pop().toLowerCase();          // basename без пути, lower
-const engineOf = id =>
+// exported — tools/reconcile.mjs reuses the same "what counts as canon" rule (see docs/memory-hygiene.md,
+// bi-temporal section) instead of redefining it.
+export const engineOf = id =>
   id.startsWith('mirror/claude-code/') ? 'claude-code'
   : id.startsWith('mirror/openclaw/') ? 'openclaw'
   : id.startsWith('inbox/') ? 'inbox'
@@ -48,11 +50,13 @@ export function jaccard(a, b) {
 
 /** ids (pathToId) this doc's `supersedes` points at — pure string mapping, no filesystem. */
 const supersedesTargets = d => (d.supersedes || []).map(pathToId);
+/** ids (pathToId) this doc's `superseded_by` points at — reverse pointer, same shape (Ф2). */
+const supersededByTargets = d => (d.supersededBy || []).map(pathToId);
 
 /**
  * Pairs of same-type canon concepts with title/tag similarity ≥ threshold, where neither
- * supersedes the other — candidates for a human to resolve (merge, supersede, or leave be).
- * Deliberately simple: title/tag token Jaccard, no embeddings required.
+ * supersedes (or is marked superseded_by) the other — candidates for a human to resolve (merge,
+ * supersede, or leave be). Deliberately simple: title/tag token Jaccard, no embeddings required.
  */
 export function findContradictions(canonDocs, { threshold = CONTRADICTION_SIM } = {}) {
   const byType = new Map();
@@ -69,6 +73,9 @@ export function findContradictions(canonDocs, { threshold = CONTRADICTION_SIM } 
         const aTargets = supersedesTargets(a);
         const bTargets = supersedesTargets(b);
         if (aTargets.includes(b.id) || bTargets.includes(a.id)) continue; // one already supersedes the other
+        const aSB = supersededByTargets(a);
+        const bSB = supersededByTargets(b);
+        if (aSB.includes(b.id) || bSB.includes(a.id)) continue; // one already marked superseded_by the other
         const score = jaccard(titleTokens(a), titleTokens(b));
         if (score >= threshold) out.push({ a: a.id, b: b.id, type, score });
       }
@@ -77,11 +84,15 @@ export function findContradictions(canonDocs, { threshold = CONTRADICTION_SIM } 
   return out.sort((x, y) => y.score - x.score);
 }
 
-function main() {
-  // includeInbox: true — inbox is this tool's whole reason to exist (raw → canon gap map).
-  // Since issue #4, inbox is a reserved tier excluded by default everywhere else; consolidate
-  // is the one place that must opt in.
-  const docs = load({ includeSecret: true, includeMirror: true, includeInbox: true }).filter(d => !d.reserved);
+/**
+ * Pure(ish) core of the consolidation map: canon/raw split, same-slug "covered" matches, semantic
+ * gap classification (strong = ≥2 raw sources, single = one), and Ф2 contradictions. Extracted
+ * out of main() so tools/reflect.mjs (Ф5 — reconcile + consolidate + heat, ONE proposal report)
+ * can reuse this exact classification instead of re-implementing it; main() below just renders it.
+ * Reads the on-disk semantic index directly (same IDX path main() always used) — every caller
+ * wants "the index as it sits on disk right now", so a parameter would only ever get that one value.
+ */
+export function buildConsolidationMap(docs) {
   // канон-цели = концепты в подпапках (entities/projects/concepts/references/secret);
   // top-level README/ARCHITECTURE — документация, не темы для дедупа, в цели не берём.
   const canon = docs.filter(d => engineOf(d.id) === 'canon' && d.id.includes('/'));
@@ -139,6 +150,16 @@ function main() {
   }
   const byScore = (a, b) => (b.near?.score || 0) - (a.near?.score || 0);
   strong.sort(byScore); single.sort(byScore);
+
+  return { canon, raw, byKey, covered, strong, single, contradictions, idxWarn };
+}
+
+function main() {
+  // includeInbox: true — inbox is this tool's whole reason to exist (raw → canon gap map).
+  // Since issue #4, inbox is a reserved tier excluded by default everywhere else; consolidate
+  // is the one place that must opt in.
+  const docs = load({ includeSecret: true, includeMirror: true, includeInbox: true }).filter(d => !d.reserved);
+  const { canon, raw, byKey, covered, strong, single, contradictions, idxWarn } = buildConsolidationMap(docs);
 
   const tag = n => !n ? '' :
     n.score >= SEM_DUP  ? `  ⚠ possible duplicate → ${n.id} (${n.score.toFixed(2)})`

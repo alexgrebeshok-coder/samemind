@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // hygiene.test.mjs — memory hygiene (naryad N17): supersedes, samemind forget/deprecated,
-// importance/time-decay, cycle/dangling-target detection, consolidate contradictions.
-// Run: node --test tools/hygiene.test.mjs
+// importance/time-decay, tiered heat (Ф5), cycle/dangling-target detection, consolidate
+// contradictions. Run: node --test tools/hygiene.test.mjs
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -14,8 +14,11 @@ import { fileURLToPath } from 'node:url';
 
 import {
   buildSupersededMap, isSuperseded, isDeprecated, detectSupersedeCycles,
-  importanceMultiplier, decayMultiplier, hygieneMultiplier, hygieneBanner,
+  importanceMultiplier, decayMultiplier, hygieneMultiplier, hygieneBanner, hygieneLabel,
+  isExpired, hasSupersededBy, isTemporallySuperseded,
+  buildHeatIndex, heatScore, heatTier, heatMultiplier,
   SUPERSEDED_PENALTY, DEFAULT_IMPORTANCE, DECAY_AFTER_DAYS, DECAY_FULL_DAYS, DECAY_MIN_MULTIPLIER,
+  HEAT_WINDOW_DAYS,
 } from './lib/hygiene.mjs';
 import { rankByKeywords, rankByQuery, recallSearch } from './lib/recall.mjs';
 import { forget, setDeprecated } from './forget.mjs';
@@ -330,6 +333,124 @@ describe('time-decay — multiplier', () => {
     // importance override, no decay) regardless of its age.
     const map = buildSupersededMap(docs);
     assert.equal(hygieneMultiplier(docs[0], map, { now: NOW_MS }), 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4b. tiered heat (Ф5) — recency × frequency from the event ledger, additive boost only
+// ---------------------------------------------------------------------------
+
+describe('heat — buildHeatIndex / heatScore / heatTier (pure)', () => {
+  it('buildHeatIndex: groups events by topic, tracks count + latest ts', () => {
+    const events = [
+      { topic: 'concepts/hot', ts: '2026-07-01T00:00:00Z' },
+      { topic: 'concepts/hot', ts: '2026-07-05T00:00:00Z' },
+      { topic: 'concepts/other', ts: '2026-01-01T00:00:00Z' },
+    ];
+    const idx = buildHeatIndex(events);
+    assert.deepEqual(idx.get('concepts/hot'), { count: 2, lastTs: '2026-07-05T00:00:00Z' });
+    assert.equal(idx.get('concepts/other').count, 1);
+    assert.equal(idx.has('concepts/never-touched'), false);
+  });
+
+  it('heatScore: no matching ledger entry → 0 (neutral — never touched, never penalized)', () => {
+    const idx = buildHeatIndex([{ topic: 'concepts/other', ts: NOW.toISOString() }]);
+    assert.equal(heatScore({ id: 'concepts/untouched' }, idx, NOW_MS), 0);
+  });
+
+  it('heatScore: touched right now, at/above saturation frequency → max (1)', () => {
+    const events = Array.from({ length: 10 }, () => ({ topic: 'concepts/hot', ts: NOW.toISOString() }));
+    const idx = buildHeatIndex(events);
+    assert.equal(heatScore({ id: 'concepts/hot' }, idx, NOW_MS), 1);
+  });
+
+  it('heatScore: last touch outside HEAT_WINDOW_DAYS → 0 (cooled off, never below neutral)', () => {
+    const old = new Date(NOW_MS - (HEAT_WINDOW_DAYS + 1) * 86_400_000).toISOString();
+    const idx = buildHeatIndex([{ topic: 'concepts/cooled', ts: old }]);
+    assert.equal(heatScore({ id: 'concepts/cooled' }, idx, NOW_MS), 0);
+  });
+
+  it('heatScore: recency × frequency — more touches (same recency) scores higher', () => {
+    const few = buildHeatIndex([{ topic: 'concepts/a', ts: NOW.toISOString() }]);
+    const many = buildHeatIndex(Array.from({ length: 5 }, () => ({ topic: 'concepts/b', ts: NOW.toISOString() })));
+    const scoreFew = heatScore({ id: 'concepts/a' }, few, NOW_MS);
+    const scoreMany = heatScore({ id: 'concepts/b' }, many, NOW_MS);
+    assert.ok(scoreMany > scoreFew, 'a fact touched more often must score higher heat');
+  });
+
+  it('heatTier: hot (≥0.5) / warm (>0) / cold (0)', () => {
+    assert.equal(heatTier(0.9), 'hot');
+    assert.equal(heatTier(0.5), 'hot');
+    assert.equal(heatTier(0.2), 'warm');
+    assert.equal(heatTier(0), 'cold');
+  });
+
+  it('heatMultiplier: neutral (1) when untouched, >1 when hot, never below 1', () => {
+    const idx = buildHeatIndex([{ topic: 'concepts/hot', ts: NOW.toISOString() }]);
+    assert.equal(heatMultiplier({ id: 'concepts/untouched' }, idx, NOW_MS), 1);
+    assert.ok(heatMultiplier({ id: 'concepts/hot' }, idx, NOW_MS) > 1);
+  });
+});
+
+describe('heat — hygieneMultiplier folds heat in as one additive pass (Ф5)', () => {
+  it('no heatIndex passed → byte-for-byte unchanged from pre-Ф5 (backward compatible)', () => {
+    const map = new Map();
+    assert.equal(hygieneMultiplier({ fm: { type: 'Concept' } }, map, { now: NOW_MS }), 1);
+  });
+
+  it('heatIndex passed but doc untouched → still neutral (no accidental penalty)', () => {
+    const map = new Map();
+    const idx = buildHeatIndex([{ topic: 'concepts/other', ts: NOW.toISOString() }]);
+    assert.equal(hygieneMultiplier({ id: 'concepts/untouched', fm: { type: 'Concept' } }, map, { now: NOW_MS, heatIndex: idx }), 1);
+  });
+
+  it('a hot doc is boosted above its importance/decay-only score', () => {
+    const doc = { id: 'concepts/hot', fm: { type: 'Concept' } };
+    const map = new Map();
+    const idx = buildHeatIndex([{ topic: 'concepts/hot', ts: NOW.toISOString() }]);
+    const withoutHeat = hygieneMultiplier(doc, map, { now: NOW_MS });
+    const withHeat = hygieneMultiplier(doc, map, { now: NOW_MS, heatIndex: idx });
+    assert.ok(withHeat > withoutHeat);
+  });
+});
+
+describe('heat — recall: a frequently-touched fact outranks an untouched one (fixture)', () => {
+  const docs = [
+    {
+      id: 'concepts/hot', reserved: false, supersedes: [],
+      fm: { title: 'Deploy runbook', type: 'Concept', visibility: 'internal' },
+      body: 'How to deploy the service safely.',
+    },
+    {
+      id: 'concepts/cold', reserved: false, supersedes: [],
+      fm: { title: 'Deploy runbook', type: 'Concept', visibility: 'internal' },
+      body: 'How to deploy the service safely.',
+    },
+  ];
+  // concepts/hot: 5 ledger touches right now. concepts/cold: never appears in the ledger.
+  const events = Array.from({ length: 5 }, () => ({ topic: 'concepts/hot', ts: new Date().toISOString() }));
+
+  it('rankByKeywords (bm25): identical raw relevance, but the hot fact ranks first', () => {
+    const ranked = rankByKeywords(docs, 'deploy service', { k: 5, events });
+    assert.equal(ranked[0].id, 'concepts/hot');
+    assert.equal(ranked[1].id, 'concepts/cold');
+    assert.ok(Math.abs(ranked[0].rawScore - ranked[1].rawScore) < 1e-9); // same raw BM25 relevance
+    assert.ok(ranked[0].score > ranked[1].score); // only heat tells them apart
+  });
+
+  it('without an events option, both facts tie (heat is a no-op — backward compatible)', () => {
+    const ranked = rankByKeywords(docs, 'deploy service', { k: 5 });
+    assert.ok(Math.abs(ranked[0].score - ranked[1].score) < 1e-9);
+  });
+
+  it('the cold fact is NOT hidden — still returned, still findable', () => {
+    const ranked = rankByKeywords(docs, 'deploy', { k: 5, events });
+    assert.ok(ranked.some(r => r.id === 'concepts/cold'));
+  });
+
+  it('recallSearch (mode=bm25) carries heat through the shared entrypoint too', async () => {
+    const r = await recallSearch({ docs, query: 'deploy service', mode: 'bm25', k: 5, events });
+    assert.equal(r.hits[0].id, 'concepts/hot');
   });
 });
 
@@ -664,4 +785,153 @@ describe('hygiene helpers — small direct checks', () => {
   // okf.mjs, which is frozen at first import in this process — exercising it correctly requires
   // a real subprocess with OKF_ROOT set before the module loads. That's already covered by the
   // "validate — supersede chains and warnings (subprocess)" tests above (dangling target, cycle).
+});
+
+// ---------------------------------------------------------------------------
+// 9. bi-temporal supersede (Ф2): valid_from/invalid_at/superseded_by parsing + temporal recall
+// ---------------------------------------------------------------------------
+
+describe('bi-temporal — valid_from/invalid_at/superseded_by parse (okf.mjs)', () => {
+  let okf;
+  let root;
+
+  before(async () => {
+    root = mkdtempSync(join(tmpdir(), 'samemind-bitemporal-unit-'));
+    writeConcept(root, 'concepts/plain.md', { type: 'Concept', title: 'Plain, no temporal fields' });
+    writeConcept(root, 'concepts/dated.md', {
+      type: 'Concept', title: 'Dated fact',
+      valid_from: '2020-01-01T00:00:00Z', invalid_at: '2021-01-01T00:00:00Z',
+    });
+    writeConcept(root, 'concepts/old.md', {
+      type: 'Concept', title: 'Old fact', superseded_by: '/concepts/new.md',
+    });
+    writeConcept(root, 'concepts/multi.md', {
+      type: 'Concept', title: 'Multi-superseded', superseded_by: ['/concepts/a.md', '/concepts/b.md'],
+    });
+    process.env.OKF_ROOT = root;
+    okf = await import(`./lib/okf.mjs?t=${Date.now()}`);
+  });
+
+  after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('valid_from/invalid_at parse as plain ISO strings on fm', () => {
+    const docs = okf.load();
+    const d = docs.find(x => x.id === 'concepts/dated');
+    assert.equal(d.fm.valid_from, '2020-01-01T00:00:00Z');
+    assert.equal(d.fm.invalid_at, '2021-01-01T00:00:00Z');
+  });
+
+  it('absent valid_from/invalid_at → undefined (backward compatible, always valid)', () => {
+    const docs = okf.load();
+    const p = docs.find(x => x.id === 'concepts/plain');
+    assert.equal(p.fm.valid_from, undefined);
+    assert.equal(p.fm.invalid_at, undefined);
+  });
+
+  it('scalar superseded_by normalizes to a one-element array (doc + fm), mirroring supersedes', () => {
+    const docs = okf.load();
+    const o = docs.find(x => x.id === 'concepts/old');
+    assert.deepEqual(o.supersededBy, ['/concepts/new.md']);
+    assert.deepEqual(o.fm.superseded_by, ['/concepts/new.md']);
+  });
+
+  it('list superseded_by stays a list', () => {
+    const docs = okf.load();
+    const m = docs.find(x => x.id === 'concepts/multi');
+    assert.deepEqual(m.supersededBy, ['/concepts/a.md', '/concepts/b.md']);
+  });
+
+  it('absent superseded_by → empty array on the doc, key absent from fm', () => {
+    const docs = okf.load();
+    const p = docs.find(x => x.id === 'concepts/plain');
+    assert.deepEqual(p.supersededBy, []);
+    assert.equal(p.fm.superseded_by, undefined);
+  });
+});
+
+describe('bi-temporal — isExpired / hasSupersededBy / isTemporallySuperseded (pure)', () => {
+  it('isExpired: invalid_at in the past → true; in the future/absent → false', () => {
+    assert.equal(isExpired({ fm: { invalid_at: '2020-01-01T00:00:00Z' } }), true);
+    assert.equal(isExpired({ fm: { invalid_at: '2099-01-01T00:00:00Z' } }), false);
+    assert.equal(isExpired({ fm: {} }), false);
+    assert.equal(isExpired({ fm: { invalid_at: 'not-a-date' } }), false);
+  });
+
+  it('hasSupersededBy: true iff the normalized array is non-empty', () => {
+    assert.equal(hasSupersededBy({ supersededBy: ['/concepts/new.md'] }), true);
+    assert.equal(hasSupersededBy({ supersededBy: [] }), false);
+    assert.equal(hasSupersededBy({}), false);
+  });
+
+  it('isTemporallySuperseded: either signal is enough', () => {
+    assert.equal(isTemporallySuperseded({ fm: { invalid_at: '2020-01-01T00:00:00Z' }, supersededBy: [] }), true);
+    assert.equal(isTemporallySuperseded({ fm: {}, supersededBy: ['/x.md'] }), true);
+    assert.equal(isTemporallySuperseded({ fm: {}, supersededBy: [] }), false);
+  });
+});
+
+describe('bi-temporal — recall: valid fact ranks first, superseded is labeled (never hidden)', () => {
+  const supersededMap = new Map(); // empty: these docs use invalid_at/superseded_by, not supersedes
+
+  it('invalid_at in the past → penalized like supersedes, labeled "⤳ superseded (invalid_at …)"', () => {
+    const docs = [
+      {
+        id: 'concepts/expired', reserved: false, supersedes: [], supersededBy: [],
+        fm: { title: 'Deploy policy', type: 'Concept', visibility: 'internal', invalid_at: '2020-01-01T00:00:00Z' },
+        body: 'A note about the deploy policy and how it works.',
+      },
+      {
+        id: 'concepts/current', reserved: false, supersedes: [], supersededBy: [],
+        fm: { title: 'Deploy policy', type: 'Concept', visibility: 'internal' },
+        body: 'A note about the deploy policy and how it works.',
+      },
+    ];
+    const ranked = rankByKeywords(docs, 'deploy policy', { k: 5 });
+    assert.equal(ranked[0].id, 'concepts/current');
+    assert.equal(ranked[1].id, 'concepts/expired');
+    assert.equal(ranked[0].label, '');
+    assert.match(ranked[1].label, /^⤳ superseded \(invalid_at 2020-01-01\)$/);
+    // never hidden — still returned, still findable
+    assert.ok(ranked.some(r => r.id === 'concepts/expired'));
+  });
+
+  it('superseded_by set → penalized + labeled "⤳ superseded by <target>", valid fact first', () => {
+    const docs = [
+      {
+        id: 'concepts/old-price', reserved: false, supersedes: [], supersededBy: ['/concepts/new-price.md'],
+        fm: { title: 'Bentonite price', type: 'Concept', visibility: 'internal' },
+        body: 'The current bentonite price per ton.',
+      },
+      {
+        id: 'concepts/new-price', reserved: false, supersedes: [], supersededBy: [],
+        fm: { title: 'Bentonite price', type: 'Concept', visibility: 'internal' },
+        body: 'The current bentonite price per ton.',
+      },
+    ];
+    const ranked = rankByKeywords(docs, 'bentonite price', { k: 5 });
+    assert.equal(ranked[0].id, 'concepts/new-price');
+    assert.equal(ranked[1].id, 'concepts/old-price');
+    assert.match(ranked[1].label, /^⤳ superseded by \/concepts\/new-price\.md$/);
+    assert.ok(Math.abs(ranked[1].score - ranked[1].rawScore * SUPERSEDED_PENALTY) < 1e-9);
+  });
+
+  it('rankByQuery (semantic path) applies the same temporal penalty via docs param', async () => {
+    const docs = [
+      {
+        id: 'concepts/expired', supersedes: [], supersededBy: [],
+        fm: { invalid_at: '2020-01-01T00:00:00Z' },
+      },
+      { id: 'concepts/current', supersedes: [], supersededBy: [], fm: {} },
+    ];
+    const items = {
+      'concepts/expired': { vector: [1, 0], title: 'X', type: 'Concept' },
+      'concepts/current': { vector: [1, 0], title: 'X', type: 'Concept' },
+    };
+    const ranked = rankByQuery(items, [1, 0], { k: 5, docs });
+    assert.equal(ranked[0].id, 'concepts/current');
+    assert.equal(ranked[1].id, 'concepts/expired');
+    assert.match(ranked[1].label, /⤳ superseded/);
+  });
 });

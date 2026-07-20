@@ -145,6 +145,7 @@ export function parseFrontmatter(yaml) {
 
 // мини-парсер frontmatter (key: value; tags: [a, b]; relations: {…}) — без YAML-зависимости
 export function parse(file) {
+  parseCount++; // test hook only — see _debugParseCount()
   const raw = readFileSync(file, 'utf8');
   const id = relative(ROOT, file).replace(/\.md$/, '');
   const base = file.split('/').pop();
@@ -169,10 +170,65 @@ export function parse(file) {
   const supersedes = asPathList(fm.supersedes);
   if (supersedes.length) fm.supersedes = supersedes;
   else delete fm.supersedes;
-  return { file, id, base, reserved: RESERVED.has(base), fm, hasFM, body, links, relations, supersedes };
+  // superseded_by: reverse pointer — set BY HAND (or via a human applying a tools/reconcile.mjs
+  // proposal) on the OLD fact, naming the fact that replaces it. Same normalization as
+  // supersedes, just the other direction (see docs/memory-hygiene.md, bi-temporal section).
+  const supersededBy = asPathList(fm.superseded_by);
+  if (supersededBy.length) fm.superseded_by = supersededBy;
+  else delete fm.superseded_by;
+  // valid_from / invalid_at: ISO-date bi-temporal bounds. No special normalization needed —
+  // the generic key:value branch above already parses them as plain strings; absent = always
+  // valid (backward compatible with every existing concept that predates Ф2).
+  return {
+    file, id, base, reserved: RESERVED.has(base), fm, hasFM, body, links, relations,
+    supersedes, supersededBy,
+  };
 }
 
-export function load(opts = {}) { return walk(ROOT, opts).map(parse); }
+// --- per-file parse cache ---------------------------------------------------------------
+// load() used to readFileSync+parse every .md file on every call. Fine for one-shot CLIs
+// (okf-query, okf-recall) but wasteful for long-running callers — mcp-server.mjs re-runs
+// readableDocs() → load() on every single tool invocation, re-reading the whole bundle each
+// time even though most files never changed between calls. Cache parsed docs per file, keyed
+// by mtimeMs+size (cheap: one extra statSync, no content hashing) — same idea already used for
+// the embeddings index (lib/recall.mjs `syncIndex`'s content-hash reuse), just mtime+size
+// instead of a hash since we don't need cross-process/on-disk persistence here, only
+// within-process reuse.
+// Freshness contract is unchanged from the uncached version: a write that lands between two
+// load() calls (whether or not it went through lib/file-lock.mjs) changes the file's mtime
+// and/or size, so the very next load() re-stats, notices, and reparses — no lock-awareness
+// needed, we just never trust a cache entry without re-checking disk first. A file walk() no
+// longer returns (deleted/renamed) simply never gets re-fetched from the cache and drops out
+// of the result, exactly like the uncached version.
+// ponytail: cache entries for deleted/renamed files are never pruned (walk() just stops asking
+// for them), so memory is bounded by total distinct file paths ever seen in this process's
+// lifetime, not current bundle size. Fine for a personal memory bundle (hundreds–low
+// thousands of concepts, an mcp-server process that gets restarted regularly); add an
+// LRU/periodic prune if a long-lived server ever churns through many thousands of renames.
+const parseCache = new Map(); // file path -> { mtimeMs, size, doc }
+let parseCount = 0; // real (uncached) parses since last reset — test hook, see _debugParseCount()
+
+/** Test-only: how many times parse() actually ran a fresh readFileSync (cache misses). */
+export function _debugParseCount() { return parseCount; }
+/** Test-only: reset the counter and drop the whole cache (clean slate between test cases). */
+export function _debugResetParseCache() { parseCount = 0; parseCache.clear(); }
+
+function cachedParse(file) {
+  let st;
+  try {
+    st = statSync(file);
+  } catch {
+    parseCache.delete(file); // gone — let parse() throw its normal ENOENT, don't cache a miss
+    return parse(file);
+  }
+  const hit = parseCache.get(file);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.doc;
+  const doc = parse(file);
+  parseCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, doc });
+  return doc;
+}
+
+export function load(opts = {}) { return walk(ROOT, opts).map(cachedParse); }
 
 // mirror-узлы используют [[wiki-links]] (формат памяти Claude Code), не OKF-ссылки —
 // validate/links над ними не имеют смысла, поэтому okf-query ходит без mirror по умолчанию.

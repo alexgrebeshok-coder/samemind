@@ -1,0 +1,56 @@
+# release.yml — publish to npm on a `v*` tag push.
+# Reuses ci.yml's test matrix as a gate, then verifies the tag matches package.json's
+# `version` before publishing (a mismatched tag is almost always a forgotten version bump,
+# not something to publish silently under the wrong number).
+# Zero npm deps (see ci.yml) — no `npm ci` step needed, nothing to install before testing.
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Run unit tests
+        run: node --test tools/*.test.mjs
+
+  publish:
+    name: npm publish
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required by `npm publish --provenance`
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Verify tag matches package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::tag v$TAG_VERSION does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+          echo "tag v$TAG_VERSION matches package.json version $PKG_VERSION"
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

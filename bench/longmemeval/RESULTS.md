@@ -131,3 +131,114 @@ A fair one-line summary: this bench measured samemind's simplest, most generic c
 possible configuration (no embeddings), and it came out statistically tied with a reference BM25
 implementation on the same metric. That is a real, useful data point about the floor — it says
 nothing about the ceiling, which lives in the capabilities this benchmark cannot observe.
+
+## N=1000 synthetic (separate harness — not memory-core-eval, read this scope note first)
+
+Everything above this section is the LongMemEval/memory-core-eval run (Python harness, real
+dataset, turn-level session recall). This section is a **different, self-contained bench**:
+`tools/bench-recall.mjs --synthetic`, pure Node/ESM, zero deps, no external dataset — it
+generates its own synthetic OKF-shaped concept corpus to see how `rankByKeywords()` (samemind's
+BM25 fallback, `tools/lib/bm25.mjs`) behaves at a scale the 12-query demo bench (`docs/benchmark.md`)
+is too small to expose: corpus-rebuild cost grows with N (BM25 in this codebase rebuilds its
+corpus stats on every call — see `tools/lib/recall.mjs`'s `rankByKeywords`), so latency at
+N=1000 is a real number the demo bench (n=12) cannot show.
+
+**Corpus generator** (`generateSyntheticCorpus`, seeded `mulberry32` PRNG — deterministic,
+reproducible): each doc gets a 4-word signature unique to it (the query anchor), 3 words from a
+shared ~12-doc cluster pool (realistic near-duplicate distractors so recall isn't a trivial
+100%), and repeated common filler words (`system`, `project`, `update`, …) so BM25's IDF has
+something to discount, the way real prose's connective words do. Queries: 200 sampled evenly
+across the 1000 docs, each built from 2 of that doc's 4 signature words (a partial paraphrase,
+not the full signature) — golden = the source doc's id.
+
+Reproduce:
+
+```sh
+node tools/bench-recall.mjs --synthetic                      # N=1000, 200 queries, seed=42
+node tools/bench-recall.mjs --synthetic --n=5000 --queries=300 --seed=7   # override any of the three
+```
+
+Recorded run (`node tools/bench-recall.mjs --synthetic`, default N=1000/200 queries/seed=42):
+
+| Metric | Value |
+|---|---:|
+| N (corpus size) | 1000 |
+| Queries | 200 |
+| Recall@1 | 95.0% (190/200) |
+| Recall@5 | 95.0% (190/200) |
+| Recall@10 | 95.0% (190/200) |
+| Latency p50 | ~5.8ms / query |
+| Latency p95 | ~6.6ms / query |
+
+Recall is flat across k=1/5/10 because when `rankByKeywords()` finds the golden doc at all, its
+two matching signature words plus BM25's length-normalized IDF put it in rank 1 essentially every
+time on this corpus (isolated per-doc vocabulary, no semantic ambiguity) — the ~5% miss rate is
+queries whose 2 sampled signature words happen to collide more with a same-cluster distractor's
+shared words than with their own doc's remaining, unsampled signature words; k barely matters
+because it's rank-1-or-not-found, not a long tail of near-misses. Latency (a single
+`rankByKeywords()` call: tokenize + corpus rebuild over all 1000 docs + score) sits a couple
+milliseconds — for reference, `tools/lib/mcp.mjs`'s `readableDocs()` (used by every MCP tool
+call) rebuilds the full doc list from `tools/lib/okf.mjs` `load()` on top of this on every
+invocation; see the per-file parse cache added to `load()` (this Ф1 pass) for the walk+parse
+half of that cost — this section only measures the BM25 ranking half.
+
+**Caveats** (same spirit as the demo bench's, see above): synthetic pseudo-word vocabulary, not
+real language — no semantic ambiguity, no synonymy, no polysemy, so this is a **structural**
+recall/latency check (does BM25 hold up when N grows, not "how good is BM25 at real natural-
+language recall" — that question is what the LongMemEval run above and the demo bench in
+`docs/benchmark.md` are for). Numbers will shift run-to-run for `--seed` values other than the
+recorded 42, though recall stays close given the fixed generation scheme.
+
+## Ф4 sqlite-vec N=1000/5000 — flat-JSON linear cosine vs sqlite-vec KNN
+
+Ф4 replaces the embeddings index's flat `tools/.index/embeddings.json` (whole file parsed into
+memory, cosine scored against every item in a JS loop — `rankByQuery`, `tools/lib/recall.mjs`)
+with an OPTIONAL `tools/.index/index.db` (SQLite + the [sqlite-vec](https://github.com/asg017/sqlite-vec)
+`vec0` extension, binary Float32 vectors, KNN search executed in C — `tools/lib/sqlite-index.mjs`).
+sqlite-vec ships as an `optionalDependency` behind a dynamic `import()`; unavailable on this
+platform/Node build → clean fallback to the unchanged JSON path (`sqlite-vec unavailable, JSON
+fallback`, never a crash — see `tools/okf-recall.mjs` `openBackend()`).
+
+This section runs the **same synthetic-bench harness** as "N=1000 synthetic" above, extended with
+a second, independent comparison (`runVectorIndexBench`, `tools/bench-recall.mjs`): N synthetic
+unit vectors at dim=1024 (matches the production bge-m3 embedding size), one query per sampled
+doc (own vector + small noise — ground truth nearest neighbor is that doc). Both backends are
+exercised through their REAL production code (`rankByQuery` for JSON; `openVecStore` /
+`syncVecStore` / `searchVecStore` for sqlite-vec) — not a bench-only reimplementation. Each sampled
+query pays a full **cold reload** (JSON: read + parse the file; sqlite: reopen the db + reload the
+extension) — the real per-invocation cost of this project's one-shot CLI tools (no long-running
+daemon), same "cold" methodology as the BM25 synthetic bench above.
+
+Reproduce:
+
+```sh
+node tools/bench-recall.mjs --synthetic --n=1000
+node tools/bench-recall.mjs --synthetic --n=5000
+```
+
+Recorded run (Apple Silicon, Node v22.22.3, sqlite-vec 0.1.9, 50 queries/scale, seed=42):
+
+| N | Backend | Latency p50 | Latency p95 | Recall@1 |
+|---:|---|---:|---:|---:|
+| 1000 | JSON (current default) | 108.62ms | 113.01ms | 100.0% |
+| 1000 | sqlite-vec (optional) | 3.49ms | 3.89ms | 100.0% |
+| 5000 | JSON (current default) | 540.45ms | 558.25ms | 100.0% |
+| 5000 | sqlite-vec (optional) | 12.49ms | 13.40ms | 100.0% |
+
+sqlite-vec p50 is **31.1x faster** than JSON at N=1000 and **43.3x faster** at N=5000 — the gap
+widens with N exactly as expected: JSON pays `JSON.parse` over an ever-larger array-of-floats
+blob (the "~10x heavier than binary Float32" cost) plus an O(N) JS cosine loop, while sqlite-vec's
+`vec0` scan is C-level SIMD-friendly binary comparison, largely insensitive to N at this scale.
+Recall@1 is identical (100.0%) at both N — expected, not a coincidence: `vec0`'s default index is
+an exact brute-force KNN (`distance_metric=cosine`), mathematically the same computation as the
+JSON path's linear cosine scan, not an approximate/ANN index, so there is no accuracy trade-off
+here, only a speed one. DoD met: sqlite-vec ≤ JSON at N=1000, markedly lower at N=5000, recall not
+worse at either scale.
+
+**Caveats**: synthetic random unit vectors, not real bge-m3 embeddings — this measures the INDEX
+STRUCTURE's search cost at scale (JS linear scan vs SQL/C scan), not embedding quality or
+real-corpus recall (a separate, already-covered concern — production correctness against real
+bge-m3 vectors was smoke-tested directly via `okf-recall.mjs` against the demo bundle, both
+backends returning identical top-5 results). Numbers are single-run, one seed, one machine —
+directionally reliable (the JSON path's O(N) scan vs sqlite-vec's near-flat cost is structural,
+not noise), but treat exact multipliers as illustrative, not a guarantee across hardware.

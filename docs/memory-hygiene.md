@@ -77,8 +77,12 @@ semantic/cosine) and in `gde` — one hygiene layer, shared by every ranker
 ```
 finalScore = rawScore(query, doc) × hygieneMultiplier(doc)
 
-hygieneMultiplier(doc) = supersededPenalty × importanceMultiplier × decayMultiplier
+hygieneMultiplier(doc) = supersededPenalty × importanceMultiplier × decayMultiplier × heatMultiplier
 ```
+
+`heatMultiplier` (Ф5, optional — see "Tiered heat" below) defaults to `1.0`
+(no-op) unless a `heatIndex` from the event ledger is passed in; every call
+site that predates Ф5 behaves byte-for-byte as before.
 
 **`supersededPenalty`** — `0.35` if the doc is named by another concept's
 `supersedes`, or has `deprecated: true`; `1.0` otherwise. A flat penalty, not
@@ -151,6 +155,99 @@ Running it again just refreshes `deprecated_on`.
 
 Id resolution matches `okf-query get`: exact id, or a unique basename-suffix
 match; ambiguous or missing input is a hard refusal, never a guess.
+
+## Bi-temporal supersede (Ф2)
+
+`supersedes` (above) answers "what replaced me?" by asking the *whole corpus*
+(`buildSupersededMap` scans every doc's `supersedes` field). Three more
+optional fields let a concept carry that signal on its **own** frontmatter,
+no corpus scan required — same append-only spirit, never delete, only label:
+
+| Field | Meaning | Set by |
+|---|---|---|
+| `valid_from` | ISO date the fact became true | You, optionally |
+| `invalid_at` | ISO date the fact stopped being true | You, or a human applying a `reconcile` proposal |
+| `superseded_by` | `/path.md` (or a list) — the reverse of `supersedes`, pointing forward from the OLD fact to its replacement | You, or a human applying a `reconcile` proposal |
+
+Absent fields = always valid — every concept written before Ф2 is
+unaffected. `invalid_at` in the past, or a non-empty `superseded_by`, marks a
+doc **temporally superseded**: same `SUPERSEDED_PENALTY` rank multiplier as
+`supersedes`/`deprecated`, never hidden, labeled `⤳ superseded by
+/concepts/new.md` or `⤳ superseded (invalid_at 2026-01-01)` in recall/gde
+output. `valid_from` is parsed but not yet used for ranking (a
+not-yet-valid future-dated fact isn't penalized) — a future-dated fact
+predating its own `valid_from` is a corner case for a later phase, not Ф2.
+
+### `tools/reconcile.mjs` — proposals, not writes
+
+```sh
+node tools/reconcile.mjs [--dir <subpath>] [--write]
+```
+
+Same human-gate as `consolidate.mjs`: reuses its same-type/title-tag-Jaccard
+"contradictions" heuristic to find candidate pairs (same subject, no
+existing `supersedes`/`superseded_by` link between them yet), picks a
+direction by file mtime (newer file = presumed replacement), and prints a
+markdown report — `предлагаю пометить Y superseded_by X`. It **never writes
+to a concept's frontmatter**; `--write` only saves its own report under
+`inbox/_reconcile-report.md`, for a human (or a curating agent acting on
+explicit instruction) to act on by hand.
+
+## Tiered heat (Ф5)
+
+SOTA prior art (MemoryOS): promote/demote facts by "heat" — a live, use-driven
+signal — not just by how long ago they were *written* (`timestamp`/
+`decayMultiplier` above already cover that). Source of truth: `ledger/events.jsonl`
+(`docs/event-ledger.md`) — every ledger event's `topic` is matched against a
+concept's `id`; a topic that happens to name a concept "touches" it.
+
+```
+heatScore(doc) = recencyFactor × frequencyFactor        (each in [0, 1])
+
+recencyFactor  = 1 − age_days / HEAT_WINDOW_DAYS(30)   , 0 if the last touch is older than that
+frequencyFactor = min(1, touches_in_window / HEAT_FREQ_SATURATION(5))
+
+heatMultiplier(doc) = 1 + heatScore(doc) × HEAT_BOOST_MAX(0.5)     — always ≥ 1, never a penalty
+```
+
+A doc the ledger never touched (the overwhelming majority — a ledger `topic`
+is "a free-text work-item id ... not a bundle path", so this only activates
+where a topic happens to equal a concept id) gets `heatScore = 0` →
+`heatMultiplier = 1.0`, byte-for-byte the same rank as before Ф5. **Cold is
+therefore not an absolute penalty, only the absence of a boost** — a cold
+fact sinks in rank only relative to hot peers, never below its pre-Ф5 score,
+never hidden — the same "demoted, never hidden" contract `SUPERSEDED_PENALTY`
+already uses, applied in the same one hygiene pass (no separate ranking step
+for bm25 vs. semantic/hybrid).
+
+**Tier** (`heatTier`, derived, not stored): `hot` (`heatScore ≥ 0.5`) / `warm`
+(`heatScore > 0`) / `cold` (`heatScore == 0`). Visible via MCP `memory_health`
+→ `heatTiers: { hot, warm, cold }` — a bundle-wide read of what's actively
+being touched vs. sitting cold, computed over the same `heatIndex` recall uses
+(no second pass).
+
+### `tools/reflect.mjs` — reconcile + consolidate + heat, ONE proposal report
+
+```sh
+node tools/reflect.mjs [--write]
+```
+
+The Ф5 reflection/forgetting cycle: runs `reconcile.mjs`'s supersede
+proposals, `consolidate.mjs`'s dedup/gap map, and a heat re-evaluation, and
+fuses all three into a single markdown report — "что слить" (merge
+candidates), "что пометить superseded" (supersede proposals), "что остыло в
+cold" (facts the ledger touched at some point but not in the last
+`HEAT_WINDOW_DAYS` — an FYI to re-check importance/timestamp or run
+`samemind forget`, not an automatic action). Reuses the existing tools'
+functions directly rather than re-implementing their logic — one source of
+truth for each classification.
+
+Same human-gate as `reconcile.mjs`/`consolidate.mjs`: **never writes to a
+concept's frontmatter**, and never hides/deletes anything itself — `forget.mjs`
+stays the one (still soft, `deprecated: true`, never a delete) tool a human
+runs to act on a proposal. `--write` only saves the combined report under
+`inbox/_reflect-report.md`. Not wired into cron/launchd — a manual (or
+human-triggered) run.
 
 ## Worked example
 

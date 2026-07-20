@@ -36,6 +36,23 @@ hand-rolled baseline — still no IDF or length norm, and it often ranks `index.
 
 Recorded on `auto/n7-ci` against the demo bundle shipped in-tree (re-run the script to refresh).
 
+> **demo-harness fix 20.07:** `tools/bench-recall.mjs` had a pre-existing bug (not a regression,
+> not in the BM25 engine) that made a plain `node tools/bench-recall.mjs` run print **BM25
+> hit@1/3 = 0%** instead of the numbers below. Root cause: the file's top-level `import ... from
+> './lib/recall.mjs'` transitively (via `lib/hygiene.mjs`) loaded `lib/okf.mjs` — whose `ROOT`
+> export is a top-level `const` frozen at first import — *before* the script ever set `OKF_ROOT`
+> to the demo bundle, so `okf.load()` silently read the wrong (real, near-empty) package root
+> instead of `demo/`, leaving BM25's doc pool empty for every query. `naiveGrepTerms`/
+> `naiveGrepPhrase` were unaffected (they walk `bundleRoot` directly, no `okf.mjs` dependency),
+> which is why grep-terms still read 100% while BM25 read 0% — the tell that the bug was in the
+> harness's import order, not the ranker. Confirmed via `--synthetic` (95% recall@1, N=1000,
+> unaffected — no filesystem/`okf.mjs` path) and the live `okf-recall.mjs` (finds facts
+> correctly) both working throughout. Fixed by deferring the `./lib/recall.mjs` import behind a
+> lazy `getRecall()` (dynamic `import()`, same pattern already used for `./lib/okf.mjs`),
+> resolved only after `OKF_ROOT` is set — no change to `lib/bm25.mjs`, `lib/recall.mjs`, or
+> `lib/hygiene.mjs`. The table below reflects the harness's *correct* output, matching what it
+> was always meant to document.
+
 | Method | hit@1 | hit@3 |
 |--------|------:|------:|
 | **BM25** | **100%** (12/12) | **100%** (12/12) |

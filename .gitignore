@@ -7,8 +7,12 @@
 
 # generated artifacts
 tools/.index/
-inbox/_consolidation-report.md
+demo/tools/.index/
 .samemind-capture-state.json
+
+# inbox — captured personal notes are per-user data, never commit; keep only the folder template
+inbox/*.md
+!inbox/index.md
 
 # node
 node_modules/

@@ -50,14 +50,56 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..', '..', '..');
-const { rankByKeywords } = await import(join(REPO_ROOT, 'tools/lib/recall.mjs'));
+const { rankByKeywords, recallSearch, fetchEmbedding } = await import(join(REPO_ROOT, 'tools/lib/recall.mjs'));
 
 const PORT = Number(process.env.EVAL_BRIDGE_PORT || 8799);
 const BUNDLE_ROOT = process.env.SAMEMIND_BENCH_BUNDLE_DIR
   ? (mkdirSync(process.env.SAMEMIND_BENCH_BUNDLE_DIR, { recursive: true }), process.env.SAMEMIND_BENCH_BUNDLE_DIR)
   : mkdtempSync(join(tmpdir(), 'samemind-mceval-'));
 
-// namespace -> { dir, docs: [{id, reserved:false, fm:{visibility,type}, body, file}], meta: Map(id -> {session_id, turn_idx, session_idx}), counter }
+// Ф3 (hybrid retrieval bench): default is unchanged pure-BM25 (rankByKeywords), exactly as before
+// this addition — set EVAL_SEARCH_MODE=hybrid to instead fuse BM25+semantic via RRF
+// (tools/lib/recall.mjs recallSearch mode='hybrid') for an honest bm25-vs-hybrid comparison run.
+// Needs OKF_EMBED_URL (+ optionally OKF_EMBED_MODEL/OKF_EMBED_KEY) — same env the rest of
+// samemind's semantic path uses. Falls back to bm25 (with a one-time console warning) if hybrid
+// was requested but no embeddings endpoint is configured — never silently changes the metric.
+const SEARCH_MODE = (process.env.EVAL_SEARCH_MODE || 'bm25').toLowerCase();
+const EMBED_URL = process.env.OKF_EMBED_URL || null;
+const EMBED_MODEL = process.env.OKF_EMBED_MODEL || 'bge-m3';
+const EMBED_KEY = process.env.OKF_EMBED_KEY;
+const EMBED_BATCH_SIZE = 32; // matches the local omlx server's configured embedding_batch_size — no oversized batches
+const hybridReady = SEARCH_MODE === 'hybrid' && !!EMBED_URL;
+if (SEARCH_MODE === 'hybrid' && !EMBED_URL) {
+  console.error('EVAL_SEARCH_MODE=hybrid requested but OKF_EMBED_URL is unset — running bm25 instead');
+}
+console.error(`search mode: ${hybridReady ? 'hybrid (RRF, BM25+semantic)' : 'bm25'}`);
+
+/** Batched turn-ingestion embedding: one HTTP call per EMBED_BATCH_SIZE turns, not one per turn —
+ *  LongMemEval sessions run ~490 turns/question, so per-turn requests would be needless HTTP
+ *  overhead for no benefit (the OpenAI-compatible endpoint already accepts an array `input`). Best
+ *  effort: a failed chunk is logged and skipped (those turns just stay BM25-only — searchNamespace/
+ *  RRF tolerate a doc missing from the semantic list), never fatal to the whole eval run. */
+async function embedBatch(texts) {
+  const vectors = new Array(texts.length).fill(null);
+  for (let i = 0; i < texts.length; i += EMBED_BATCH_SIZE) {
+    const chunk = texts.slice(i, i + EMBED_BATCH_SIZE).map(t => (t || '').slice(0, 5000));
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (EMBED_KEY) headers.Authorization = `Bearer ${EMBED_KEY}`;
+      const r = await fetch(EMBED_URL, { method: 'POST', headers, body: JSON.stringify({ model: EMBED_MODEL, input: chunk }) });
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
+      const data = (await r.json())?.data;
+      if (!Array.isArray(data) || data.length !== chunk.length) throw new Error('unexpected embeddings response shape');
+      data.forEach((d, j) => { vectors[i + j] = d.embedding; });
+    } catch (e) {
+      console.error(`⚠ embedBatch chunk [${i}, ${i + chunk.length}) failed (${e.message}) — those turns stay BM25-only`);
+    }
+  }
+  return vectors;
+}
+const embedQuery = text => fetchEmbedding(text, { url: EMBED_URL, model: EMBED_MODEL, key: EMBED_KEY });
+
+// namespace -> { dir, docs: [{id, reserved:false, fm:{visibility,type}, body, file}], meta: Map(id -> {session_id, turn_idx, session_idx}), counter, idx: {items:{}} }
 const STORE = new Map();
 
 function safeSlug(s) {
@@ -69,7 +111,7 @@ function ensureNamespace(namespace) {
   if (!ns) {
     const dir = join(BUNDLE_ROOT, safeSlug(namespace) || 'ns');
     mkdirSync(dir, { recursive: true });
-    ns = { dir, docs: [], meta: new Map(), counter: 0 };
+    ns = { dir, docs: [], meta: new Map(), counter: 0, idx: { items: {} } };
     STORE.set(namespace, ns);
   }
   return ns;
@@ -119,11 +161,42 @@ function storeTurn(namespace, turn) {
   return id;
 }
 
-function searchNamespace(namespace, query, topK) {
+/** Embeds every not-yet-indexed doc in the namespace (batched) into ns.idx.items — called right
+ *  before a hybrid search, not at store time: the runner stores all of a question's turns in a
+ *  tight loop then searches once (see samemind_adapter.py), so embedding once per question here
+ *  is the same total cost as embedding at store time, with one fewer place doing it. */
+async function ensureNamespaceIndexed(ns) {
+  const missing = ns.docs.filter(d => !ns.idx.items[d.id]);
+  if (!missing.length) return;
+  const vectors = await embedBatch(missing.map(d => d.body));
+  missing.forEach((d, i) => {
+    if (vectors[i]) ns.idx.items[d.id] = { vector: vectors[i], title: d.id, type: 'Turn', visibility: 'internal' };
+  });
+}
+
+async function searchNamespace(namespace, query, topK) {
   const ns = STORE.get(namespace);
   if (!ns || !ns.docs.length) return [];
   // includeMirror:true is a no-op here (no doc ever has visibility:'mirror'); kept explicit to
   // match recallSearch()'s own default rather than silently relying on rankByKeywords' default.
+  if (hybridReady) {
+    await ensureNamespaceIndexed(ns);
+    const { hits } = await recallSearch({
+      docs: ns.docs, query, mode: 'hybrid', embed: embedQuery, idx: ns.idx,
+      k: topK, includeSecret: false, includeMirror: true,
+    });
+    return hits.map(h => {
+      const m = ns.meta.get(h.id) || {};
+      return {
+        id: h.id,
+        content: h.body ?? ns.docs.find(d => d.id === h.id)?.body ?? '',
+        score: h.score,
+        session_id: m.session_id ?? null,
+        turn_idx: m.turn_idx ?? null,
+        session_idx: m.session_idx ?? null,
+      };
+    });
+  }
   const hits = rankByKeywords(ns.docs, query, { k: topK, includeSecret: false, includeMirror: true });
   return hits.map(h => {
     const m = ns.meta.get(h.id) || {};
@@ -178,7 +251,7 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === 'POST' && req.url === '/search') {
       const { namespace, query, top_k } = await readBody(req);
-      const memories = searchNamespace(namespace, query || '', top_k || 10);
+      const memories = await searchNamespace(namespace, query || '', top_k || 10);
       return send(200, { memories });
     }
     send(404, { error: `not found: ${req.method} ${req.url}` });

@@ -186,6 +186,9 @@ relations:             # optional SameMind extension (typed graph edges)
   works_at: /entities/acme-labs.md
   depends_on: [/projects/atlas.md, /concepts/retrieval-strategy.md]
 supersedes: /concepts/old-idea.md   # optional — memory hygiene, see below
+superseded_by: /concepts/new.md     # optional — reverse pointer, set on the OLD fact
+valid_from: 2026-01-01T00:00:00Z    # optional — bi-temporal, see below
+invalid_at: 2026-06-01T00:00:00Z    # optional — bi-temporal, see below
 importance: 3                      # optional — 1..5, default 3 (neutral)
 ---
 ```
@@ -350,6 +353,8 @@ sync-mechanism research → cron-sync-adapters idea).
 | `samemind ledger append\|status\|read` | Append-only event ledger (`ledger/events.jsonl`): fine-grained "who did what step, when", 🔥 open failures until resolved — complements (never replaces) `Task.status` — see [docs/event-ledger.md](docs/event-ledger.md) |
 | `samemind serve` | MCP stdio server: `memory_search/get/list/write_inbox/handoff/health/ledger_append/ledger_status` — see [MCP](#mcp) |
 | `tools/consolidate.mjs` | Gap map: inbox/mirror → candidates for promotion into the canon, plus a same-type "contradictions" section (dev-mode only, run from a checkout) |
+| `tools/reconcile.mjs [--dir <subpath>] [--write]` | Bi-temporal supersede proposals (`valid_from`/`invalid_at`/`superseded_by`) — never writes to a concept's frontmatter, human-gate like `consolidate.mjs` (dev-mode only, run from a checkout) |
+| `tools/reflect.mjs [--write]` | Ф5 reflection/forgetting cycle: reconcile + consolidate + tiered-heat re-evaluation fused into ONE proposal report (merge / supersede / cooled-off facts) — human-gate, never writes to a concept's frontmatter (dev-mode only, run from a checkout). See [Memory hygiene § Tiered heat](docs/memory-hygiene.md#tiered-heat-ф5) |
 
 `query`/`recall`/`gde`/`brief`/`board`/`handoff`/`forget`/`install`/`export`/`import`/`capture`/`ledger`/`serve` run against `OKF_ROOT` if set, otherwise your
 current directory — so they operate on your own bundle, not on the samemind package itself.
@@ -395,6 +400,11 @@ Semantic search uses any OpenAI-compatible `/v1/embeddings` server:
 
 Build the index once after setting the endpoint: `node tools/okf-recall.mjs index`.
 
+**Поиск по рабочей памяти:** `recall-memory "запрос"` — `bin/recall-memory.sh`, тонкая обёртка
+над `okf-recall.mjs` с дефолтным `OKF_ROOT` = память Claude Code для проекта `~/.soul`
+(переопределяется через `OKF_ROOT=<путь> recall-memory "запрос"`). Любые флаги `okf-recall.mjs`
+(`-k N`, `--mode bm25|semantic|auto`, …) проходят как есть.
+
 ## MCP
 
 `samemind serve` runs a stdio MCP server (JSON-RPC 2.0, newline-delimited, no SDK
@@ -424,7 +434,7 @@ if unset — same rule as `query`/`recall`/`gde`).
 | `memory_list` | `{type?, tag?}` → concept ids/titles, optionally filtered. |
 | `memory_write_inbox` | `{content, title?}` → append to `inbox/<agent>.md` — the **only** writable path. |
 | `memory_handoff` | `{project?, days?}` → work-state markdown (active tasks, decisions, plans, last session, open questions). |
-| `memory_health` | `{}` → bundle root, concept count, active search mode, server version. |
+| `memory_health` | `{}` → bundle root, concept count, active search mode, tiered-heat counts (`heatTiers: {hot, warm, cold}` — Ф5), server version. |
 | `memory_ledger_append` | `{topic, phase, status?, action, artifact?, ref?}` → append one event to `ledger/events.jsonl`. `actor` comes from `SAMEMIND_AGENT` (default `mcp`) — same contract as `memory_write_inbox`. See [docs/event-ledger.md](docs/event-ledger.md). |
 | `memory_ledger_status` | `{}` → read-only `{topics, openFailures}` summary of the event ledger (never mutates it). |
 
