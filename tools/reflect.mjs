@@ -80,7 +80,7 @@ export function renderReflectReport({ proposals, consolidation, cooling }) {
   return L.join('\n');
 }
 
-function main() {
+async function main() {
   const write = process.argv.includes('--write');
   // One load() covers all three sub-reports (reconcile only needs canon; consolidate needs
   // mirror+inbox too) — a single filesystem read, no duplicate ranking/loading pass.
@@ -88,7 +88,7 @@ function main() {
   const canon = docs.filter(d => engineOf(d.id) === 'canon' && d.id.includes('/'));
 
   const proposals = buildProposals(canon);
-  const consolidation = buildConsolidationMap(docs);
+  const consolidation = await buildConsolidationMap(docs);
   const heatIndex = buildHeatIndex(readEvents(ROOT));
   const cooling = coolingCandidates(canon, heatIndex);
 
@@ -103,5 +103,8 @@ function main() {
 
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
-  main();
+  main().catch(e => {
+    console.error('Error:', e.message);
+    process.exit(1);
+  });
 }

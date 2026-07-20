@@ -114,6 +114,25 @@ export function vecStoreCount(store) {
 }
 
 /**
+ * Dump every indexed item as { id, title, type, visibility, vector } — the sqlite-side equivalent
+ * of `Object.entries(idx.items)` on the flat-JSON index. For callers (tools/consolidate.mjs) that
+ * need the raw vectors themselves (all-pairs cosine) rather than a single KNN query, so they can
+ * stay backend-agnostic without going through searchVecStore(). `vector` is a plain Number[]
+ * (decoded from the vec0 float32 blob) — same shape `cosine()`/consolidate's own cos() expect.
+ */
+export function readAllItems(store) {
+  if (!store?.ok || !store.vecTableReady) return [];
+  const rows = store.db.prepare(`
+    SELECT i.id AS id, i.title AS title, i.type AS type, i.visibility AS visibility, v.embedding AS embedding
+    FROM items i JOIN vec_items v ON i.rowid = v.rowid
+  `).all();
+  return rows.map(r => ({
+    id: r.id, title: r.title, type: r.type, visibility: r.visibility,
+    vector: Array.from(new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4)),
+  }));
+}
+
+/**
  * Incremental sync by content-hash — same contract as lib/recall.mjs syncIndex(), just against
  * sqlite rows instead of a JS object: unchanged docs are reused (no re-embed), changed/new docs
  * are (re-)embedded, docs no longer in the bundle are pruned (mirror/secret preserved unless the

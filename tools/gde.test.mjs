@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 // gde.test.mjs — unit tests for personal search gde (node --test).
+// Backend-selection (sqlite-vec/JSON DI, tail 3 of memory-tails-0720) is covered separately in
+// gde-sqlite.test.mjs, which needs an isolated OKF_ROOT set before gde.mjs's first import — this
+// file already statically imports gde.mjs/okf.mjs under the package's own ROOT, too late for that.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {

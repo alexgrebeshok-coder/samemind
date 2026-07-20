@@ -10,8 +10,11 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ROOT, load, pathToId } from './lib/okf.mjs';
+import { openVecStore, closeVecStore, vecStoreCount, readAllItems, migrateJsonIndex } from './lib/sqlite-index.mjs';
 
 const IDX = join(ROOT, 'tools', '.index', 'embeddings.json');
+const IDX_DB = join(ROOT, 'tools', '.index', 'index.db');
+const INDEX_BACKEND = process.env.OKF_INDEX_BACKEND || 'auto'; // auto | sqlite | json
 const REPORT = join(ROOT, 'inbox', '_consolidation-report.md');
 // На тесном корпусе (всё про одну предметную область) косинус завышен; калибровка по факт. распределению:
 // 0.93–0.96 = почти наверняка дубль канона под другим именем, 0.80–0.90 = родственная тема.
@@ -85,14 +88,52 @@ export function findContradictions(canonDocs, { threshold = CONTRADICTION_SIM } 
 }
 
 /**
+ * Loads the semantic index as `[id, {title, type, visibility, vector}][]` pairs — same shape as
+ * `Object.entries(idx.items)` on the flat-JSON index consolidate.mjs always read directly before
+ * this (Ф4 sqlite-vec never touched this tool). Tries sqlite-vec (tools/.index/index.db) first,
+ * migrating an existing embeddings.json in on first use, falling back to reading embeddings.json
+ * itself when sqlite-vec is unavailable — same DI-pattern as okf-recall.mjs's openBackend()/
+ * gde.mjs's openBackend(), just returning raw vectors instead of running a KNN query (this tool
+ * needs an all-pairs cosine loop over every raw item, not a single ranked search).
+ * `found` mirrors the old `idx truthy` signal (an index exists at all, even if 0 items) so idxWarn
+ * below keeps distinguishing "no index" from "index incomplete" exactly as before.
+ */
+async function loadVectorItems() {
+  if (INDEX_BACKEND !== 'json') {
+    const store = await openVecStore({ dbPath: IDX_DB });
+    if (store.ok) {
+      if (vecStoreCount(store) === 0 && existsSync(IDX)) {
+        try {
+          const jsonIdx = JSON.parse(readFileSync(IDX, 'utf8'));
+          if (jsonIdx?.items && Object.keys(jsonIdx.items).length) migrateJsonIndex(store, jsonIdx);
+        } catch { /* corrupt embeddings.json — nothing to migrate, sqlite stays empty */ }
+      }
+      if (vecStoreCount(store) > 0) {
+        const rows = readAllItems(store);
+        closeVecStore(store);
+        return { found: true, items: rows.map(r => [r.id, { title: r.title, type: r.type, visibility: r.visibility, vector: r.vector }]) };
+      }
+      closeVecStore(store);
+    }
+  }
+  if (!existsSync(IDX)) return { found: false, items: [] };
+  try {
+    const idx = JSON.parse(readFileSync(IDX, 'utf8'));
+    return { found: true, items: Object.entries(idx.items || {}) };
+  } catch {
+    return { found: false, items: [] };
+  }
+}
+
+/**
  * Pure(ish) core of the consolidation map: canon/raw split, same-slug "covered" matches, semantic
  * gap classification (strong = ≥2 raw sources, single = one), and Ф2 contradictions. Extracted
  * out of main() so tools/reflect.mjs (Ф5 — reconcile + consolidate + heat, ONE proposal report)
  * can reuse this exact classification instead of re-implementing it; main() below just renders it.
- * Reads the on-disk semantic index directly (same IDX path main() always used) — every caller
- * wants "the index as it sits on disk right now", so a parameter would only ever get that one value.
+ * Reads the on-disk semantic index directly (same index main() always used) — every caller wants
+ * "the index as it sits on disk right now", so a parameter would only ever get that one value.
  */
-export function buildConsolidationMap(docs) {
+export async function buildConsolidationMap(docs) {
   // канон-цели = концепты в подпапках (entities/projects/concepts/references/secret);
   // top-level README/ARCHITECTURE — документация, не темы для дедупа, в цели не берём.
   const canon = docs.filter(d => engineOf(d.id) === 'canon' && d.id.includes('/'));
@@ -114,9 +155,8 @@ export function buildConsolidationMap(docs) {
   // соседом родственный публичный концепт вместо настоящего секретного). Индекс должен покрывать
   // и inbox (иначе у сырых заметок просто нет вектора и nearestCanon молча вернёт null): index
   // --include-mirror --include-secret --include-inbox.
-  let idx = null;
-  try { idx = existsSync(IDX) ? JSON.parse(readFileSync(IDX, 'utf8')) : null; } catch {}
-  const items = idx ? Object.entries(idx.items) : [];
+  const { found, items } = await loadVectorItems();
+  const itemsById = new Map(items);
   const canonVecs = items
     .filter(([id, v]) => v.visibility !== 'mirror' && id.includes('/'))
     .map(([id, v]) => ({ id, title: v.title, vector: v.vector }));
@@ -126,13 +166,13 @@ export function buildConsolidationMap(docs) {
   const hasMirror = items.some(([, v]) => v.visibility === 'mirror');
   const hasSecret = items.some(([id]) => id.startsWith('secret/'));
   const hasInbox = items.some(([id]) => id.startsWith('inbox/'));
-  const idxWarn = !idx ? 'no index'
+  const idxWarn = !found ? 'no index'
     : (!hasMirror || !hasSecret || !hasInbox)
       ? `index incomplete (mirror:${hasMirror?'yes':'NO'} secret:${hasSecret?'yes':'NO'} inbox:${hasInbox?'yes':'NO'})`
       : '';
   const nearestCanon = (sampleId) => {
-    if (!idx || !canonVecs.length) return null;
-    const v = idx.items[sampleId]?.vector;
+    if (!found || !canonVecs.length) return null;
+    const v = itemsById.get(sampleId)?.vector;
     if (!v) return null;
     let best = null;
     for (const c of canonVecs) { const s = cos(v, c.vector); if (!best || s > best.score) best = { id: c.id, title: c.title, score: s }; }
@@ -154,12 +194,12 @@ export function buildConsolidationMap(docs) {
   return { canon, raw, byKey, covered, strong, single, contradictions, idxWarn };
 }
 
-function main() {
+async function main() {
   // includeInbox: true — inbox is this tool's whole reason to exist (raw → canon gap map).
   // Since issue #4, inbox is a reserved tier excluded by default everywhere else; consolidate
   // is the one place that must opt in.
   const docs = load({ includeSecret: true, includeMirror: true, includeInbox: true }).filter(d => !d.reserved);
-  const { canon, raw, byKey, covered, strong, single, contradictions, idxWarn } = buildConsolidationMap(docs);
+  const { canon, raw, byKey, covered, strong, single, contradictions, idxWarn } = await buildConsolidationMap(docs);
 
   const tag = n => !n ? '' :
     n.score >= SEM_DUP  ? `  ⚠ possible duplicate → ${n.id} (${n.score.toFixed(2)})`
@@ -202,5 +242,8 @@ function main() {
 
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
-  main();
+  main().catch(e => {
+    console.error('Error:', e.message);
+    process.exit(1);
+  });
 }
