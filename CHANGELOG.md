@@ -3,6 +3,36 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.1] — 2026-07-20
+
+_Four post-0.4.0 tails found running the memory roadmap against real (non-demo) data: a
+CLI exit-code bug, empty title/type in recall output, two tools that never got the Ф4
+sqlite-vec backend, and a binary-diff footgun in the hygiene module._
+
+### Fixed
+
+- **`samemind --help`/bare invocation now exits 0** (`bin/samemind.mjs`) — usage output was
+  correct but the process exited 1, making `--help`/no-args look like an error in scripts
+  and CI. An unknown command still exits 1.
+- **Empty title/type in recall output on real (non-OKF-native) memory bundles**
+  (`tools/lib/okf.mjs`, `tools/lib/recall.mjs`, `tools/lib/sqlite-index.mjs`) — frontmatter
+  using samemind's own memory schema (`name:`/`description:`/`metadata.type` instead of
+  OKF's `title:`/`type:`) showed up as blank in `okf-recall`/`gde` hits. The `metadata:`
+  block (previously silently dropped by the frontmatter parser) is now parsed into
+  `fm.metadata`; new `displayTitle`/`displayType` helpers fall back onto
+  `description`/`name`/`metadata.type`/`metadata.node_type` — never overriding an existing
+  OKF-native value — wired into the BM25, flat-JSON and sqlite-vec paths alike. Also fixes
+  a latent sqlite bind crash when migrating an older JSON index with `undefined` title/type.
+- **`gde.mjs`/`consolidate.mjs` still read the flat-JSON index directly** — Ф4's sqlite-vec
+  backend never touched them. Both now share the same sqlite-vec-first/JSON-fallback
+  DI-pattern as `okf-recall.mjs`'s `openBackend()`; `consolidate.mjs` (and `reflect.mjs`,
+  its caller) needed a new `readAllItems()` export on `lib/sqlite-index.mjs` since it does an
+  all-pairs cosine scan rather than a single KNN query.
+- **Binary `git diff` on `tools/lib/hygiene.mjs`** — `detectSupersedeCycles()`'s cycle-key
+  dedup used a literal embedded NUL byte as a join separator, which made every diff touching
+  the file show up as "Binary files differ". Swapped for the `\x1f` unit-separator escape;
+  cycle-detection logic and its tests are unchanged.
+
 ## [0.4.0] — 2026-07-20
 
 _Memory roadmap Ф0–Ф5: search wired to real working memory, bi-temporal supersede,

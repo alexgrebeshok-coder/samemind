@@ -14,6 +14,7 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { contentHash, embedText, finalizeRanked } from './recall.mjs';
+import { displayTitle, displayType } from './okf.mjs';
 
 const KNN_OVERFETCH_MIN = 200; // floor candidate pool so tier/hygiene filtering has room to work
 const KNN_OVERFETCH_FACTOR = 20; // candidates fetched = min(totalRows, max(k*FACTOR, MIN))
@@ -113,6 +114,25 @@ export function vecStoreCount(store) {
 }
 
 /**
+ * Dump every indexed item as { id, title, type, visibility, vector } — the sqlite-side equivalent
+ * of `Object.entries(idx.items)` on the flat-JSON index. For callers (tools/consolidate.mjs) that
+ * need the raw vectors themselves (all-pairs cosine) rather than a single KNN query, so they can
+ * stay backend-agnostic without going through searchVecStore(). `vector` is a plain Number[]
+ * (decoded from the vec0 float32 blob) — same shape `cosine()`/consolidate's own cos() expect.
+ */
+export function readAllItems(store) {
+  if (!store?.ok || !store.vecTableReady) return [];
+  const rows = store.db.prepare(`
+    SELECT i.id AS id, i.title AS title, i.type AS type, i.visibility AS visibility, v.embedding AS embedding
+    FROM items i JOIN vec_items v ON i.rowid = v.rowid
+  `).all();
+  return rows.map(r => ({
+    id: r.id, title: r.title, type: r.type, visibility: r.visibility,
+    vector: Array.from(new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4)),
+  }));
+}
+
+/**
  * Incremental sync by content-hash — same contract as lib/recall.mjs syncIndex(), just against
  * sqlite rows instead of a JS object: unchanged docs are reused (no re-embed), changed/new docs
  * are (re-)embedded, docs no longer in the bundle are pruned (mirror/secret preserved unless the
@@ -140,10 +160,10 @@ export async function syncVecStore(store, docs, embed, { includeSecret = false, 
     let rowid;
     if (existing) {
       rowid = existing.rowid;
-      updItem.run(h, d.fm.type, d.fm.title, visibility, rowid);
+      updItem.run(h, displayType(d.fm), displayTitle(d.fm), visibility, rowid);
       delVec(rowid);
     } else {
-      rowid = insItem.run(d.id, h, d.fm.type, d.fm.title, visibility).lastInsertRowid;
+      rowid = insItem.run(d.id, h, displayType(d.fm), displayTitle(d.fm), visibility).lastInsertRowid;
     }
     store.db.prepare('INSERT INTO vec_items(rowid, embedding) VALUES (?, ?)').run(BigInt(rowid), f32(vector));
     built++;
@@ -174,7 +194,10 @@ export function migrateJsonIndex(store, jsonIdx) {
   const insItem = store.db.prepare('INSERT INTO items (id, hash, type, title, visibility) VALUES (?, ?, ?, ?, ?)');
   const insVec = store.db.prepare('INSERT INTO vec_items(rowid, embedding) VALUES (?, ?)');
   for (const [id, v] of entries) {
-    const rowid = insItem.run(id, v.hash, v.type, v.title, v.visibility || 'internal').lastInsertRowid;
+    // v.type/v.title can be `undefined` on an older JSON index built before displayType/
+    // displayTitle existed (frontmatter with no OKF-native title/type at all) — sqlite bind
+    // params accept `null` but not `undefined`, so normalize here rather than at every caller.
+    const rowid = insItem.run(id, v.hash, v.type ?? null, v.title ?? null, v.visibility || 'internal').lastInsertRowid;
     insVec.run(BigInt(rowid), f32(v.vector));
   }
   return { migrated: entries.length };

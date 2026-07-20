@@ -11,6 +11,9 @@ import {
   DEFAULT_EMBED_URL, DEFAULT_MODEL, fetchEmbedding, syncIndex, indexKey,
   checkIndexStale, extractSnippet, recallSearch,
 } from './lib/recall.mjs';
+import {
+  openVecStore, closeVecStore, syncVecStore, searchVecStore, vecStoreCount, migrateJsonIndex,
+} from './lib/sqlite-index.mjs';
 import { readEvents } from './lib/ledger.mjs';
 import { atomicWriteJsonSync } from '../lib/atomic-write.mjs';
 
@@ -18,8 +21,31 @@ const EMBED_URL = process.env.OKF_EMBED_URL || DEFAULT_EMBED_URL;
 const MODEL = process.env.OKF_EMBED_MODEL || DEFAULT_MODEL;
 export const IDX_DIR = join(ROOT, 'tools', '.index');
 export const IDX = join(IDX_DIR, 'embeddings.json');
+const IDX_DB = join(IDX_DIR, 'index.db');
+const INDEX_BACKEND = process.env.OKF_INDEX_BACKEND || 'auto'; // auto | sqlite | json
 
 const embed = text => fetchEmbedding(text, { url: EMBED_URL, model: MODEL });
+
+/** Opens the sqlite-vec store unless OKF_INDEX_BACKEND=json, migrating an existing embeddings.json
+ *  in on first use. Returns null (never throws) on ANY unavailability — same DI-pattern as
+ *  okf-recall.mjs's openBackend(); callers then use the unchanged JSON loadIdx()/saveIdx() path. */
+async function openBackend() {
+  if (INDEX_BACKEND === 'json') return null;
+  const store = await openVecStore({ dbPath: IDX_DB, model: MODEL });
+  if (!store.ok) {
+    console.error(`sqlite-vec unavailable, JSON fallback (${store.reason})`);
+    return null;
+  }
+  if (vecStoreCount(store) === 0 && existsSync(IDX)) {
+    const jsonIdx = loadIdx();
+    const n = Object.keys(jsonIdx.items).length;
+    if (n) {
+      migrateJsonIndex(store, jsonIdx);
+      console.error(`migrated ${n} item(s) from embeddings.json → index.db`);
+    }
+  }
+  return store;
+}
 
 export function loadIdx() {
   if (!existsSync(IDX)) return { model: MODEL, items: {} };
@@ -53,13 +79,19 @@ export function parseArgs(argv = process.argv.slice(2)) {
 }
 
 export async function buildIndex({ includeSecret, includeMirror }) {
+  const docs = load({ includeSecret, includeMirror }).filter(d => !d.reserved);
+  const store = await openBackend();
+  if (store) {
+    const stats = await syncVecStore(store, docs, embed, { includeSecret, includeMirror });
+    closeVecStore(store);
+    return stats;
+  }
   const idx = loadIdx();
   const key = indexKey(MODEL, EMBED_URL);
   if (idx.indexKey && idx.indexKey !== key) idx.items = {};
   else if (!idx.indexKey && idx.model && idx.model !== MODEL) idx.items = {};
   idx.indexKey = key;
   idx.model = MODEL;
-  const docs = load({ includeSecret, includeMirror }).filter(d => !d.reserved);
   const stats = await syncIndex(idx, docs, embed, { includeSecret, includeMirror });
   saveIdx(idx);
   return stats;
@@ -112,16 +144,25 @@ export async function search(query, opts) {
     } catch (e) {
       console.error(`⚠ reindex failed (${e.message}) — falling back to BM25`);
     }
-  } else {
+  }
+
+  const store = await openBackend();
+  // checkIndexStale is a flat-JSON-index freshness check (mtime + sampled content-hash against
+  // embeddings.json) — meaningless once sqlite-vec is the active backend (syncVecStore already
+  // keeps index.db current per-doc on every --reindex); only run it on the JSON fallback path.
+  if (!store) {
     const { stale, reasons } = checkIndexStale(loadIdx(), docs, { idxPath: IDX });
     if (stale) staleWarning = `index is stale (${reasons.join('; ')}), add --reindex`;
   }
 
   // Единый механизм поиска/фолбэка — из lib (разделяется с okf-recall).
+  const idx = store ? null : loadIdx();
   const { hits, mode: used, warning } = await recallSearch({
-    docs, query, mode, embed, idx: loadIdx(), k, includeSecret, includeMirror, excludeSource,
+    docs, query, mode, embed, idx: idx || { items: {} }, k, includeSecret, includeMirror, excludeSource,
+    vecStore: store, vecSearch: store ? searchVecStore : null, vecCount: store ? vecStoreCount : null,
     events: readEvents(ROOT), // Ф5: tiered heat, same hygiene pass
   });
+  if (store) closeVecStore(store);
   if (warning) console.error(`⚠ ${warning}`);
   const results = enrichResults(hits, docById, query);
   return { results, mode: used, staleWarning };
