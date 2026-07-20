@@ -68,7 +68,8 @@ export function main(argv = process.argv.slice(2)) {
 
   if (!script) {
     usage();
-    return cmd ? 1 : 0;
+    const isHelp = !cmd || cmd === '--help' || cmd === '-h' || cmd === 'help';
+    return isHelp ? 0 : 1;
   }
 
   const env = { ...process.env };
