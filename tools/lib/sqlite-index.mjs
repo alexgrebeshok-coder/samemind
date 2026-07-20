@@ -14,6 +14,7 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { contentHash, embedText, finalizeRanked } from './recall.mjs';
+import { displayTitle, displayType } from './okf.mjs';
 
 const KNN_OVERFETCH_MIN = 200; // floor candidate pool so tier/hygiene filtering has room to work
 const KNN_OVERFETCH_FACTOR = 20; // candidates fetched = min(totalRows, max(k*FACTOR, MIN))
@@ -140,10 +141,10 @@ export async function syncVecStore(store, docs, embed, { includeSecret = false, 
     let rowid;
     if (existing) {
       rowid = existing.rowid;
-      updItem.run(h, d.fm.type, d.fm.title, visibility, rowid);
+      updItem.run(h, displayType(d.fm), displayTitle(d.fm), visibility, rowid);
       delVec(rowid);
     } else {
-      rowid = insItem.run(d.id, h, d.fm.type, d.fm.title, visibility).lastInsertRowid;
+      rowid = insItem.run(d.id, h, displayType(d.fm), displayTitle(d.fm), visibility).lastInsertRowid;
     }
     store.db.prepare('INSERT INTO vec_items(rowid, embedding) VALUES (?, ?)').run(BigInt(rowid), f32(vector));
     built++;
@@ -174,7 +175,10 @@ export function migrateJsonIndex(store, jsonIdx) {
   const insItem = store.db.prepare('INSERT INTO items (id, hash, type, title, visibility) VALUES (?, ?, ?, ?, ?)');
   const insVec = store.db.prepare('INSERT INTO vec_items(rowid, embedding) VALUES (?, ?)');
   for (const [id, v] of entries) {
-    const rowid = insItem.run(id, v.hash, v.type, v.title, v.visibility || 'internal').lastInsertRowid;
+    // v.type/v.title can be `undefined` on an older JSON index built before displayType/
+    // displayTitle existed (frontmatter with no OKF-native title/type at all) — sqlite bind
+    // params accept `null` but not `undefined`, so normalize here rather than at every caller.
+    const rowid = insItem.run(id, v.hash, v.type ?? null, v.title ?? null, v.visibility || 'internal').lastInsertRowid;
     insVec.run(BigInt(rowid), f32(v.vector));
   }
   return { migrated: entries.length };

@@ -80,6 +80,20 @@ export function pathToId(p) {
   return String(p || '').replace(/^\//, '').replace(/\.md$/, '');
 }
 
+/** Display title, OKF-native `title:` preferred; falls back onto samemind's own memory schema
+ *  (`description:`/`name:`) for frontmatter that never had `title` to begin with — never
+ *  overrides an existing OKF-native value. */
+export function displayTitle(fm) {
+  return (fm && (fm.title || fm.description || fm.name)) || '';
+}
+
+/** Display type, OKF-native `type:` preferred; falls back onto samemind's own memory schema
+ *  (`metadata.type`/`metadata.node_type`) — see the `metadata:` block parsed in parseFrontmatter
+ *  above. Never overrides an existing OKF-native value. */
+export function displayType(fm) {
+  return (fm && (fm.type || fm.metadata?.type || fm.metadata?.node_type)) || '';
+}
+
 /**
  * Parse YAML-ish frontmatter lines (mini parser, no dependency).
  * Supports plain keys, inline lists, and indented `relations:` block.
@@ -125,6 +139,31 @@ export function parseFrontmatter(yaml) {
         i++;
       }
       fm.relations = rel;
+      continue;
+    }
+
+    // metadata:  (block with indented flat key/value pairs — samemind's own memory schema
+    // (name/description/metadata.type), distinct from OKF-native title/type; see displayTitle/
+    // displayType below for how consumers fall back onto it)
+    if (/^metadata:\s*$/.test(line) || /^metadata:\s*\{\s*\}\s*$/.test(line)) {
+      const meta = {};
+      i++;
+      while (i < lines.length) {
+        const ml = lines[i];
+        if (ml.trim() === '') { i++; continue; }
+        if (!/^\s/.test(ml)) break;
+        const mm2 = ml.match(/^  ([A-Za-z_][\w-]*):\s*(.*)$/);
+        if (!mm2) break;
+        let [, mk, mv] = mm2;
+        mv = mv.trim();
+        if (mv.startsWith('[') && mv.endsWith(']')) {
+          meta[mk] = mv.slice(1, -1).split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+        } else {
+          meta[mk] = mv.replace(/^["']|["']$/g, '');
+        }
+        i++;
+      }
+      fm.metadata = meta;
       continue;
     }
 

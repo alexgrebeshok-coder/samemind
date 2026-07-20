@@ -217,6 +217,27 @@ describe('sqlite-index — index, search, incremental sync, migration', { skip: 
     }
   });
 
+  it('migrateJsonIndex: undefined type/title (older JSON index, pre-displayType/displayTitle) binds as NULL, not a crash', async () => {
+    const store = await openVecStore({ dbPath: join(dir, 'migrate-undefined.db') });
+    assert.ok(store.ok, store.reason);
+    try {
+      const jsonIdx = {
+        model: 'mock',
+        items: {
+          'memory/agent-permission-hygiene': { hash: 'h1', type: undefined, title: undefined, visibility: 'internal', vector: [1, 0, 0] },
+        },
+      };
+      const { migrated } = migrateJsonIndex(store, jsonIdx);
+      assert.equal(migrated, 1);
+      const hits = searchVecStore(store, [1, 0, 0], { k: 1 });
+      assert.equal(hits[0].id, 'memory/agent-permission-hygiene');
+      assert.equal(hits[0].title, '');
+      assert.equal(hits[0].type, '');
+    } finally {
+      closeVecStore(store);
+    }
+  });
+
   it('recallSearch: sqlite-vec backend (vecStore/vecSearch/vecCount) — semantic mode, same winner as JSON path', async () => {
     const store = await openVecStore({ dbPath: join(dir, 'recallsearch.db') });
     assert.ok(store.ok, store.reason);

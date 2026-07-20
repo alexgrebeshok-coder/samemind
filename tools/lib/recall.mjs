@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { buildCorpus, bm25Score } from './bm25.mjs';
 import { buildSupersededMap, buildHeatIndex, hygieneMultiplier, hygieneLabel } from './hygiene.mjs';
+import { displayTitle, displayType } from './okf.mjs';
 
 // Размерность проверяется только если OKF_EMBED_DIM задана явно. Иначе принимаем любую
 // (OpenAI text-embedding-3-* — 1536/3072, bge-m3 — 1024, …): требование фиксированной dim
@@ -103,7 +104,12 @@ export function finalizeRanked(candidates, {
       const doc = docsById.get(c.id);
       const score = doc ? c.rawScore * hygieneMultiplier(doc, supersededMap, { heatIndex }) : c.rawScore;
       const label = doc ? hygieneLabel(doc, supersededMap) : '';
-      return { id: c.id, title: c.title, type: c.type, score, rawScore: c.rawScore, label };
+      // Prefer the live doc's fm for title/type: candidates may carry a cached title/type from an
+      // index built before displayTitle/displayType existed (or before this doc had one at all) —
+      // `c.title`/`c.type` remain the fallback for the rare id not present in `docs`.
+      const title = (doc ? displayTitle(doc.fm) : '') || c.title || '';
+      const type = (doc ? displayType(doc.fm) : '') || c.type || '';
+      return { id: c.id, title, type, score, rawScore: c.rawScore, label };
     })
     .sort((a, b) => b.score - a.score)
     .slice(0, k);
@@ -144,8 +150,8 @@ export async function syncIndex(idx, docs, embed, { includeSecret = false, inclu
     const visibility = d.fm.visibility || 'internal';
     idx.items[d.id] = {
       hash: h,
-      type: d.fm.type,
-      title: d.fm.title,
+      type: displayType(d.fm),
+      title: displayTitle(d.fm),
       visibility,
       vector: await embed(embedText(d)),
     };
@@ -253,8 +259,8 @@ export function rankByKeywords(docs, query, { k = 5, includeSecret = false, incl
       const rawScore = bm25Score(query, d.id, corpus);
       return {
         id: d.id,
-        title: d.fm.title,
-        type: d.fm.type,
+        title: displayTitle(d.fm),
+        type: displayType(d.fm),
         score: rawScore * hygieneMultiplier(d, supersededMap, { heatIndex }),
         rawScore,
         file: d.file,
