@@ -13,7 +13,20 @@ import { readdirSync, statSync } from 'node:fs';
 import { join, relative, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { rankByKeywords, queryTerms } from './lib/recall.mjs';
+// rankByKeywords/queryTerms come from ./lib/recall.mjs, but we do NOT import it statically
+// here (demo-harness fix 20.07, see docs/benchmark.md). ./lib/recall.mjs statically imports
+// ./lib/hygiene.mjs, which statically imports ./lib/okf.mjs — and okf.mjs's `ROOT` export is
+// a plain top-level `const` frozen the first time the module is evaluated. A static top-of-file
+// import here would evaluate okf.mjs (transitively) before this file's own code ever runs —
+// i.e. before the demo-default OKF_ROOT assignment below/in runBench() — permanently locking
+// ROOT to the real package root instead of demo/. That silently emptied the doc pool for every
+// query, so rankByKeywords always returned [] (BM25 hit@1/3 read 0% even though the engine
+// itself was fine — verified independently via --synthetic and okf-recall.mjs). Deferring the
+// import via getRecall() (called only after OKF_ROOT is set) avoids the freeze.
+let _recall = null;
+async function getRecall() {
+  return _recall || (_recall = await import('./lib/recall.mjs'));
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(HERE, '..');
@@ -118,7 +131,8 @@ export function naiveGrepPhrase(query, bundleRoot, { k = 3 } = {}) {
  * (raw term-count, no IDF / length norm). Still weaker than BM25 on ranking quality
  * (often elevates index.md / common-word files).
  */
-export function naiveGrepTerms(query, bundleRoot, { k = 3 } = {}) {
+export async function naiveGrepTerms(query, bundleRoot, { k = 3 } = {}) {
+  const { queryTerms } = await getRecall();
   const terms = queryTerms(query);
   const files = walkMd(bundleRoot);
   if (!files.length || !terms.length) return [];
@@ -163,6 +177,8 @@ export async function runBench({ bundleRoot, k = 3, loadFn } = {}) {
   const root = resolve(bundleRoot || process.env.OKF_ROOT || DEMO_ROOT);
   if (!process.env.OKF_ROOT) process.env.OKF_ROOT = root;
 
+  const { rankByKeywords } = await getRecall();
+
   let load = loadFn;
   if (!load) {
     // Dynamic import so ROOT is resolved *after* OKF_ROOT is set.
@@ -180,7 +196,7 @@ export async function runBench({ bundleRoot, k = 3, loadFn } = {}) {
     const grepPhrase = naiveGrepPhrase(c.query, root, { k });
     const grepPhraseIds = grepPhrase.map(r => r.id);
     // Secondary: per-word term-count rank (still no IDF).
-    const grepTerms = naiveGrepTerms(c.query, root, { k });
+    const grepTerms = await naiveGrepTerms(c.query, root, { k });
     const grepTermIds = grepTerms.map(r => r.id);
 
     rows.push({
@@ -314,7 +330,8 @@ function percentile(sorted, p) {
  * rebuild + score), the same per-invocation cost a real single-shot CLI call pays — that's
  * what "latency" means here, not a warmed/cached corpus.
  */
-export function runSyntheticBench({ n = 1000, queryCount = 200, seed = 42 } = {}) {
+export async function runSyntheticBench({ n = 1000, queryCount = 200, seed = 42 } = {}) {
+  const { rankByKeywords } = await getRecall();
   const docs = generateSyntheticCorpus(n, { seed });
   const rng = mulberry32(seed + 1); // separate stream from corpus generation
   const step = Math.max(1, Math.floor(n / queryCount));
@@ -423,7 +440,7 @@ function flagValue(name, fallback) {
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
   if (process.argv.includes('--synthetic')) {
-    const result = runSyntheticBench({
+    const result = await runSyntheticBench({
       n: flagValue('n', 1000),
       queryCount: flagValue('queries', 200),
       seed: flagValue('seed', 42),
