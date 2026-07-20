@@ -47,7 +47,10 @@
     "README.md",
     "CONTRIBUTING.md",
     "INSTALL_FOR_AGENTS.md",
-    "LICENSE"
+    "LICENSE",
+    "!**/.index",
+    "!**/.index/**",
+    "!tools/*.test.mjs"
   ],
   "optionalDependencies": {
     "sqlite-vec": "^0.1.9"

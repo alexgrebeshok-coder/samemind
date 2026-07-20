@@ -1,0 +1,14 @@
+# npm package hygiene — excludes within the package.json `files` whitelist.
+# (inbox/, secret/, mirror/, node_modules/ are already outside `files`.)
+
+# generated vector indexes — derived, large, rebuilt on first run
+**/.index/
+
+# tests — not needed by consumers, keeps the tarball small
+tools/*.test.mjs
+
+# scratch / backups / capture state
+*.bak
+*.bak-*
+.samemind-capture-state.json
+.DS_Store
