@@ -14,7 +14,8 @@ import { fileURLToPath } from 'node:url';
 
 import {
   buildSupersededMap, isSuperseded, isDeprecated, detectSupersedeCycles,
-  importanceMultiplier, decayMultiplier, hygieneMultiplier, hygieneBanner,
+  importanceMultiplier, decayMultiplier, hygieneMultiplier, hygieneBanner, hygieneLabel,
+  isExpired, hasSupersededBy, isTemporallySuperseded,
   SUPERSEDED_PENALTY, DEFAULT_IMPORTANCE, DECAY_AFTER_DAYS, DECAY_FULL_DAYS, DECAY_MIN_MULTIPLIER,
 } from './lib/hygiene.mjs';
 import { rankByKeywords, rankByQuery, recallSearch } from './lib/recall.mjs';
@@ -664,4 +665,153 @@ describe('hygiene helpers — small direct checks', () => {
   // okf.mjs, which is frozen at first import in this process — exercising it correctly requires
   // a real subprocess with OKF_ROOT set before the module loads. That's already covered by the
   // "validate — supersede chains and warnings (subprocess)" tests above (dangling target, cycle).
+});
+
+// ---------------------------------------------------------------------------
+// 9. bi-temporal supersede (Ф2): valid_from/invalid_at/superseded_by parsing + temporal recall
+// ---------------------------------------------------------------------------
+
+describe('bi-temporal — valid_from/invalid_at/superseded_by parse (okf.mjs)', () => {
+  let okf;
+  let root;
+
+  before(async () => {
+    root = mkdtempSync(join(tmpdir(), 'samemind-bitemporal-unit-'));
+    writeConcept(root, 'concepts/plain.md', { type: 'Concept', title: 'Plain, no temporal fields' });
+    writeConcept(root, 'concepts/dated.md', {
+      type: 'Concept', title: 'Dated fact',
+      valid_from: '2020-01-01T00:00:00Z', invalid_at: '2021-01-01T00:00:00Z',
+    });
+    writeConcept(root, 'concepts/old.md', {
+      type: 'Concept', title: 'Old fact', superseded_by: '/concepts/new.md',
+    });
+    writeConcept(root, 'concepts/multi.md', {
+      type: 'Concept', title: 'Multi-superseded', superseded_by: ['/concepts/a.md', '/concepts/b.md'],
+    });
+    process.env.OKF_ROOT = root;
+    okf = await import(`./lib/okf.mjs?t=${Date.now()}`);
+  });
+
+  after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('valid_from/invalid_at parse as plain ISO strings on fm', () => {
+    const docs = okf.load();
+    const d = docs.find(x => x.id === 'concepts/dated');
+    assert.equal(d.fm.valid_from, '2020-01-01T00:00:00Z');
+    assert.equal(d.fm.invalid_at, '2021-01-01T00:00:00Z');
+  });
+
+  it('absent valid_from/invalid_at → undefined (backward compatible, always valid)', () => {
+    const docs = okf.load();
+    const p = docs.find(x => x.id === 'concepts/plain');
+    assert.equal(p.fm.valid_from, undefined);
+    assert.equal(p.fm.invalid_at, undefined);
+  });
+
+  it('scalar superseded_by normalizes to a one-element array (doc + fm), mirroring supersedes', () => {
+    const docs = okf.load();
+    const o = docs.find(x => x.id === 'concepts/old');
+    assert.deepEqual(o.supersededBy, ['/concepts/new.md']);
+    assert.deepEqual(o.fm.superseded_by, ['/concepts/new.md']);
+  });
+
+  it('list superseded_by stays a list', () => {
+    const docs = okf.load();
+    const m = docs.find(x => x.id === 'concepts/multi');
+    assert.deepEqual(m.supersededBy, ['/concepts/a.md', '/concepts/b.md']);
+  });
+
+  it('absent superseded_by → empty array on the doc, key absent from fm', () => {
+    const docs = okf.load();
+    const p = docs.find(x => x.id === 'concepts/plain');
+    assert.deepEqual(p.supersededBy, []);
+    assert.equal(p.fm.superseded_by, undefined);
+  });
+});
+
+describe('bi-temporal — isExpired / hasSupersededBy / isTemporallySuperseded (pure)', () => {
+  it('isExpired: invalid_at in the past → true; in the future/absent → false', () => {
+    assert.equal(isExpired({ fm: { invalid_at: '2020-01-01T00:00:00Z' } }), true);
+    assert.equal(isExpired({ fm: { invalid_at: '2099-01-01T00:00:00Z' } }), false);
+    assert.equal(isExpired({ fm: {} }), false);
+    assert.equal(isExpired({ fm: { invalid_at: 'not-a-date' } }), false);
+  });
+
+  it('hasSupersededBy: true iff the normalized array is non-empty', () => {
+    assert.equal(hasSupersededBy({ supersededBy: ['/concepts/new.md'] }), true);
+    assert.equal(hasSupersededBy({ supersededBy: [] }), false);
+    assert.equal(hasSupersededBy({}), false);
+  });
+
+  it('isTemporallySuperseded: either signal is enough', () => {
+    assert.equal(isTemporallySuperseded({ fm: { invalid_at: '2020-01-01T00:00:00Z' }, supersededBy: [] }), true);
+    assert.equal(isTemporallySuperseded({ fm: {}, supersededBy: ['/x.md'] }), true);
+    assert.equal(isTemporallySuperseded({ fm: {}, supersededBy: [] }), false);
+  });
+});
+
+describe('bi-temporal — recall: valid fact ranks first, superseded is labeled (never hidden)', () => {
+  const supersededMap = new Map(); // empty: these docs use invalid_at/superseded_by, not supersedes
+
+  it('invalid_at in the past → penalized like supersedes, labeled "⤳ superseded (invalid_at …)"', () => {
+    const docs = [
+      {
+        id: 'concepts/expired', reserved: false, supersedes: [], supersededBy: [],
+        fm: { title: 'Deploy policy', type: 'Concept', visibility: 'internal', invalid_at: '2020-01-01T00:00:00Z' },
+        body: 'A note about the deploy policy and how it works.',
+      },
+      {
+        id: 'concepts/current', reserved: false, supersedes: [], supersededBy: [],
+        fm: { title: 'Deploy policy', type: 'Concept', visibility: 'internal' },
+        body: 'A note about the deploy policy and how it works.',
+      },
+    ];
+    const ranked = rankByKeywords(docs, 'deploy policy', { k: 5 });
+    assert.equal(ranked[0].id, 'concepts/current');
+    assert.equal(ranked[1].id, 'concepts/expired');
+    assert.equal(ranked[0].label, '');
+    assert.match(ranked[1].label, /^⤳ superseded \(invalid_at 2020-01-01\)$/);
+    // never hidden — still returned, still findable
+    assert.ok(ranked.some(r => r.id === 'concepts/expired'));
+  });
+
+  it('superseded_by set → penalized + labeled "⤳ superseded by <target>", valid fact first', () => {
+    const docs = [
+      {
+        id: 'concepts/old-price', reserved: false, supersedes: [], supersededBy: ['/concepts/new-price.md'],
+        fm: { title: 'Bentonite price', type: 'Concept', visibility: 'internal' },
+        body: 'The current bentonite price per ton.',
+      },
+      {
+        id: 'concepts/new-price', reserved: false, supersedes: [], supersededBy: [],
+        fm: { title: 'Bentonite price', type: 'Concept', visibility: 'internal' },
+        body: 'The current bentonite price per ton.',
+      },
+    ];
+    const ranked = rankByKeywords(docs, 'bentonite price', { k: 5 });
+    assert.equal(ranked[0].id, 'concepts/new-price');
+    assert.equal(ranked[1].id, 'concepts/old-price');
+    assert.match(ranked[1].label, /^⤳ superseded by \/concepts\/new-price\.md$/);
+    assert.ok(Math.abs(ranked[1].score - ranked[1].rawScore * SUPERSEDED_PENALTY) < 1e-9);
+  });
+
+  it('rankByQuery (semantic path) applies the same temporal penalty via docs param', async () => {
+    const docs = [
+      {
+        id: 'concepts/expired', supersedes: [], supersededBy: [],
+        fm: { invalid_at: '2020-01-01T00:00:00Z' },
+      },
+      { id: 'concepts/current', supersedes: [], supersededBy: [], fm: {} },
+    ];
+    const items = {
+      'concepts/expired': { vector: [1, 0], title: 'X', type: 'Concept' },
+      'concepts/current': { vector: [1, 0], title: 'X', type: 'Concept' },
+    };
+    const ranked = rankByQuery(items, [1, 0], { k: 5, docs });
+    assert.equal(ranked[0].id, 'concepts/current');
+    assert.equal(ranked[1].id, 'concepts/expired');
+    assert.match(ranked[1].label, /⤳ superseded/);
+  });
 });

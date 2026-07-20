@@ -152,6 +152,43 @@ Running it again just refreshes `deprecated_on`.
 Id resolution matches `okf-query get`: exact id, or a unique basename-suffix
 match; ambiguous or missing input is a hard refusal, never a guess.
 
+## Bi-temporal supersede (Ф2)
+
+`supersedes` (above) answers "what replaced me?" by asking the *whole corpus*
+(`buildSupersededMap` scans every doc's `supersedes` field). Three more
+optional fields let a concept carry that signal on its **own** frontmatter,
+no corpus scan required — same append-only spirit, never delete, only label:
+
+| Field | Meaning | Set by |
+|---|---|---|
+| `valid_from` | ISO date the fact became true | You, optionally |
+| `invalid_at` | ISO date the fact stopped being true | You, or a human applying a `reconcile` proposal |
+| `superseded_by` | `/path.md` (or a list) — the reverse of `supersedes`, pointing forward from the OLD fact to its replacement | You, or a human applying a `reconcile` proposal |
+
+Absent fields = always valid — every concept written before Ф2 is
+unaffected. `invalid_at` in the past, or a non-empty `superseded_by`, marks a
+doc **temporally superseded**: same `SUPERSEDED_PENALTY` rank multiplier as
+`supersedes`/`deprecated`, never hidden, labeled `⤳ superseded by
+/concepts/new.md` or `⤳ superseded (invalid_at 2026-01-01)` in recall/gde
+output. `valid_from` is parsed but not yet used for ranking (a
+not-yet-valid future-dated fact isn't penalized) — a future-dated fact
+predating its own `valid_from` is a corner case for a later phase, not Ф2.
+
+### `tools/reconcile.mjs` — proposals, not writes
+
+```sh
+node tools/reconcile.mjs [--dir <subpath>] [--write]
+```
+
+Same human-gate as `consolidate.mjs`: reuses its same-type/title-tag-Jaccard
+"contradictions" heuristic to find candidate pairs (same subject, no
+existing `supersedes`/`superseded_by` link between them yet), picks a
+direction by file mtime (newer file = presumed replacement), and prints a
+markdown report — `предлагаю пометить Y superseded_by X`. It **never writes
+to a concept's frontmatter**; `--write` only saves its own report under
+`inbox/_reconcile-report.md`, for a human (or a curating agent acting on
+explicit instruction) to act on by hand.
+
 ## Worked example
 
 `demo/concepts/embed-model-bge-m3.md` (dated 2025-09-01 — old enough to also

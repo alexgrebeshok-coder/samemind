@@ -170,7 +170,19 @@ export function parse(file) {
   const supersedes = asPathList(fm.supersedes);
   if (supersedes.length) fm.supersedes = supersedes;
   else delete fm.supersedes;
-  return { file, id, base, reserved: RESERVED.has(base), fm, hasFM, body, links, relations, supersedes };
+  // superseded_by: reverse pointer — set BY HAND (or via a human applying a tools/reconcile.mjs
+  // proposal) on the OLD fact, naming the fact that replaces it. Same normalization as
+  // supersedes, just the other direction (see docs/memory-hygiene.md, bi-temporal section).
+  const supersededBy = asPathList(fm.superseded_by);
+  if (supersededBy.length) fm.superseded_by = supersededBy;
+  else delete fm.superseded_by;
+  // valid_from / invalid_at: ISO-date bi-temporal bounds. No special normalization needed —
+  // the generic key:value branch above already parses them as plain strings; absent = always
+  // valid (backward compatible with every existing concept that predates Ф2).
+  return {
+    file, id, base, reserved: RESERVED.has(base), fm, hasFM, body, links, relations,
+    supersedes, supersededBy,
+  };
 }
 
 // --- per-file parse cache ---------------------------------------------------------------

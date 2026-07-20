@@ -24,7 +24,9 @@ const STOPWORDS = new Set(['the', 'a', 'an', 'and', 'of', 'for', 'to', 'in', 'on
 const WRITE = process.argv.includes('--write');
 
 const slugOf = id => id.split('/').pop().toLowerCase();          // basename без пути, lower
-const engineOf = id =>
+// exported — tools/reconcile.mjs reuses the same "what counts as canon" rule (see docs/memory-hygiene.md,
+// bi-temporal section) instead of redefining it.
+export const engineOf = id =>
   id.startsWith('mirror/claude-code/') ? 'claude-code'
   : id.startsWith('mirror/openclaw/') ? 'openclaw'
   : id.startsWith('inbox/') ? 'inbox'
@@ -48,11 +50,13 @@ export function jaccard(a, b) {
 
 /** ids (pathToId) this doc's `supersedes` points at — pure string mapping, no filesystem. */
 const supersedesTargets = d => (d.supersedes || []).map(pathToId);
+/** ids (pathToId) this doc's `superseded_by` points at — reverse pointer, same shape (Ф2). */
+const supersededByTargets = d => (d.supersededBy || []).map(pathToId);
 
 /**
  * Pairs of same-type canon concepts with title/tag similarity ≥ threshold, where neither
- * supersedes the other — candidates for a human to resolve (merge, supersede, or leave be).
- * Deliberately simple: title/tag token Jaccard, no embeddings required.
+ * supersedes (or is marked superseded_by) the other — candidates for a human to resolve (merge,
+ * supersede, or leave be). Deliberately simple: title/tag token Jaccard, no embeddings required.
  */
 export function findContradictions(canonDocs, { threshold = CONTRADICTION_SIM } = {}) {
   const byType = new Map();
@@ -69,6 +73,9 @@ export function findContradictions(canonDocs, { threshold = CONTRADICTION_SIM } 
         const aTargets = supersedesTargets(a);
         const bTargets = supersedesTargets(b);
         if (aTargets.includes(b.id) || bTargets.includes(a.id)) continue; // one already supersedes the other
+        const aSB = supersededByTargets(a);
+        const bSB = supersededByTargets(b);
+        if (aSB.includes(b.id) || bSB.includes(a.id)) continue; // one already marked superseded_by the other
         const score = jaccard(titleTokens(a), titleTokens(b));
         if (score >= threshold) out.push({ a: a.id, b: b.id, type, score });
       }

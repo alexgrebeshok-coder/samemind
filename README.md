@@ -186,6 +186,9 @@ relations:             # optional SameMind extension (typed graph edges)
   works_at: /entities/acme-labs.md
   depends_on: [/projects/atlas.md, /concepts/retrieval-strategy.md]
 supersedes: /concepts/old-idea.md   # optional — memory hygiene, see below
+superseded_by: /concepts/new.md     # optional — reverse pointer, set on the OLD fact
+valid_from: 2026-01-01T00:00:00Z    # optional — bi-temporal, see below
+invalid_at: 2026-06-01T00:00:00Z    # optional — bi-temporal, see below
 importance: 3                      # optional — 1..5, default 3 (neutral)
 ---
 ```
@@ -350,6 +353,7 @@ sync-mechanism research → cron-sync-adapters idea).
 | `samemind ledger append\|status\|read` | Append-only event ledger (`ledger/events.jsonl`): fine-grained "who did what step, when", 🔥 open failures until resolved — complements (never replaces) `Task.status` — see [docs/event-ledger.md](docs/event-ledger.md) |
 | `samemind serve` | MCP stdio server: `memory_search/get/list/write_inbox/handoff/health/ledger_append/ledger_status` — see [MCP](#mcp) |
 | `tools/consolidate.mjs` | Gap map: inbox/mirror → candidates for promotion into the canon, plus a same-type "contradictions" section (dev-mode only, run from a checkout) |
+| `tools/reconcile.mjs [--dir <subpath>] [--write]` | Bi-temporal supersede proposals (`valid_from`/`invalid_at`/`superseded_by`) — never writes to a concept's frontmatter, human-gate like `consolidate.mjs` (dev-mode only, run from a checkout) |
 
 `query`/`recall`/`gde`/`brief`/`board`/`handoff`/`forget`/`install`/`export`/`import`/`capture`/`ledger`/`serve` run against `OKF_ROOT` if set, otherwise your
 current directory — so they operate on your own bundle, not on the samemind package itself.
