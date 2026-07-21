@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import {
   mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync, utimesSync, existsSync,
 } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +16,7 @@ import { buildProposals, renderReport } from './reconcile.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RECONCILE_CLI = join(HERE, 'reconcile.mjs');
+const BIN = resolve(HERE, '..', 'bin', 'samemind.mjs');
 
 function writeConcept(root, relPath, frontmatter, body = '# x\n', mtime = null) {
   const full = join(root, relPath);
@@ -151,5 +152,15 @@ describe('reconcile — CLI (subprocess), human-gate', () => {
     assert.equal(code, 0, out);
     assert.match(out, /Proposals: 0/);
     assert.match(out, /_none_/);
+  });
+
+  it('bin/samemind.mjs routes "reconcile" to tools/reconcile.mjs (UAT: was missing from ROUTES)', () => {
+    const root = tmpRoot('samemind-reconcile-bin-');
+    const r = spawnSync(process.execPath, [BIN, 'reconcile'], {
+      env: { ...process.env, OKF_ROOT: root },
+      encoding: 'utf8',
+    });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /Reconcile proposals/);
   });
 });

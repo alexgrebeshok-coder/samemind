@@ -3,6 +3,35 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.1] — 2026-07-21
+
+UAT fixes on 0.6.0.
+
+### Fixed
+
+- **`reconcile`/`reflect` were missing from the CLI router** (`bin/samemind.mjs` `ROUTES`) —
+  both tools were complete and correct when run directly (`node tools/reconcile.mjs`), but
+  `npx samemind reconcile`/`reflect` fell through to the unknown-command path (help + exit 1).
+  Wired both into `ROUTES` and `usage()`, same pattern as `forget`/`board`. Added a smoke-gate
+  step (`scripts/smoke-tarball.sh`) that runs `samemind reconcile`/`reflect` against the
+  installed tarball and checks for their report headers — this is the class of bug the gate
+  didn't catch before (a feature complete as a module but never reachable via the CLI); it
+  does now. Also added a direct CLI-routing regression test in `tools/reconcile.test.mjs` /
+  `tools/reflect.test.mjs`.
+- **Multi-root recall ranking**: `tools/lib/compose-roots.mjs` `mergeWithGlobal` merged project
+  and global hits by raw BM25 score, which is corpus-size/length-dependent — a small global
+  bundle's exact unique hit could rank below a big local bundle's merely-incidental hit. Each
+  side is now normalized to its own `[0,1]` scale (divide by that corpus's own max score) before
+  the cross-corpus sort; a single-root search (no global bundle / `--no-global`) is untouched —
+  the normalization only runs inside the two-corpora merge branch, so the existing
+  byte-identical no-global regression guarantee (`multiroot-cli.test.mjs`) still holds.
+- **`samemind brief` printed an empty `<!-- samemind:brief:start -->`/`:end` blob** when a
+  bundle had no `Identity`/`User`/`EngineRule` concepts at all (design is unchanged — brief IS
+  the identity layer, see `docs/identity-layer.md`) — now prints a clear inline notice instead
+  ("no Identity/User concept in this bundle — brief is identity-layer only; add one"), so an
+  `--inject` caller (which never sees the tool's stderr warnings) gets something legible instead
+  of blank markers.
+
 ## [0.6.0] — 2026-07-21
 
 _"Same mind" track: samemind used to be one bundle per project. `setup --global` connects

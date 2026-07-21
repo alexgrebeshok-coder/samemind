@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import {
   mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync, utimesSync, existsSync,
 } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,7 @@ import { buildHeatIndex, HEAT_WINDOW_DAYS } from './lib/hygiene.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REFLECT_CLI = join(HERE, 'reflect.mjs');
+const BIN = resolve(HERE, '..', 'bin', 'samemind.mjs');
 const NOW_MS = new Date('2026-07-18T00:00:00Z').getTime();
 
 function writeConcept(root, relPath, frontmatter, body = '# x\n', mtime = null) {
@@ -175,5 +176,15 @@ describe('reflect — CLI (subprocess), human-gate', () => {
     assert.equal(code, 0, out);
     assert.match(out, /## 1\. Supersede proposals \(reconcile\): 0/);
     assert.match(out, /## 3\. Cooled facts \(heat, Ф5\): 0/);
+  });
+
+  it('bin/samemind.mjs routes "reflect" to tools/reflect.mjs (UAT: was missing from ROUTES)', () => {
+    const root = tmpRoot('samemind-reflect-bin-');
+    const r = spawnSync(process.execPath, [BIN, 'reflect'], {
+      env: { ...process.env, OKF_ROOT: root },
+      encoding: 'utf8',
+    });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /Reflect proposals/);
   });
 });
