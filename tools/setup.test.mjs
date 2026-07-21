@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
-import { applyEmbedProbe } from './setup.mjs';
+import { applyEmbedProbe, runGlobalSetup } from './setup.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SETUP = join(HERE, 'setup.mjs');
@@ -281,6 +281,61 @@ describe('applyEmbedProbe — unit (probe-result wiring, no network/mocked fetch
       assert.equal(cfg.embedModel, 'm');
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('runGlobalSetup — native MCP registration gated on the REAL machine home (post-incident regression)', () => {
+  // Incident: `node tools/setup.mjs --global --yes --home <fake>` on a machine where the real
+  // `claude` binary is on PATH actually ran native `claude mcp add --scope user` — which writes
+  // to the REAL user's ~/.claude.json regardless of the fake --home, because native has no idea
+  // a fake home was ever passed. Fix: runGlobalSetup only allows the native attempt when the
+  // effective home resolves to the real machine home (os.userInfo().homedir); any other home
+  // forces the JSON-merge fallback into `<home>/.claude.json`, and MUST NOT invoke spawnSyncImpl
+  // at all — proven here directly (no subprocess, no reliance on hiding PATH), so this test would
+  // fail loudly if the guard ever regresses, independent of whatever `claude` binary is or isn't
+  // reachable on whatever machine runs the suite.
+  it('a fake/custom home never calls spawnSyncImpl — registration goes straight to the JSON-merge fallback in <home>/.claude.json', async () => {
+    const home = tmp('global-native-guard-home');
+    try {
+      const spawnSyncImpl = () => {
+        throw new Error('spawnSyncImpl must NOT be called for a custom/fake home — native would write to the REAL ~/.claude.json, not this fixture');
+      };
+      const res = await runGlobalSetup({ home, yes: true, spawnSyncImpl });
+
+      assert.equal(res.ok, true);
+      assert.match(res.lines.join('\n'), /wrote samemind.*claude\.json/i);
+
+      const claudeJson = JSON.parse(readFileSync(join(home, '.claude.json'), 'utf8'));
+      assert.deepEqual(claudeJson.mcpServers.samemind, { command: 'npx', args: ['samemind', 'serve'] });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves a pre-existing (fake) ~/.claude.json fixture — exa/context7/playwright untouched — while blocking native', async () => {
+    const home = tmp('global-native-guard-preserve-home');
+    try {
+      mkdirSync(home, { recursive: true });
+      const before = {
+        mcpServers: {
+          exa: { command: 'npx', args: ['exa-mcp'] },
+          context7: { command: 'npx', args: ['context7-mcp'] },
+          playwright: { command: 'npx', args: ['playwright-mcp'] },
+        },
+      };
+      writeFileSync(join(home, '.claude.json'), JSON.stringify(before, null, 2), 'utf8');
+      const spawnSyncImpl = () => { throw new Error('spawnSyncImpl must NOT be called for a custom/fake home'); };
+
+      await runGlobalSetup({ home, yes: true, spawnSyncImpl });
+
+      const after = JSON.parse(readFileSync(join(home, '.claude.json'), 'utf8'));
+      assert.deepEqual(after.mcpServers.exa, before.mcpServers.exa);
+      assert.deepEqual(after.mcpServers.context7, before.mcpServers.context7);
+      assert.deepEqual(after.mcpServers.playwright, before.mcpServers.playwright);
+      assert.deepEqual(after.mcpServers.samemind, { command: 'npx', args: ['samemind', 'serve'] });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });

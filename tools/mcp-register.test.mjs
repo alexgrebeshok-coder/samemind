@@ -162,6 +162,38 @@ describe('ensureMcpRegistered — claude-code, scope:"user" (global setup, G-A)'
     }
   });
 
+  it('allowNative:false skips the native attempt entirely — spawnSyncImpl is never called, straight to JSON merge (post-incident regression)', () => {
+    const dir = tmp('mcp-user-allow-native-false');
+    try {
+      const userConfigPath = join(dir, 'claude.json');
+      const spawnSyncImpl = () => { throw new Error('spawnSyncImpl must not be called when allowNative:false'); };
+      const msg = ensureMcpRegistered('claude-code', dir, {
+        apply: true, scope: 'user', userConfigPath, spawnSyncImpl, allowNative: false,
+      });
+      assert.match(msg, /wrote samemind/i);
+      assert.deepEqual(JSON.parse(readFileSync(userConfigPath, 'utf8')).mcpServers.samemind, { command: 'npx', args: ['samemind', 'serve'] });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('allowNative:true (or default) does attempt native — a successful mock is honored, not skipped', () => {
+    const dir = tmp('mcp-user-allow-native-true');
+    try {
+      const userConfigPath = join(dir, 'claude.json');
+      let called = false;
+      const spawnSyncImpl = () => { called = true; return { status: 0, error: undefined }; };
+      const msg = ensureMcpRegistered('claude-code', dir, {
+        apply: true, scope: 'user', userConfigPath, spawnSyncImpl, allowNative: true,
+      });
+      assert.equal(called, true);
+      assert.match(msg, /registered samemind/i);
+      assert.equal(existsSync(userConfigPath), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('fallback onto a corrupt userConfigPath: file left byte-for-byte untouched, honest error returned', () => {
     const dir = tmp('mcp-user-native-corrupt');
     try {

@@ -63,11 +63,21 @@ function registerUserScopeViaJsonMerge(userConfigPath) {
  *
  * claude-code, scope:'user': `apply:true` first tries the native
  * `claude mcp add --scope user samemind -- npx samemind serve` (via `spawnSyncImpl`, injectable
- * for tests — defaults to the real `node:child_process` spawnSync). If that binary is missing or
- * exits non-zero, falls back to merging the same entry into `userConfigPath` (default
- * `~/.claude.json`, parameterized for test isolation — the real file already carries other MCP
- * servers, e.g. exa/context7/playwright, which the merge preserves). `apply:false` returns a
- * plan string without running or writing anything.
+ * for tests — defaults to the real `node:child_process` spawnSync) — but ONLY when
+ * `allowNative` is true. If that binary is missing, exits non-zero, or `allowNative` is false,
+ * falls back to merging the same entry into `userConfigPath` (default `~/.claude.json`,
+ * parameterized for test isolation — the real file already carries other MCP servers, e.g.
+ * exa/context7/playwright, which the merge preserves). `apply:false` returns a plan string
+ * without running or writing anything.
+ *
+ * `allowNative` (default true) exists because native `claude mcp add --scope user` writes to
+ * *the real machine's* user-scope config — it has no concept of `userConfigPath` and does not
+ * consult it. A caller that has pointed `userConfigPath` at some other (e.g. test-fixture) file
+ * MUST also pass `allowNative: false`, or the native command silently registers samemind against
+ * the real ~/.claude.json instead of the intended target regardless of `userConfigPath`
+ * (incident: a fake --home in setup.mjs without this guard still hit the real file — see
+ * runGlobalSetup, which derives `allowNative` from comparing the effective home against
+ * `os.userInfo().homedir`, never from `userConfigPath` itself).
  *
  * Any other engine id: always returns a hint string (from ENGINE_MCP_HINTS, or a generic
  * "see docs/adapters.md" fallback for an id not in that table) and never writes anything,
@@ -78,6 +88,7 @@ export function ensureMcpRegistered(engine, target, {
   scope = 'project',
   userConfigPath = join(homedir(), '.claude.json'),
   spawnSyncImpl = spawnSync,
+  allowNative = true,
 } = {}) {
   if (engine !== 'claude-code') {
     return ENGINE_MCP_HINTS[engine] || `no MCP auto-registration hint for "${engine}" yet — see docs/adapters.md`;
@@ -87,14 +98,16 @@ export function ensureMcpRegistered(engine, target, {
     if (!apply) {
       return `would register samemind as a user-scope MCP server (or run: ${CLAUDE_CODE_USER_APPLY_CMD})`;
     }
-    let native;
-    try {
-      native = spawnSyncImpl('claude', ['mcp', 'add', '--scope', 'user', 'samemind', '--', 'npx', 'samemind', 'serve'], { encoding: 'utf8' });
-    } catch (e) {
-      native = { error: e };
-    }
-    if (native && !native.error && native.status === 0) {
-      return 'registered samemind as a user-scope MCP server via `claude mcp add --scope user`';
+    if (allowNative) {
+      let native;
+      try {
+        native = spawnSyncImpl('claude', ['mcp', 'add', '--scope', 'user', 'samemind', '--', 'npx', 'samemind', 'serve'], { encoding: 'utf8' });
+      } catch (e) {
+        native = { error: e };
+      }
+      if (native && !native.error && native.status === 0) {
+        return 'registered samemind as a user-scope MCP server via `claude mcp add --scope user`';
+      }
     }
     return registerUserScopeViaJsonMerge(userConfigPath);
   }

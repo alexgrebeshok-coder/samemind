@@ -17,6 +17,7 @@
 // apply in this mode (fixed: claude-code, fixed dirs under `--home`/$HOME).
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { userInfo } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { probeEmbedEndpoint } from './lib/probe-embed.mjs';
@@ -235,11 +236,24 @@ export async function runSetup({ target = process.cwd(), yes = false, dryRun = f
  * `home` is parameterized (defaults to `$HOME`) so tests run this whole flow against a fake,
  * disposable home directory — the real `~/.claude.json`/`~/.claude/CLAUDE.md`/`~/.samemind` are
  * never touched by anything in this repo's test suite.
+ *
+ * SAFETY (post-incident fix): native `claude mcp add --scope user` writes to *the real user's*
+ * config regardless of what `home` this function was called with — it has no idea a fake `home`
+ * was passed at all. So MCP registration is only ever allowed to try the native path when `home`
+ * resolves to the actual machine home (`os.userInfo().homedir` — reads the OS user db directly,
+ * unlike `os.homedir()`/`process.env.HOME` which a test's env override also fools). Any custom
+ * `home` (a `--home` flag, a test fixture, …) forces the JSON-merge fallback into
+ * `<home>/.claude.json` instead — the real `~/.claude.json` is never touched in that case.
+ * `spawnSyncImpl` is an optional pass-through to `ensureMcpRegistered`, for tests that need to
+ * assert the native command is never even attempted.
  */
-export async function runGlobalSetup({ home = process.env.HOME, yes = false, dryRun = false, log = console.log } = {}) {
+export async function runGlobalSetup({
+  home = process.env.HOME, yes = false, dryRun = false, log = console.log, spawnSyncImpl,
+} = {}) {
   const homeDir = resolve(home);
   const claudeDir = join(homeDir, '.claude');
   const bundleDir = join(homeDir, '.samemind', 'bundle');
+  const allowNative = homeDir === resolve(userInfo().homedir);
   process.env.OKF_ROOT = bundleDir; // pin before the first ROOT-freezing dynamic import below
 
   const lines = [];
@@ -284,11 +298,15 @@ export async function runGlobalSetup({ home = process.env.HOME, yes = false, dry
       }
     }
 
-    // 3. MCP — user scope
+    // 3. MCP — user scope. allowNative gates the native `claude mcp add` command: only when
+    // `home` IS the real machine home (see SAFETY note above) — a fake/custom home always
+    // forces the JSON-merge fallback so native registration can never hit the real ~/.claude.json.
     const applyMcp = dryRun ? false : (yes || await ask(rl, 'Register samemind as a user-scope MCP server (Claude Code)?'));
-    const mcpLine = ensureMcpRegistered('claude-code', claudeDir, {
-      apply: applyMcp, scope: 'user', userConfigPath: join(homeDir, '.claude.json'),
-    });
+    const mcpOpts = {
+      apply: applyMcp, scope: 'user', userConfigPath: join(homeDir, '.claude.json'), allowNative,
+    };
+    if (spawnSyncImpl) mcpOpts.spawnSyncImpl = spawnSyncImpl;
+    const mcpLine = ensureMcpRegistered('claude-code', claudeDir, mcpOpts);
     print(`MCP: ${mcpLine}`);
 
     // 4. embeddings — global config, <home>/.samemind/config.json
