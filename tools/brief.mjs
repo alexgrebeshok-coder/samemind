@@ -161,6 +161,16 @@ export function buildBrief(docs, { engine = null, budgetTokens = DEFAULT_BUDGET_
     blocks.push({ tier: 2, text: `## Engines\n\n${lines.join('\n')}`, note: 'run with --engine <id> for a specific role' });
   }
 
+  // No Identity, no User, no EngineRule at all → nothing to brief. Design stands (brief IS the
+  // identity layer, see docs/identity-layer.md) — this only replaces what used to be a blank
+  // `BRIEF_START\n\nBRIEF_END` body with a message that actually says why and what to do about
+  // it, instead of silently injecting an empty-looking blob (the warnings above already say this
+  // on stderr, but --inject callers never see stderr).
+  if (!blocks.length) {
+    const notice = 'no Identity/User concept in this bundle — brief is identity-layer only; add one (see docs/identity-layer.md)';
+    return { markdown: `${BRIEF_START}\n${notice}\n${BRIEF_END}`, truncated: false, warnings };
+  }
+
   // --- assemble under budget. Two-stage, smoother than an all-or-nothing drop:
   //   stage 1: drop whole blocks tier-2 first, then tier-1, but keep at most one of each tier
   //            so a near-fitting block isn't thrown away entirely (that's the old step curve);

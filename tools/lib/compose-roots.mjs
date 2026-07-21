@@ -108,22 +108,33 @@ export async function searchGlobalHalf(globalRoot, projectDocs, {
   return { ...result, dedupWarnings, docs: globalDocs };
 }
 
+/** Divide a corpus's own ranked hits by their own max score (min-max floor of 0 → plain /max)
+ *  so relative strength survives the cross-corpus merge below: BM25's IDF is corpus-size/length
+ *  dependent, so a small corpus's exact unique hit and a big corpus's incidental hit are not on
+ *  the same raw scale. All-zero (or empty) hits pass through unchanged — nothing to normalize,
+ *  and dividing by zero would just make NaNs. Only ever called from the two-corpora branch of
+ *  mergeWithGlobal, so the single-root passthrough path (see below) is never touched by this. */
+function normalizeHits(hits) {
+  const max = hits.reduce((m, h) => Math.max(m, h.score), 0);
+  return max ? hits.map(h => ({ ...h, score: h.score / max })) : hits;
+}
+
 /**
  * Merges a project-root recallSearch result with the optional global half, tagging each hit's
  * provenance (`source: 'project'|'global'`) and sorting the union by score.
  * `globalResult` null or hit-less → returns `projectResult` UNCHANGED (same object, no `source`
  * field added anywhere) — this is what makes "no global bundle on disk / --no-global" byte-for-byte
  * identical to pre-G-B output: nothing about the project-only path is touched.
- * ponytail: merges by raw score across two independently-ranked corpora — BM25's IDF is
- * corpus-size-dependent, so a much bigger global bundle could out-rank a more relevant project hit
- * on raw magnitude alone. Upgrade to per-root score normalization or a real cross-corpus RRF if
- * that shows up in practice; not worth it until it does.
+ * Each side is normalized to its own [0,1] scale (normalizeHits) BEFORE merging — a small corpus's
+ * exact unique hit no longer sinks under a bigger corpus's incidental hit purely on raw BM25
+ * magnitude (see normalizeHits). Order within a corpus is preserved (dividing by a positive
+ * constant doesn't reorder), only the cross-corpus comparison changes.
  */
 export function mergeWithGlobal(projectResult, globalResult, k) {
   if (!globalResult || !globalResult.hits.length) return projectResult;
   const merged = [
-    ...projectResult.hits.map(h => ({ ...h, source: 'project' })),
-    ...globalResult.hits.map(h => ({ ...h, source: 'global' })),
+    ...normalizeHits(projectResult.hits).map(h => ({ ...h, source: 'project' })),
+    ...normalizeHits(globalResult.hits).map(h => ({ ...h, source: 'global' })),
   ].sort((a, b) => b.score - a.score).slice(0, k);
   return {
     hits: merged,

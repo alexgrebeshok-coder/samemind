@@ -46,6 +46,18 @@ step "samemind query validate"
 step "samemind recall (BM25 path — no network, no omlx)"
 "$SAMEMIND" recall "test" --mode bm25
 
+step "samemind reconcile (Ф2 proposals — human-gate, must not touch canon)"
+RECONCILE_OUT="$("$SAMEMIND" reconcile)"
+echo "$RECONCILE_OUT"
+echo "$RECONCILE_OUT" | grep -q 'Reconcile proposals' \
+  || { echo "reconcile did not print its report — CLI routing regression" >&2; exit 1; }
+
+step "samemind reflect (Ф5 proposals — human-gate, must not touch canon)"
+REFLECT_OUT="$("$SAMEMIND" reflect)"
+echo "$REFLECT_OUT"
+echo "$REFLECT_OUT" | grep -q 'Reflect proposals' \
+  || { echo "reflect did not print its report — CLI routing regression" >&2; exit 1; }
+
 step "samemind setup --dry-run --target <fixture with CLAUDE.md>"
 FIXTURE="$WORK/fixture"
 mkdir -p "$FIXTURE"

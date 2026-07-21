@@ -9,6 +9,8 @@
 //   npx samemind board [...]             → tools/board.mjs       (kanban dashboard over the work-discipline layer)
 //   npx samemind handoff [...]           → tools/handoff.mjs     (work-state: tasks/plans/decisions/session)
 //   npx samemind forget <id>             → tools/forget.mjs      (soft-deprecate; never deletes — see docs/memory-hygiene.md)
+//   npx samemind reconcile [...]         → tools/reconcile.mjs   (Ф2 bi-temporal supersede proposals; human-gate, never writes canon)
+//   npx samemind reflect [...]           → tools/reflect.mjs     (Ф5 reconcile+consolidate+heat report; human-gate, never writes canon)
 //   npx samemind install --agent <id>    → tools/install.mjs     (wire brief+protocol into an engine's instruction file)
 //   npx samemind export <dir> [...]      → tools/export.mjs      (shareable OKF-bundle / --to-gbrain; no secrets)
 //   npx samemind import <dir> [...]      → tools/import.mjs      (accept foreign OKF; default → inbox)
@@ -36,6 +38,8 @@ const ROUTES = {
   board: 'tools/board.mjs',
   handoff: 'tools/handoff.mjs',
   forget: 'tools/forget.mjs',
+  reconcile: 'tools/reconcile.mjs',
+  reflect: 'tools/reflect.mjs',
   install: 'tools/install.mjs',
   export: 'tools/export.mjs',
   import: 'tools/import.mjs',
@@ -57,6 +61,8 @@ function usage() {
   console.log('  board [...]           memory kanban in markdown: Backlog/In progress/Done/Blocked+aging, Plans, Recent (--write → DASHBOARD.md, --project <path>)');
   console.log('  handoff [...]         work-state brief: active/decisions/plans/session (--project <path> --days N)');
   console.log('  forget <id>           mark a concept deprecated (deprecated: true) — never deletes the file, see docs/memory-hygiene.md');
+  console.log('  reconcile [...]       Ф2 bi-temporal supersede proposals (--dir <subpath> --write) — human-gate, prints/saves a report, never writes canon');
+  console.log('  reflect [...]         Ф5 reconcile+consolidate+heat proposal report (--write) — human-gate, prints/saves a report, never writes canon');
   console.log('  install --agent <id>  wire brief+protocol into an engine\'s instruction file (--list — list them; --agent all — into all existing ones)');
   console.log('  export <dir> [...]    shareable OKF-bundle (no secret/mirror/inbox); --visibility public|internal --dry-run --to-gbrain');
   console.log('  import <dir> [...]    accept a foreign OKF-bundle; --into inbox|concepts (default inbox) — see docs/interop.md');

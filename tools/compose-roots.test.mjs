@@ -136,6 +136,47 @@ describe('compose-roots — mergeWithGlobal passthrough (byte-identical no-globa
   });
 });
 
+describe('compose-roots — mergeWithGlobal per-root score normalization (UAT: "омега-уникум")', () => {
+  it('a unique exact global hit with a lower raw score than unrelated local hits now lands in the top 3', () => {
+    // Reproduces the UAT symptom: local corpus's raw BM25 scores run higher (different IDF/length
+    // stats) than the global corpus's, even though the global hit is the only truly relevant one.
+    // Without normalization this hit would rank #5 (below all 4 local hits, by raw score below).
+    const projectResult = {
+      hits: [
+        { id: 'local/a', score: 0.56 },
+        { id: 'local/b', score: 0.50 },
+        { id: 'local/c', score: 0.45 },
+        { id: 'local/d', score: 0.40 },
+      ],
+      mode: 'bm25', warning: null,
+    };
+    const globalResult = {
+      hits: [{ id: 'global/omega-unikum', score: 0.396 }],
+      mode: 'bm25', warning: null, dedupWarnings: [],
+    };
+    const merged = mergeWithGlobal(projectResult, globalResult, 10);
+    const rank = merged.hits.findIndex(h => h.id === 'global/omega-unikum');
+    assert.ok(rank >= 0 && rank < 3, `expected global/omega-unikum in top 3, got rank ${rank}`);
+    assert.equal(merged.hits.find(h => h.id === 'global/omega-unikum').source, 'global');
+  });
+
+  it('normalization preserves within-corpus order (a lazy /max, not a reshuffle)', () => {
+    const projectResult = { hits: [{ id: 'p1', score: 0.8 }, { id: 'p2', score: 0.2 }], mode: 'bm25', warning: null };
+    const globalResult = { hits: [{ id: 'g1', score: 0.9 }, { id: 'g2', score: 0.1 }], mode: 'bm25', warning: null, dedupWarnings: [] };
+    const merged = mergeWithGlobal(projectResult, globalResult, 10);
+    const rankOf = id => merged.hits.findIndex(h => h.id === id);
+    assert.ok(rankOf('p1') < rankOf('p2'), 'p1 (higher local score) must still rank above p2');
+    assert.ok(rankOf('g1') < rankOf('g2'), 'g1 (higher global score) must still rank above g2');
+  });
+
+  it('all-zero scores in a corpus pass through unchanged (no NaN)', () => {
+    const projectResult = { hits: [{ id: 'p1', score: 0 }], mode: 'bm25', warning: null };
+    const globalResult = { hits: [{ id: 'g1', score: 0 }], mode: 'bm25', warning: null, dedupWarnings: [] };
+    const merged = mergeWithGlobal(projectResult, globalResult, 10);
+    assert.ok(merged.hits.every(h => Number.isFinite(h.score)));
+  });
+});
+
 describe('compose-roots — per-root index isolation (searchRoot reads <root>/tools/.index/, not the other root\'s)', () => {
   let rootA, rootB;
 

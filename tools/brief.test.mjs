@@ -166,6 +166,14 @@ describe('buildBrief — unit', () => {
     assert.ok(warnings.some(w => /User/.test(w)));
   });
 
+  it('no Identity/User/EngineRule at all → clear notice instead of an empty blob (UAT quirk)', () => {
+    const plain = doc({ id: 'concepts/plain', type: 'Concept', title: 'Just a note', body: '# Just a note\n\nsome text\n' });
+    const { markdown, truncated } = buildBrief([plain]);
+    assert.match(markdown, /no Identity\/User concept in this bundle/);
+    assert.match(markdown, /identity-layer\.md/);
+    assert.equal(truncated, false);
+  });
+
   it('default budget comfortably fits the full demo-shaped brief (no truncation)', () => {
     const { truncated } = buildBrief([NOVA, ALEX, ENGINE_CC, ENGINE_OC], { engine: 'claude-code' });
     assert.equal(truncated, false);
