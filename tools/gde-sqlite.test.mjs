@@ -15,6 +15,44 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node:
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 
+// describe()'s own `it(...)` calls register synchronously as the describe() body runs, BEFORE any
+// before() hook fires — so an availability probe assigned inside before() is always still
+// `undefined` (falsy → "don't skip") at the moment `{ skip: skipReason }` is evaluated below. Probe
+// here, via top-level await, same fix as sqlite-index.test.mjs's own comment on this exact trap.
+//
+// Deliberately does NOT go through './lib/sqlite-index.mjs' (which statically imports
+// './okf.mjs'): importing that here, at file top level — before before() redirects OKF_ROOT to a
+// temp dir — would bind okf.mjs's module-scope ROOT constant to the wrong root once and for all.
+// ESM caches a bare specifier's module instance per resolved URL for the life of the process; every
+// later "fresh" `?t=...` import of gde.mjs in this file still resolves its own bare
+// `./lib/okf.mjs` import to that SAME cached (wrongly-rooted) instance — silently breaking the
+// isolation this file exists for (see the file-header comment). So: probe the two documented CI
+// failure modes (missing node:sqlite on node 20, missing sqlite-vec on node 22) directly, in-memory,
+// with zero dependency on any module that touches okf.mjs.
+async function probeSqliteVec() {
+  let DatabaseSync;
+  try {
+    ({ DatabaseSync } = await import('node:sqlite'));
+  } catch (e) {
+    return `node:sqlite unavailable (${e.message})`;
+  }
+  let sqliteVec;
+  try {
+    sqliteVec = await import('sqlite-vec');
+  } catch (e) {
+    return `sqlite-vec unavailable (${e.message})`;
+  }
+  try {
+    const db = new DatabaseSync(':memory:', { allowExtension: true });
+    sqliteVec.load(db);
+    db.close();
+  } catch (e) {
+    return `sqlite-vec load failed (${e.message})`;
+  }
+  return false;
+}
+const skipReason = await probeSqliteVec();
+
 function writeConcept(root, relPath, frontmatter, body = '# x\n') {
   const full = join(root, relPath);
   mkdirSync(dirname(full), { recursive: true });
@@ -28,7 +66,7 @@ function stubEmbedFetch(embedding) {
 }
 
 describe('gde.mjs — sqlite-vec backend with JSON fallback (tail 3)', () => {
-  let root, gde, si, savedFetch, savedRoot, skipReason;
+  let root, gde, si, savedFetch, savedRoot;
 
   before(async () => {
     root = mkdtempSync(join(tmpdir(), 'samemind-gde-sqlite-'));
@@ -43,9 +81,6 @@ describe('gde.mjs — sqlite-vec backend with JSON fallback (tail 3)', () => {
     const tag = Date.now();
     gde = await import(`./gde.mjs?t=${tag}`);
     si = await import(`./lib/sqlite-index.mjs?t=${tag}-si`);
-    const probe = await si.openVecStore({ dbPath: join(root, 'probe.db') });
-    skipReason = probe.ok ? false : probe.reason;
-    if (probe.ok) si.closeVecStore(probe);
     savedFetch = globalThis.fetch;
     globalThis.fetch = stubEmbedFetch([1, 0, 0]);
   });
