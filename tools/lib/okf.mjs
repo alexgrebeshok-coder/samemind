@@ -15,10 +15,18 @@ export const RESERVED = new Set([
   'CLAUDE.md', 'AGENTS.md', 'GEMINI.md',
 ]);
 
-export function walk(dir = ROOT, { includeSecret = false, includeMirror = false, includeInbox = false } = {}, acc = []) {
+// `root` (4th param) is the bundle root secret/mirror/inbox-tier and symlink-containment checks
+// are relative to — separate from `dir` (which one recursion currently scans). Defaults to `dir`
+// so a top-level call `walk(someRoot, opts)` needs no extra argument; recursive calls below thread
+// it through explicitly so it stays pinned to the original root as `dir` descends into subdirs.
+// Multi-root recall (U5/G-B, tools/lib/compose-roots.mjs) calls `walk(globalRoot, opts)` — before
+// this, `top`/`rootPrefix` were computed against the module-level ROOT regardless of `dir`, which
+// only ever matched `dir` by coincidence (default `dir = ROOT`); passing a genuinely different root
+// would have miscomputed both. Byte-identical behavior when root === ROOT (the untouched default).
+export function walk(dir = ROOT, { includeSecret = false, includeMirror = false, includeInbox = false } = {}, acc = [], root = dir) {
   let entries;
   try { entries = readdirSync(dir); } catch { return acc; }
-  const rootPrefix = resolve(ROOT) + sep;
+  const rootPrefix = resolve(root) + sep;
   for (const name of entries) {
     // `.`/`_`-префикс = служебное (генераты, sync-блоки, отчёты); tools/demo/node_modules — не концепты
     // графа; docs — package prose (adapters/benchmark/…), not OKF nodes (no frontmatter by design).
@@ -39,7 +47,7 @@ export function walk(dir = ROOT, { includeSecret = false, includeMirror = false,
         if (!target.startsWith(rootPrefix)) continue;
       } catch { continue; }
     }
-    const top = relative(ROOT, full).split('/')[0];
+    const top = relative(root, full).split('/')[0];
     if (!includeSecret && top === 'secret') continue;   // секретный слой — только по флагу
     if (!includeMirror && top === 'mirror') continue;    // зеркало живой памяти — только по флагу
     // inbox — сырьё, ждущее курации (см. issue #4): не концепты графа, поэтому — reserved-тир,
@@ -47,7 +55,7 @@ export function walk(dir = ROOT, { includeSecret = false, includeMirror = false,
     // (frontmatter без `type`) валит `validate` для всего bundle.
     if (!includeInbox && top === 'inbox') continue;
     try {
-      if (statSync(full).isDirectory()) walk(full, { includeSecret, includeMirror, includeInbox }, acc);
+      if (statSync(full).isDirectory()) walk(full, { includeSecret, includeMirror, includeInbox }, acc, root);
       else if (name.endsWith('.md')) acc.push(full);
     } catch { continue; }
   }
@@ -183,10 +191,12 @@ export function parseFrontmatter(yaml) {
 }
 
 // мини-парсер frontmatter (key: value; tags: [a, b]; relations: {…}) — без YAML-зависимости
-export function parse(file) {
+// `root` (2nd param, default ROOT): which bundle root `id` is computed relative to — see load()
+// below (multi-root recall, U5/G-B). Byte-identical when root === ROOT (the untouched default).
+export function parse(file, root = ROOT) {
   parseCount++; // test hook only — see _debugParseCount()
   const raw = readFileSync(file, 'utf8');
-  const id = relative(ROOT, file).replace(/\.md$/, '');
+  const id = relative(root, file).replace(/\.md$/, '');
   const base = file.split('/').pop();
   let fm = {};
   let body = raw;
@@ -252,22 +262,28 @@ export function _debugParseCount() { return parseCount; }
 /** Test-only: reset the counter and drop the whole cache (clean slate between test cases). */
 export function _debugResetParseCache() { parseCount = 0; parseCache.clear(); }
 
-function cachedParse(file) {
+function cachedParse(file, root) {
   let st;
   try {
     st = statSync(file);
   } catch {
     parseCache.delete(file); // gone — let parse() throw its normal ENOENT, don't cache a miss
-    return parse(file);
+    return parse(file, root);
   }
   const hit = parseCache.get(file);
   if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.doc;
-  const doc = parse(file);
+  const doc = parse(file, root);
   parseCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, doc });
   return doc;
 }
 
-export function load(opts = {}) { return walk(ROOT, opts).map(cachedParse); }
+// `root` (2nd param, default ROOT): walk + parse a bundle at an arbitrary root, not just the
+// package's own ROOT — the one hook multi-root recall (U5/G-B, compose-roots.mjs) needs to load
+// the optional global personal bundle ($HOME/.samemind/bundle) the same way. A file path is only
+// ever under ONE root in practice (project files under the project root, global files under the
+// global root), so keying the parse cache by absolute file path alone (unchanged) stays correct.
+// Byte-identical when root === ROOT (the untouched default every existing caller uses).
+export function load(opts = {}, root = ROOT) { return walk(root, opts).map(f => cachedParse(f, root)); }
 
 // mirror-узлы используют [[wiki-links]] (формат памяти Claude Code), не OKF-ссылки —
 // validate/links над ними не имеют смысла, поэтому okf-query ходит без mirror по умолчанию.

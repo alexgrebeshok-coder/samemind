@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
-import { applyEmbedProbe } from './setup.mjs';
+import { applyEmbedProbe, runGlobalSetup } from './setup.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SETUP = join(HERE, 'setup.mjs');
@@ -36,6 +36,30 @@ function cleanEnv(extra = {}) {
 
 function run(args, { env } = {}) {
   return execFileSync(process.execPath, [SETUP, ...args], { encoding: 'utf8', env: cleanEnv(env) });
+}
+
+// `--global` runs against a fake $HOME (never the real ~/.claude*, ~/.samemind) and with a PATH
+// that cannot resolve a `claude` binary — forcing ensureMcpRegistered's native path to miss
+// deterministically so every `--global --yes` test exercises (and only ever exercises) the
+// JSON-merge fallback, rather than depending on whether this particular machine happens to have
+// a real `claude` CLI on PATH.
+function runGlobal(args, { home, env } = {}) {
+  return execFileSync(process.execPath, [SETUP, '--global', ...args], {
+    encoding: 'utf8',
+    env: cleanEnv({ HOME: home, PATH: '/samemind-test-no-such-bin', ...env }),
+  });
+}
+
+/** snapshotTree() output with any `*.bak-*` backup file dropped — global setup's JSON-merge
+ *  fallback (mergeJsonFile) intentionally writes a fresh backup on every re-run that finds an
+ *  existing file (see global-json-merge.test.mjs); that's a deliberate safety artifact, not
+ *  something a second run should ever have to reproduce byte-for-byte. */
+function stripBackups(snapshot) {
+  const out = {};
+  for (const [k, v] of Object.entries(snapshot)) {
+    if (!/\.bak-\d/.test(k)) out[k] = v;
+  }
+  return out;
 }
 
 /** relative-path → sha256(content), for every regular file under dir — a byte-for-byte tree
@@ -257,6 +281,168 @@ describe('applyEmbedProbe — unit (probe-result wiring, no network/mocked fetch
       assert.equal(cfg.embedModel, 'm');
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('runGlobalSetup — native MCP registration gated on the REAL machine home (post-incident regression)', () => {
+  // Incident: `node tools/setup.mjs --global --yes --home <fake>` on a machine where the real
+  // `claude` binary is on PATH actually ran native `claude mcp add --scope user` — which writes
+  // to the REAL user's ~/.claude.json regardless of the fake --home, because native has no idea
+  // a fake home was ever passed. Fix: runGlobalSetup only allows the native attempt when the
+  // effective home resolves to the real machine home (os.userInfo().homedir); any other home
+  // forces the JSON-merge fallback into `<home>/.claude.json`, and MUST NOT invoke spawnSyncImpl
+  // at all — proven here directly (no subprocess, no reliance on hiding PATH), so this test would
+  // fail loudly if the guard ever regresses, independent of whatever `claude` binary is or isn't
+  // reachable on whatever machine runs the suite.
+  it('a fake/custom home never calls spawnSyncImpl — registration goes straight to the JSON-merge fallback in <home>/.claude.json', async () => {
+    const home = tmp('global-native-guard-home');
+    try {
+      const spawnSyncImpl = () => {
+        throw new Error('spawnSyncImpl must NOT be called for a custom/fake home — native would write to the REAL ~/.claude.json, not this fixture');
+      };
+      const res = await runGlobalSetup({ home, yes: true, spawnSyncImpl });
+
+      assert.equal(res.ok, true);
+      assert.match(res.lines.join('\n'), /wrote samemind.*claude\.json/i);
+
+      const claudeJson = JSON.parse(readFileSync(join(home, '.claude.json'), 'utf8'));
+      assert.deepEqual(claudeJson.mcpServers.samemind, { command: 'npx', args: ['samemind', 'serve'] });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves a pre-existing (fake) ~/.claude.json fixture — exa/context7/playwright untouched — while blocking native', async () => {
+    const home = tmp('global-native-guard-preserve-home');
+    try {
+      mkdirSync(home, { recursive: true });
+      const before = {
+        mcpServers: {
+          exa: { command: 'npx', args: ['exa-mcp'] },
+          context7: { command: 'npx', args: ['context7-mcp'] },
+          playwright: { command: 'npx', args: ['playwright-mcp'] },
+        },
+      };
+      writeFileSync(join(home, '.claude.json'), JSON.stringify(before, null, 2), 'utf8');
+      const spawnSyncImpl = () => { throw new Error('spawnSyncImpl must NOT be called for a custom/fake home'); };
+
+      await runGlobalSetup({ home, yes: true, spawnSyncImpl });
+
+      const after = JSON.parse(readFileSync(join(home, '.claude.json'), 'utf8'));
+      assert.deepEqual(after.mcpServers.exa, before.mcpServers.exa);
+      assert.deepEqual(after.mcpServers.context7, before.mcpServers.context7);
+      assert.deepEqual(after.mcpServers.playwright, before.mcpServers.playwright);
+      assert.deepEqual(after.mcpServers.samemind, { command: 'npx', args: ['samemind', 'serve'] });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('samemind setup --global (G-A) — fake $HOME, real ~/.claude*/~/.samemind never touched', () => {
+  it('--dry-run writes nothing at all under a fresh $HOME (byte-for-byte before/after)', () => {
+    const home = tmp('global-dryrun-home');
+    try {
+      const before = snapshotTree(home);
+      const out = runGlobal(['--dry-run'], { home });
+
+      assert.deepEqual(snapshotTree(home), before, 'dry-run must not create anything under $HOME');
+      assert.match(out, /\[dry-run\]/);
+      assert.match(out, /would install samemind brief into/);
+      assert.match(out, /would register samemind as a user-scope MCP server/);
+      assert.equal(existsSync(join(home, '.claude')), false);
+      assert.equal(existsSync(join(home, '.samemind')), false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('--dry-run also writes nothing when a personal bundle already exists under $HOME', () => {
+    const home = tmp('global-dryrun-bundle-home');
+    try {
+      // Seed a minimal already-scaffolded personal bundle so the dry-run path takes the
+      // "bundle already present" branch instead of the "would scaffold" one.
+      mkdirSync(join(home, '.samemind', 'bundle', 'concepts'), { recursive: true });
+      writeFileSync(join(home, '.samemind', 'bundle', 'index.md'), '# bundle\n', 'utf8');
+      const before = snapshotTree(home);
+
+      const out = runGlobal(['--dry-run'], { home });
+
+      assert.deepEqual(snapshotTree(home), before);
+      assert.match(out, /Personal bundle already present/);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('--yes on a fresh fake $HOME: CLAUDE.md installed, MCP fallback-merged, global embed config written', () => {
+    const home = tmp('global-yes-home');
+    try {
+      const out = runGlobal(['--yes'], { home });
+
+      assert.match(out, /=== samemind setup --global — summary ===/);
+      assert.ok(existsSync(join(home, '.samemind', 'bundle', 'index.md')), 'personal bundle should be scaffolded');
+
+      const claude = readFileSync(join(home, '.claude', 'CLAUDE.md'), 'utf8');
+      assert.match(claude, /samemind:install:start/);
+      assert.match(claude, /## samemind memory/);
+
+      // native `claude` is unreachable (PATH forced empty) → JSON-merge fallback must have run
+      assert.match(out, /wrote samemind.*claude\.json/i);
+      const claudeJson = JSON.parse(readFileSync(join(home, '.claude.json'), 'utf8'));
+      assert.deepEqual(claudeJson.mcpServers.samemind, { command: 'npx', args: ['samemind', 'serve'] });
+
+      assert.match(out, /Semantic \(global\):/);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('--yes preserves pre-existing ~/.claude.json keys (exa/context7/playwright fixture) via the fallback merge', () => {
+    const home = tmp('global-yes-preserve-home');
+    try {
+      mkdirSync(home, { recursive: true });
+      const before = {
+        mcpServers: {
+          exa: { command: 'npx', args: ['exa-mcp'] },
+          context7: { command: 'npx', args: ['context7-mcp'] },
+          playwright: { command: 'npx', args: ['playwright-mcp'] },
+        },
+      };
+      writeFileSync(join(home, '.claude.json'), JSON.stringify(before, null, 2), 'utf8');
+
+      runGlobal(['--yes'], { home });
+
+      const after = JSON.parse(readFileSync(join(home, '.claude.json'), 'utf8'));
+      assert.deepEqual(after.mcpServers.exa, before.mcpServers.exa);
+      assert.deepEqual(after.mcpServers.context7, before.mcpServers.context7);
+      assert.deepEqual(after.mcpServers.playwright, before.mcpServers.playwright);
+      assert.deepEqual(after.mcpServers.samemind, { command: 'npx', args: ['samemind', 'serve'] });
+      const backups = readdirSync(home).filter(f => f.startsWith('.claude.json.bak-'));
+      assert.equal(backups.length, 1, 'the pre-existing real-looking config must have been backed up before merge');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('--yes is idempotent — second run leaves CLAUDE.md/claude.json/config.json content byte-for-byte the same (backups aside)', () => {
+    const home = tmp('global-yes-idem-home');
+    try {
+      runGlobal(['--yes'], { home });
+      const afterFirst = stripBackups(snapshotTree(home));
+
+      runGlobal(['--yes'], { home });
+      const afterSecond = stripBackups(snapshotTree(home));
+
+      assert.deepEqual(afterSecond, afterFirst, 'content of every non-backup file must be unchanged by the second run');
+
+      // the fallback merge is expected to add exactly one more backup on the second run — proof
+      // the safety mechanism actually ran again rather than silently no-op'ing.
+      const backups = readdirSync(home).filter(f => f.startsWith('.claude.json.bak-'));
+      assert.equal(backups.length, 1, 'first run creates no backup (file did not exist yet), second run creates exactly one');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });

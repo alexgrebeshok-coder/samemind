@@ -29,6 +29,11 @@ npx samemind setup --yes --target .
 your engine listed under `Engine(s):`. If both hold, skip straight to Step 5
 (fill in the identity layer) and Step 6 (confirm end-to-end) below.
 
+Installing yourself machine-wide instead of per-project? `npx samemind setup
+--global` wires a personal bundle + MCP server into your user-scope config
+once, and every project's `recall` folds it in automatically afterward — see
+[README § Global mode](README.md#global-mode).
+
 Fall back to the manual protocol — Steps 0 through 4 — when `setup` can't
 detect your engine, you need a target other than the project root, or you
 want each step (which bundle, which engine, which MCP config) under your own

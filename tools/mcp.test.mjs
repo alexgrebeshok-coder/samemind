@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import {
-  mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync,
+  mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync,
 } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -314,6 +314,100 @@ describe('MCP stdio — memory_search', () => {
       const search = res.result.tools.find(t => t.name === 'memory_search');
       assert.ok(search.inputSchema.properties.exclude_source, 'exclude_source property declared');
       assert.match(search.inputSchema.properties.exclude_source.pattern, /\[a-z0-9-\]/);
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+describe('MCP stdio — memory_search with a global bundle (U5/G-B "Same mind")', () => {
+  let GLOBAL_DIR;
+
+  before(() => {
+    GLOBAL_DIR = mkdtempSync(join(tmpdir(), 'samemind-mcp-global-'));
+    mkdirSync(join(GLOBAL_DIR, 'entities'), { recursive: true });
+    writeFileSync(join(GLOBAL_DIR, 'entities', 'beta.md'), `---
+type: Concept
+title: Beta Global Note
+visibility: internal
+---
+
+# Beta
+Global personal note about lumen notes and rockets.
+`, 'utf8');
+  });
+
+  after(() => {
+    rmSync(GLOBAL_DIR, { recursive: true, force: true });
+  });
+
+  it('folds in the global bundle by default — global hit carries source: "global"', async () => {
+    const client = startClient({ OKF_EMBED_URL: '', OKF_GLOBAL_ROOT: GLOBAL_DIR });
+    try {
+      await initialized(client);
+      // k generous on purpose: BM25 IDF is corpus-size-dependent (see compose-roots.mjs's
+      // documented ceiling) — a 1-doc global corpus's IDF is near its floor, so its raw BM25
+      // score will always sit well below a real ~15-doc project bundle's genuine matches. A
+      // small k would let the project's own hits fill the slice before merging ever gets a
+      // chance to include the global one. This test is about "does it get merged in at all",
+      // not about competitive ranking (that's covered on comparably-sized fixtures in
+      // tools/compose-roots.test.mjs and tools/multiroot-cli.test.mjs).
+      const res = await client.request('tools/call', {
+        name: 'memory_search',
+        arguments: { query: 'lumen notes', k: 50 },
+      });
+      const payload = toolPayload(res);
+      const globalHit = payload.results.find(r => r.id === 'entities/beta');
+      assert.ok(globalHit, JSON.stringify(payload));
+      assert.equal(globalHit.source, 'global');
+      // once a merge actually happens, project hits are tagged too (source: 'project') for
+      // symmetry — the "untouched, no source field at all" contract only holds for the pure
+      // no-global path (see the byte-identical test below).
+      const projectHit = payload.results.find(r => r.id === 'projects/lumen');
+      assert.ok(projectHit);
+      assert.equal(projectHit.source, 'project');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('no_global: true skips the global bundle entirely', async () => {
+    const client = startClient({ OKF_EMBED_URL: '', OKF_GLOBAL_ROOT: GLOBAL_DIR });
+    try {
+      await initialized(client);
+      const res = await client.request('tools/call', {
+        name: 'memory_search',
+        arguments: { query: 'lumen notes', k: 10, no_global: true },
+      });
+      const payload = toolPayload(res);
+      assert.ok(!payload.results.some(r => r.id === 'entities/beta'), 'global bundle must be skipped');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('no OKF_GLOBAL_ROOT set at all == no_global: true output (byte-identical JSON)', async () => {
+    const withGlobalOff = startClient({ OKF_EMBED_URL: '' });
+    const withNoGlobalFlag = startClient({ OKF_EMBED_URL: '', OKF_GLOBAL_ROOT: GLOBAL_DIR });
+    try {
+      await initialized(withGlobalOff);
+      await initialized(withNoGlobalFlag);
+      const a = await withGlobalOff.request('tools/call', { name: 'memory_search', arguments: { query: 'lumen notes', k: 10 } });
+      const b = await withNoGlobalFlag.request('tools/call', { name: 'memory_search', arguments: { query: 'lumen notes', k: 10, no_global: true } });
+      assert.deepEqual(toolPayload(a), toolPayload(b));
+    } finally {
+      await withGlobalOff.close();
+      await withNoGlobalFlag.close();
+    }
+  });
+
+  it('memory_search advertises no_global in its input schema', async () => {
+    const client = startClient();
+    try {
+      await initialized(client);
+      const res = await client.request('tools/list', {});
+      const search = res.result.tools.find(t => t.name === 'memory_search');
+      assert.equal(search.inputSchema.properties.no_global.type, 'boolean');
     } finally {
       await client.close();
     }

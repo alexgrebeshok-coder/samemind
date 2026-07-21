@@ -2,14 +2,22 @@
 // setup.mjs — samemind setup: composes the U-A primitives (detect-engines, probe-embed,
 // mcp-register) with install.mjs/init.mjs into one onboarding command.
 //   node tools/setup.mjs [--target <dir>] [--yes] [--dry-run]
+//   node tools/setup.mjs --global [--yes] [--dry-run] [--home <dir>]   (see runGlobalSetup, G-A)
 //
 // Default = interactive (human-gate): asks before every write into a file setup doesn't own
 // outright — an engine's own instruction file, its MCP config, scaffolding a bundle into a
 // non-empty directory. `--yes` is the informed opt-in that skips every prompt and just does the
 // reasonable thing. `--dry-run` only prints the plan — proven to write nothing, byte-for-byte,
 // in setup.test.mjs.
+//
+// `--global` connects samemind to the whole machine instead of one project: a personal bundle
+// at `~/.samemind/bundle`, Claude Code wired in `~/.claude/CLAUDE.md`, an MCP server registered
+// at user scope, and a global embeddings config at `~/.samemind/config.json` — see
+// runGlobalSetup below for the exact steps. `--target`/detect-engines/per-engine install do not
+// apply in this mode (fixed: claude-code, fixed dirs under `--home`/$HOME).
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { userInfo } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { probeEmbedEndpoint } from './lib/probe-embed.mjs';
@@ -211,20 +219,137 @@ export async function runSetup({ target = process.cwd(), yes = false, dryRun = f
   }
 }
 
+/**
+ * `samemind setup --global` — one machine-wide connection instead of a per-project one:
+ * (1) a personal OKF bundle at `<home>/.samemind/bundle` (optional — asked/`--yes`/dry-run-planned,
+ *     same as the project bundle step above, `runInit({allowNonEmpty:true})`); bundle-before-install
+ *     because install needs docs to read a brief from — reordered from the G-A brief's a/b/c/d
+ *     listing for that one dependency, everything else keeps its place;
+ * (2) the Claude Code identity+protocol block installed into `<home>/.claude/CLAUDE.md`
+ *     (`installEngine('claude-code', {targetDir: <home>/.claude})` — same path-agnostic call the
+ *     project flow makes, just pointed at the global instruction file instead of a project one);
+ * (3) `ensureMcpRegistered('claude-code', ..., {scope:'user'})` — native `claude mcp add --scope
+ *     user` if the binary resolves, else a JSON-merge fallback into `<home>/.claude.json` that
+ *     never touches any of that file's other keys (see mcp-register.mjs);
+ * (4) the same embeddings probe as project setup, written to `<home>/.samemind/config.json` (the
+ *     "global" tier `resolveEmbedConfig` — tools/lib/recall.mjs — reads).
+ * `home` is parameterized (defaults to `$HOME`) so tests run this whole flow against a fake,
+ * disposable home directory — the real `~/.claude.json`/`~/.claude/CLAUDE.md`/`~/.samemind` are
+ * never touched by anything in this repo's test suite.
+ *
+ * SAFETY (post-incident fix): native `claude mcp add --scope user` writes to *the real user's*
+ * config regardless of what `home` this function was called with — it has no idea a fake `home`
+ * was passed at all. So MCP registration is only ever allowed to try the native path when `home`
+ * resolves to the actual machine home (`os.userInfo().homedir` — reads the OS user db directly,
+ * unlike `os.homedir()`/`process.env.HOME` which a test's env override also fools). Any custom
+ * `home` (a `--home` flag, a test fixture, …) forces the JSON-merge fallback into
+ * `<home>/.claude.json` instead — the real `~/.claude.json` is never touched in that case.
+ * `spawnSyncImpl` is an optional pass-through to `ensureMcpRegistered`, for tests that need to
+ * assert the native command is never even attempted.
+ */
+export async function runGlobalSetup({
+  home = process.env.HOME, yes = false, dryRun = false, log = console.log, spawnSyncImpl,
+} = {}) {
+  const homeDir = resolve(home);
+  const claudeDir = join(homeDir, '.claude');
+  const bundleDir = join(homeDir, '.samemind', 'bundle');
+  const allowNative = homeDir === resolve(userInfo().homedir);
+  process.env.OKF_ROOT = bundleDir; // pin before the first ROOT-freezing dynamic import below
+
+  const lines = [];
+  const print = s => { lines.push(s); log(s); };
+  const needsPrompt = !yes && !dryRun;
+  const rl = needsPrompt ? createInterface({ input: process.stdin, output: process.stdout }) : null;
+
+  try {
+    // 1. personal bundle (optional)
+    let bundleReady = isBundle(bundleDir);
+    if (bundleReady) {
+      print(`Personal bundle already present — ${bundleDir}`);
+    } else if (dryRun) {
+      print(`[dry-run] would scaffold a personal OKF bundle in ${bundleDir}`);
+    } else {
+      const doInit = yes || await ask(rl, `No personal samemind bundle in ${bundleDir} — create one now?`);
+      if (!doInit) {
+        print('Personal bundle creation skipped.');
+      } else {
+        const res = runInit({ targetDir: bundleDir, allowNonEmpty: true });
+        if (res.ok) { bundleReady = true; print(`Personal bundle created in ${bundleDir}.`); }
+        else print(`Personal bundle NOT created: ${res.reason}`);
+      }
+    }
+
+    // 2. install Claude Code globally
+    if (dryRun) {
+      print(`[dry-run] would install samemind brief into ${join(claudeDir, 'CLAUDE.md')}`);
+    } else if (!bundleReady) {
+      print('Skipped global install — no personal bundle to read the identity brief from.');
+    } else {
+      const doInstall = yes || await ask(rl, `Install samemind brief into ${claudeDir}/CLAUDE.md?`);
+      if (doInstall) {
+        const { installEngine } = await getInstall();
+        const load = await getOkfLoad();
+        const docs = load({ includeSecret: false });
+        const res = installEngine('claude-code', { targetDir: claudeDir, docs });
+        if (res.ok) print(`Installed globally: ${res.files.map(f => f.path).join(', ')}`);
+        else print(`Global install failed: ${res.reason}`);
+      } else {
+        print('Global install skipped.');
+      }
+    }
+
+    // 3. MCP — user scope. allowNative gates the native `claude mcp add` command: only when
+    // `home` IS the real machine home (see SAFETY note above) — a fake/custom home always
+    // forces the JSON-merge fallback so native registration can never hit the real ~/.claude.json.
+    const applyMcp = dryRun ? false : (yes || await ask(rl, 'Register samemind as a user-scope MCP server (Claude Code)?'));
+    const mcpOpts = {
+      apply: applyMcp, scope: 'user', userConfigPath: join(homeDir, '.claude.json'), allowNative,
+    };
+    if (spawnSyncImpl) mcpOpts.spawnSyncImpl = spawnSyncImpl;
+    const mcpLine = ensureMcpRegistered('claude-code', claudeDir, mcpOpts);
+    print(`MCP: ${mcpLine}`);
+
+    // 4. embeddings — global config, <home>/.samemind/config.json
+    const probe = await probeEmbedEndpoint();
+    const semanticLine = applyEmbedProbe(homeDir, probe, { dryRun });
+    print(semanticLine);
+
+    // 5. status
+    print('');
+    print('=== samemind setup --global — summary ===');
+    print(`Claude Code (global): ${join(claudeDir, 'CLAUDE.md')}`);
+    print(`Personal bundle:      ${bundleReady ? bundleDir : '(not created)'}`);
+    print(`MCP:                  ${mcpLine}`);
+    print(`Semantic (global):    ${probe ? 'on' : 'off (BM25 fallback)'}`);
+
+    return { ok: true, lines };
+  } finally {
+    rl?.close();
+  }
+}
+
 function parseArgs(argv) {
-  const out = { target: null, yes: false, dryRun: false };
+  const out = {
+    target: null, yes: false, dryRun: false, global: false, home: null,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--target') out.target = argv[++i];
     else if (a === '--yes') out.yes = true;
     else if (a === '--dry-run') out.dryRun = true;
+    else if (a === '--global') out.global = true;
+    else if (a === '--home') out.home = argv[++i]; // test/manual override only, see runGlobalSetup
   }
   return out;
 }
 
 async function main() {
-  const { target, yes, dryRun } = parseArgs(process.argv.slice(2));
-  const res = await runSetup({ target: target || process.cwd(), yes, dryRun });
+  const {
+    target, yes, dryRun, global: isGlobal, home,
+  } = parseArgs(process.argv.slice(2));
+  const res = isGlobal
+    ? await runGlobalSetup({ home: home || process.env.HOME, yes, dryRun })
+    : await runSetup({ target: target || process.cwd(), yes, dryRun });
   process.exitCode = res.ok ? 0 : 1;
 }
 
