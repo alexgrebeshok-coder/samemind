@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // samemind.mjs — CLI router for the samemind package.
 //   npx samemind init [dir] [--demo]     scaffold a fresh OKF bundle
+//   npx samemind setup [...]             → tools/setup.mjs      (one-shot onboarding: detect engine, bundle, install+MCP, embeddings probe)
 //   npx samemind query <cmd> ...         → tools/okf-query.mjs   (list|type|tag|get|links|validate)
 //   npx samemind recall <cmd> ...        → tools/okf-recall.mjs  (index | "<query>" [--mode bm25|semantic|auto])
 //   npx samemind gde "<query>" ...       → tools/gde.mjs         (semantic + BM25 fallback)
@@ -27,6 +28,7 @@ const PACKAGE_ROOT = resolve(HERE, '..');
 
 const ROUTES = {
   init: 'tools/init.mjs',
+  setup: 'tools/setup.mjs',
   query: 'tools/okf-query.mjs',
   recall: 'tools/okf-recall.mjs',
   gde: 'tools/gde.mjs',
@@ -47,6 +49,7 @@ function usage() {
   console.log('');
   console.log('Commands:');
   console.log('  init [dir] [--demo]   create a bundle from scratch (empty folder only; --demo — with demo content)');
+  console.log('  setup [...]           one-shot onboarding: detect engine, scaffold bundle, wire install+MCP, probe local embeddings (default: interactive; --yes — no prompts; --dry-run — plan only; --target <dir>)');
   console.log('  query <cmd> ...       structural queries: list | type <T> | tag <t> | get <id> | links | validate');
   console.log('  recall <cmd> ...      search: index | "<query>" [-k N] [--mode bm25|semantic|auto] (default auto: BM25 without an endpoint)');
   console.log('  gde "<query>" ...     human-readable search (semantic + BM25 fallback)');
