@@ -68,7 +68,13 @@ jobs:
           fi
           echo "tag v$TAG_VERSION matches package.json version $PKG_VERSION"
 
+      # Trusted publishing (OIDC) needs npm >= 11.5.1; setup-node's bundled npm on node 22
+      # can be older, so force an upgrade right before the publish step.
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest
+
+      # No NPM_TOKEN: npm exchanges the id-token: write OIDC token for a short-lived
+      # publish credential. The trusted publisher (this owner/repo + workflow filename
+      # release.yml) is configured on npmjs.com under the package's Settings, not here.
       - name: Publish to npm
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
