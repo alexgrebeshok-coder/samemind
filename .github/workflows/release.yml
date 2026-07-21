@@ -53,10 +53,17 @@ jobs:
       id-token: write # required by `npm publish --provenance`
     steps:
       - uses: actions/checkout@v4
+      # No `registry-url` here on purpose: actions/setup-node writes it into .npmrc as
+      # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`. With no NODE_AUTH_TOKEN secret
+      # (the point of OIDC trusted publishing — see below), that placeholder expands to an
+      # empty string, npm CLI sees "auth is configured" and skips the OIDC token exchange
+      # entirely, then fails with E404 on the publish PUT. Confirmed root cause, not a guess:
+      # docs.npmjs.com/trusted-publishers' own example omits registry-url, and the same failure
+      # (provenance signs fine, then 404) is documented across npm/cli#8730, npm/cli#8976,
+      # actions/setup-node#1551 and npm/documentation#1960. Default registry is npmjs.org anyway.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Verify tag matches package.json version
         run: |
