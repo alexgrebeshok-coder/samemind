@@ -3,6 +3,26 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.4] — 2026-07-21
+
+### Fixed
+
+- **fix: OIDC trusted publishing — remove token-based .npmrc auth that shadowed the OIDC
+  exchange** — `v0.6.3`'s tag push got a green `test`/`smoke`, a successfully signed provenance
+  statement, and then `npm publish` failed with `E404 ... could not be found or you do not have
+  permission`. Root cause: the `publish` job's `actions/setup-node@v4` step passed
+  `registry-url: 'https://registry.npmjs.org'`, which makes setup-node write
+  `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` into `.npmrc`. With no `NODE_AUTH_TOKEN`
+  secret configured (the entire point of trusted publishing — see 0.6.2), that placeholder
+  expands to an empty string; npm CLI treats the (empty) `_authToken` line as "auth is already
+  configured" and never starts the OIDC token exchange, so the actual publish PUT goes out
+  unauthenticated and the registry answers 404 rather than leak whether the package/version
+  exists. Fix: drop `registry-url` from that step — the registry defaults to npmjs.org anyway,
+  and the job never installs anything from it that would need a token. Confirmed against
+  docs.npmjs.com/trusted-publishers (its own example workflow omits `registry-url`) and matches
+  the exact "provenance signs, then 404" failure mode reported in npm/cli#8730, npm/cli#8976,
+  actions/setup-node#1551 and npm/documentation#1960.
+
 ## [0.6.3] — 2026-07-21
 
 ### Fixed
