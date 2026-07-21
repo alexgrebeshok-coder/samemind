@@ -35,9 +35,11 @@ async function getOkfLoad() {
   return _okfLoad || (_okfLoad = (await import('./lib/okf.mjs')).load);
 }
 
-// Best-effort env-var → engine-id signals, checked ahead of the file-based detectEngines() scan
-// so a fresh clone (native engine env var set, instruction file not written yet) still offers its
-// own engine first. Allowlist, not exhaustive — add a row when another engine ships its own var.
+// Best-effort env-var → engine-id signals, raw (unfiltered) — narrowed against ENGINE_FILES and
+// the file-based scan in runSetup below before anything is actually trusted (a var alone can leak
+// in from an unrelated launcher, e.g. CODEX_HOME set globally by Orca's own codex-runtime whether
+// or not Codex CLI is what's driving this project). Allowlist, not exhaustive — add a row when
+// another engine ships its own var.
 const ENV_ENGINE_SIGNALS = [
   ['CLAUDECODE', 'claude-code'],
   ['CURSOR_TRACE_ID', 'cursor'],
@@ -105,10 +107,22 @@ export async function runSetup({ target = process.cwd(), yes = false, dryRun = f
 
   try {
     const detectEngines = await getDetectEngines();
+    const { ENGINE_FILES } = await getInstall();
 
-    // 1. detect
-    const envEngines = detectEngineFromEnv();
+    // 1. detect — an env var alone is a weak signal: it can leak in from an unrelated launcher
+    // (e.g. Orca sets CODEX_HOME globally regardless of which agent is actually driving this
+    // session — same ambient leak setup.test.mjs's cleanEnv() strips), not just from the engine
+    // it's supposed to name actually running against this project. Narrowed to two cases where
+    // it's trustworthy without a file to back it up: (a) its instruction file already exists —
+    // then the env var is redundant, not load-bearing; (b) it's the ONLY env signal at all and
+    // no file-based signal fired either — the "fresh clone, engine already running" case this
+    // array exists for. Two-plus simultaneous env signals with nothing on disk to back either
+    // one are ambiguous noise, not evidence, and get dropped rather than guessed at. Also drop
+    // any signal for an id samemind has no install support for — never surfaced, never warned on.
+    const rawEnvEngines = detectEngineFromEnv().filter(id => ENGINE_FILES[id]);
     const fileEngines = detectEngines(dir);
+    const soleEnvSignal = rawEnvEngines.length === 1 && fileEngines.length === 0;
+    const envEngines = rawEnvEngines.filter(id => fileEngines.includes(id) || soleEnvSignal);
     const engines = [...new Set([...envEngines, ...fileEngines])];
     print(engines.length
       ? `Detected engine(s): ${engines.join(', ')}`
@@ -132,7 +146,6 @@ export async function runSetup({ target = process.cwd(), yes = false, dryRun = f
     }
 
     // 3. connect — which engine(s) to wire an instruction file for
-    const { ENGINE_FILES } = await getInstall();
     let targetEngines = engines;
     if (!targetEngines.length) {
       if (dryRun) {

@@ -124,6 +124,58 @@ describe('samemind setup — --yes (CLI)', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('env-var signal (CODEX_HOME) alone, no AGENTS.md, is still detected — same sole-signal case as CLAUDECODE', () => {
+    const dir = tmp('setup-env-signal-codex');
+    try {
+      const out = run(['--target', dir, '--dry-run'], { env: { CODEX_HOME: '/fake' } });
+      assert.match(out, /Detected engine\(s\): codex/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('two simultaneous env signals with no file behind either → ambiguous, dropped (no false codex detect)', () => {
+    const dir = tmp('setup-env-ambiguous');
+    try {
+      // Regression: an ambient CODEX_HOME (e.g. leaked from Orca's own codex-runtime) alongside
+      // a real CLAUDECODE must not falsely offer "codex" — neither signal has a file backing it,
+      // so both are dropped rather than guessed at.
+      const out = run(['--target', dir, '--dry-run'], { env: { CLAUDECODE: '1', CODEX_HOME: '/fake' } });
+      assert.match(out, /No engine detected/);
+      // "codex" still appears in the generic supported-engines menu (same as the plain
+      // no-engine-at-all case) — what must NOT happen is codex being reported as detected/installed.
+      assert.doesNotMatch(out, /Detected engine\(s\).*codex/);
+      assert.doesNotMatch(out, /install samemind brief into Codex/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('env signal corroborated by an existing file for a DIFFERENT engine still wins on its own file — ambient codex still dropped', () => {
+    const dir = tmp('setup-env-file-backed');
+    try {
+      writeFileSync(join(dir, 'CLAUDE.md'), '# notes\n', 'utf8');
+      const out = run(['--target', dir, '--dry-run'], { env: { CODEX_HOME: '/fake' } });
+      assert.match(out, /Detected engine\(s\): claude-code/);
+      assert.doesNotMatch(out, /codex/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('no warning noise: --yes with a real (file-backed) claude-code + ambient codex never installs codex or warns about it', () => {
+    const dir = tmp('setup-no-warning-noise');
+    try {
+      writeFileSync(join(dir, 'CLAUDE.md'), '# notes\n', 'utf8');
+      const out = run(['--target', dir, '--yes'], { env: { CLAUDECODE: '1', CODEX_HOME: '/fake' } });
+      assert.match(out, /Detected engine\(s\): claude-code/);
+      assert.doesNotMatch(out, /no EngineRule found for engine "codex"/);
+      assert.equal(existsSync(join(dir, 'AGENTS.md')), false, 'codex must not get an instruction file from ambient noise');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('samemind setup — --dry-run writes nothing', () => {
