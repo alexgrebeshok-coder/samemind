@@ -24,6 +24,7 @@ import {
 import { scanForInjection } from './injection.mjs';
 import { buildHeatIndex, heatScore, heatTier } from './hygiene.mjs';
 import { loadIdx } from '../okf-recall.mjs';
+import { resolveGlobalRoot, searchGlobalHalf, mergeWithGlobal } from './compose-roots.mjs';
 import { buildHandoff, DEFAULT_DAYS as HANDOFF_DEFAULT_DAYS } from '../handoff.mjs';
 import { appendEvent, readEvents, summarizeLedger, PHASES, STATUSES } from './ledger.mjs';
 import { atomicWriteFileSync } from '../../lib/atomic-write.mjs';
@@ -57,7 +58,7 @@ function readableDocs() {
 export const TOOLS = [
   {
     name: 'memory_search',
-    description: 'Search the memory bundle (semantic if an index exists and answers, BM25 fallback otherwise). Never returns secret-visibility concepts. Pass exclude_source (an engine id like "claude-code") to filter out concepts authored by that source — anti-echo, so an engine does not get back what it just wrote.',
+    description: 'Search the memory bundle (semantic if an index exists and answers, BM25 fallback otherwise). Never returns secret-visibility concepts. Pass exclude_source (an engine id like "claude-code") to filter out concepts authored by that source — anti-echo, so an engine does not get back what it just wrote. Results also fold in the global personal bundle ($HOME/.samemind/bundle by default, U5 "Same mind") — those hits carry source: "global"; pass no_global: true to search the project bundle only.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -65,6 +66,7 @@ export const TOOLS = [
         k: { type: 'integer', minimum: 1, description: 'Max results (default 5)' },
         mode: { type: 'string', enum: ['bm25', 'semantic', 'hybrid', 'auto'], description: 'Search mode (default auto). hybrid (Ф3) fuses BM25+semantic via RRF, falls back to BM25 if the embeddings endpoint is unavailable.' },
         exclude_source: { type: 'string', pattern: '^[a-z0-9-]+$', description: 'Drop concepts whose frontmatter `source` is this id (anti-echo). Lowercase letters, digits, hyphens only.' },
+        no_global: { type: 'boolean', description: 'Skip the global personal bundle — search only this project\'s memory (default false).' },
       },
       required: ['query'],
     },
@@ -142,7 +144,7 @@ export const TOOLS = [
   },
 ];
 
-async function memorySearch({ query, k = 5, mode = 'auto', exclude_source } = {}) {
+async function memorySearch({ query, k = 5, mode = 'auto', exclude_source, no_global } = {}) {
   if (!query || !String(query).trim()) throw new Error('memory_search: "query" is required');
   const kk = Number.isFinite(Number(k)) && Number(k) > 0 ? Math.floor(Number(k)) : 5;
   let excludeSource = null;
@@ -156,11 +158,23 @@ async function memorySearch({ query, k = 5, mode = 'auto', exclude_source } = {}
   const docById = new Map(docs.map(d => [d.id, d]));
   const idx = loadIdx();
   const events = readEvents(ROOT); // Ф5: ledger-derived heat, folded into the same hygiene pass
-  const { hits, mode: used, warning } = await recallSearch({
+  const projectResult = await recallSearch({
     docs, query, mode, embed, idx, k: kk, includeSecret: false, includeMirror: true, excludeSource, events,
   });
+
+  // U5/G-B: "Same mind" — fold in the optional global personal bundle. no_global truthy, or no
+  // bundle at $HOME/.samemind/bundle (or OKF_GLOBAL_ROOT) on disk → mergeWithGlobal passes
+  // projectResult through UNCHANGED (byte-identical JSON payload to before G-B).
+  const globalRoot = resolveGlobalRoot({ noGlobal: !!no_global });
+  const globalHalf = await searchGlobalHalf(globalRoot, docs, {
+    loadOpts: { includeSecret: false, includeMirror: true }, query, mode, embed, k: kk,
+    includeSecret: false, includeMirror: true, excludeSource,
+  });
+  const { hits, mode: used, warning, dedupWarnings } = mergeWithGlobal(projectResult, globalHalf, kk);
+  const globalDocById = globalHalf ? new Map(globalHalf.docs.map(d => [d.id, d])) : new Map();
+
   const results = hits.map(h => {
-    const doc = docById.get(h.id);
+    const doc = docById.get(h.id) || globalDocById.get(h.id);
     return {
       id: h.id,
       type: h.type || doc?.fm.type || null,
@@ -168,9 +182,13 @@ async function memorySearch({ query, k = 5, mode = 'auto', exclude_source } = {}
       score: Number.isFinite(h.score) ? Number(h.score.toFixed(4)) : 0,
       snippet: extractSnippet(doc?.body || '', query, { contextLines: 1 }),
       hygiene: h.label || null, // e.g. "[superseded by /concepts/new.md]" — see docs/memory-hygiene.md
+      ...(h.source ? { source: h.source } : {}), // only present once a global hit is in the mix
     };
   });
-  return { query, mode: used, warning: warning || null, count: results.length, results };
+  const warnings = [warning, ...(dedupWarnings || [])].filter(Boolean);
+  return {
+    query, mode: used, warning: warnings.length ? warnings.join('; ') : null, count: results.length, results,
+  };
 }
 
 async function memoryGet({ id } = {}) {
