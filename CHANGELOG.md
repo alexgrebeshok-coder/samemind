@@ -3,6 +3,20 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.2] — 2026-07-21
+
+Release hardening — no runtime code changes.
+
+### Changed
+
+- **`npm publish` now uses trusted publishing (OIDC)** instead of a long-lived `NPM_TOKEN`
+  secret. `.github/workflows/release.yml`'s `publish` job drops `NODE_AUTH_TOKEN` — npm
+  exchanges the workflow's `id-token: write` OIDC token for a short-lived publish credential.
+  Requires npm ≥ 11.5.1 for the OIDC exchange, so the job now runs `npm install -g npm@latest`
+  right before `npm publish` (setup-node's bundled npm can be older). The trusted publisher
+  (this repo + `release.yml`) is configured on npmjs.com under the package's Settings, not in
+  this repo.
+
 ## [0.6.1] — 2026-07-21
 
 UAT fixes on 0.6.0.
