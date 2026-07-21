@@ -3,6 +3,69 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] — 2026-07-21
+
+_"Same mind" track: samemind used to be one bundle per project. `setup --global` connects
+it to the whole machine instead — one personal bundle, one MCP registration, one embeddings
+config — and `recall`/`gde`/`memory_search` fold that personal bundle into every project's
+own search automatically, with project always winning on an id collision._
+
+### Added
+
+- **`samemind setup --global [--yes] [--dry-run] [--home <dir>]`** (`tools/setup.mjs`
+  `runGlobalSetup`) — machine-wide connection instead of a per-project one: scaffolds a
+  personal OKF bundle at `~/.samemind/bundle`, installs the identity+memory brief into
+  Claude Code's own global `~/.claude/CLAUDE.md`, registers samemind as a user-scope MCP
+  server, and probes for a local embeddings endpoint into a global config. Same
+  interactive/`--yes`/`--dry-run` semantics as project `setup`. `--home <dir>` (env/flag,
+  test/manual override only) points the whole flow at a different home directory.
+- **MCP user-scope registration** (`tools/lib/mcp-register.mjs` `ensureMcpRegistered`
+  gains `scope:'user'`) — tries the native `claude mcp add --scope user` first; falls back
+  to merging `{mcpServers:{samemind:...}}` into `~/.claude.json` by hand
+  (`tools/lib/global-json-merge.mjs`, new) when the `claude` binary is missing or errors,
+  preserving every other server already registered there (exa, context7, playwright, …)
+  and taking a timestamped backup before touching the file. Malformed JSON is never
+  written to — left byte-for-byte untouched, backup still taken.
+  **Safety fix:** native `claude mcp add --scope user` writes to the *real* machine's user
+  config regardless of what `--home` was passed — it has no concept of a fake home. The
+  native path is now only attempted when `--home` resolves to the actual machine home
+  (`os.userInfo().homedir`, immune to a `HOME` env override); any custom/test `--home`
+  forces the JSON-merge fallback instead, so `setup --global --home <fixture>` can never
+  register against the real `~/.claude.json`.
+- **Multi-root recall, "Same mind"** (`tools/lib/compose-roots.mjs`, new) — `okf-recall.mjs`,
+  `gde.mjs`, and the MCP `memory_search` tool now also search the optional global personal
+  bundle (`$HOME/.samemind/bundle` by default, override via `OKF_GLOBAL_ROOT`, disable via
+  `--no-global`/`no_global`) alongside the project bundle, merging both by score. Each root
+  keeps its own index and its own ledger-derived heat (hygiene never crosses bundles). An
+  id collision (same relative path in both bundles) drops the global copy with a warning —
+  **project always wins**. Global hits print with a `global:` id prefix. No personal bundle
+  on disk / `--no-global` / `OKF_GLOBAL_ROOT=''` → output is byte-identical to pre-0.6.0
+  project-only search (proven by regression tests, not just asserted).
+- **Global embeddings-config tier** (`tools/lib/recall.mjs` `resolveEmbedConfig`) — gains a
+  third precedence tier: env > project `.samemind/config.json` > `$HOME/.samemind/config.json`
+  (global, written by `setup --global`'s embed probe) > hardcoded default. A global
+  embeddings server set up once is now honored from any project that hasn't configured its
+  own.
+- **Fix: `walk()`/`parse()`/`load()` root-scoping** (`tools/lib/okf.mjs`) — found while
+  wiring multi-root recall: these always computed the bundle-root prefix and doc `id`
+  against the module-level `ROOT` regardless of which `root`/`dir` was actually passed in,
+  which only ever matched by coincidence (the default `dir = ROOT`). A genuinely different
+  root — exactly what loading the global personal bundle needs — would have miscomputed
+  both. `root` is now threaded explicitly through all three; byte-identical for every
+  existing caller (`root === ROOT`, the untouched default).
+
+### Docs
+
+- README gains a **Global mode** section (after Quick start): what `setup --global` does,
+  real dry-run output, how `recall` composes project + global with a worked `global:`
+  example, and the project-beats-global priority rule stated plainly.
+- `INSTALL_FOR_AGENTS.md` **Fast path** gains a one-line pointer to `setup --global` for an
+  agent installing itself machine-wide instead of per-project.
+- CI smoke gate (`scripts/smoke-tarball.sh`) gains a `setup --global --dry-run --home
+  <fixture>` step and a multi-root `recall` run against an `OKF_GLOBAL_ROOT` fixture,
+  asserting the `global:` prefix actually appears in the installed tarball's output — not
+  just in the source-tree test suite.
+
 ## [0.5.0] — 2026-07-20
 
 _UX track: onboarding used to be a 6-step manual protocol (`INSTALL_FOR_AGENTS.md`) even

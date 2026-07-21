@@ -52,5 +52,32 @@ mkdir -p "$FIXTURE"
 printf '# fixture project\n' > "$FIXTURE/CLAUDE.md"
 "$SAMEMIND" setup --dry-run --target "$FIXTURE"
 
+step "samemind setup --global --dry-run --home <fake home> (never touch the CI runner's real ~/.claude*/~/.samemind)"
+FAKE_HOME="$WORK/fake-home"
+mkdir -p "$FAKE_HOME"
+"$SAMEMIND" setup --global --dry-run --home "$FAKE_HOME"
+
+step "samemind recall multi-root (OKF_GLOBAL_ROOT fixture — global: prefix must appear)"
+GLOBAL_FIXTURE="$WORK/global-bundle"
+mkdir -p "$GLOBAL_FIXTURE/concepts"
+cat > "$GLOBAL_FIXTURE/index.md" <<'EOF'
+---
+type: Root
+okf_version: "0.1"
+---
+# global fixture
+EOF
+cat > "$GLOBAL_FIXTURE/concepts/smoke-global-note.md" <<'EOF'
+---
+type: Concept
+title: Smoke global note
+---
+Lives only in the global fixture bundle, never in the project bundle.
+EOF
+RECALL_OUT="$(OKF_GLOBAL_ROOT="$GLOBAL_FIXTURE" "$SAMEMIND" recall "smoke global note" --mode bm25)"
+echo "$RECALL_OUT"
+echo "$RECALL_OUT" | grep -q 'global:concepts/smoke-global-note' \
+  || { echo "multi-root recall did not surface the global: prefix — regression" >&2; exit 1; }
+
 echo
 echo "SMOKE OK — tarball installs and runs standalone."

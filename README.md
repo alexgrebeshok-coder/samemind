@@ -156,6 +156,93 @@ the markdown `init --demo` just wrote; `recall` degrades to local BM25 because
 actually different from the rest of the git-markdown crowd is the
 [OKF wire-compatibility and the identity/ledger/kanban bundle](#why-samemind-vs-the-git-markdown-crowd).
 
+## Global mode
+
+`setup` above connects samemind to **one project**. `setup --global` connects it
+to **the whole machine** instead — one personal bundle every project's `recall`
+can see, without giving up the project's own bundle:
+
+```sh
+npx samemind setup --global
+```
+
+This does four things, all idempotent (safe to re-run):
+
+1. Scaffolds a personal OKF bundle at `~/.samemind/bundle` (asked/`--yes`/
+   `--dry-run`-planned, same human-gate as the project bundle step).
+2. Installs the identity+memory brief into `~/.claude/CLAUDE.md` — Claude
+   Code's own **global** instruction file, read in every project regardless
+   of whether that project has samemind installed locally.
+3. Registers samemind as an MCP server at **user scope**: tries the native
+   `claude mcp add --scope user` first, and only if that binary is missing or
+   errors falls back to merging `{mcpServers: {samemind: ...}}` into
+   `~/.claude.json` by hand — a backup of that file is written first
+   (`~/.claude.json.bak-<ts>-<rand>`), and every other server already
+   registered there (exa, context7, playwright, …) is left untouched.
+4. Probes for a local embeddings endpoint and writes it to a **global**
+   `~/.samemind/config.json` — a fallback tier `recall` checks in any project
+   that hasn't set up its own local endpoint (precedence: env >
+   project `.samemind/config.json` > this global one > hardcoded default).
+
+Real output — no local embeddings server running (see [Quick
+start](#quick-start) for why that's the honest common case):
+
+```sh
+$ npx samemind setup --global --dry-run
+[dry-run] would scaffold a personal OKF bundle in /Users/alex/.samemind/bundle
+[dry-run] would install samemind brief into /Users/alex/.claude/CLAUDE.md
+MCP: would register samemind as a user-scope MCP server (or run: claude mcp add --scope user samemind -- npx samemind serve)
+Semantic off, BM25 fallback — start a local embeddings server (omlx :8000 or Ollama
+:11434, a bge/nomic-shaped model) then re-run `samemind setup`, or set
+OKF_EMBED_URL/OKF_EMBED_MODEL by hand.
+
+=== samemind setup --global — summary ===
+Claude Code (global): /Users/alex/.claude/CLAUDE.md
+Personal bundle:      (not created)
+MCP:                  would register samemind as a user-scope MCP server (or run: claude mcp add --scope user samemind -- npx samemind serve)
+Semantic (global):    off (BM25 fallback)
+```
+
+Drop `--dry-run` to actually run it; `--home <dir>` points the whole flow at a
+different home directory (test fixtures, a second machine profile) instead of
+the real `$HOME` — the native `claude mcp add --scope user` command is only
+ever attempted when `--home` resolves to the *real* machine home, so a custom
+`--home` can never accidentally register anything against your actual
+`~/.claude.json`.
+
+### How `recall` composes project + global ("Same mind")
+
+Once a personal bundle exists at `~/.samemind/bundle` (or `OKF_GLOBAL_ROOT`
+points somewhere else), every `recall`/`gde`/`memory_search` call folds it into
+the project search automatically — no flag needed. Global hits print with a
+`global:` id prefix so you always know which bundle answered:
+
+```sh
+$ npx samemind recall "identity"
+⚠ global doc "concepts/identity" shadowed by project doc with the same id — dropped
+# "identity" → top-3 [bm25, score=bm25]
+0.452  Concept    concepts/identity — Identity
+0.452  Concept    global:concepts/identity-extra — Identity — personal notes
+
+$ npx samemind recall "identity" --no-global
+# "identity" → top-3 [bm25, score=bm25]
+0.452  Concept    concepts/identity — Identity
+```
+
+Honest about priority: **project always beats global.** If a project doc and a
+global doc share the same id (same relative path in both bundles — e.g. both
+have `concepts/identity.md`), the global copy is dropped entirely (with a
+warning, never a silent merge) and only the project's version is returned. The
+`global:` prefix only ever appears on a doc that has no project-side collision.
+
+Each root keeps its own index and its own ledger-derived heat — a hot doc in
+your personal bundle says nothing about heat in a given project, so hygiene
+never crosses bundles. `--no-global` skips the global bundle for one call;
+`OKF_GLOBAL_ROOT=` (empty) disables it for a whole session/CI run; no personal
+bundle on disk at all (fresh machine, `setup --global` never run) makes output
+byte-identical to project-only search — nothing changes for anyone who hasn't
+opted in.
+
 ## The protocol
 
 Agents **synthesize** answers themselves — search → read top hits → cite paths →
@@ -384,7 +471,7 @@ sync-mechanism research → cron-sync-adapters idea).
 |------|---------|
 | `samemind init [dir] [--demo]` | Scaffold a fresh bundle (empty dir only; `--demo` adds the Nova example) |
 | `samemind query <cmd>` | Structural queries: `list`, `type`, `tag`, `get`, `links`, `rel`, `validate` |
-| `samemind recall "<query>"` | Search: `--mode bm25\|semantic\|auto` (default `auto`). BM25 works zero-dep; semantic needs `OKF_EMBED_URL` + `index`. `--exclude-source <id>` drops an engine's own concepts (anti-echo). |
+| `samemind recall "<query>"` | Search: `--mode bm25\|semantic\|auto` (default `auto`). BM25 works zero-dep; semantic needs `OKF_EMBED_URL` + `index`. `--exclude-source <id>` drops an engine's own concepts (anti-echo). `--no-global` skips the personal bundle from [Global mode](#global-mode) for this call. |
 | `samemind gde "<query>"` | Human search: semantic when an index exists, BM25 fallback otherwise. `--exclude-source <id>` supported. |
 | `samemind brief [--engine <id>] [--budget <n>] [--inject <file>] [--exclude-source <id>]` | Compact Identity+User+EngineRule digest — see [Identity layer](#identity-layer) |
 | `samemind handoff [--project <path>] [--days N] [--html [--out <file>]]` | Work-state brief (tasks/plans/decisions/session) — see [docs/compaction-recipe.md](docs/compaction-recipe.md); `--html` → self-contained page (no CDN/JS, light+dark) |
