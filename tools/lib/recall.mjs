@@ -31,14 +31,20 @@ function readEmbedConfigFile(root) {
   }
 }
 
-/** Effective embeddings endpoint/model, precedence env > `<root>/.samemind/config.json` >
- *  hardcoded default. No config file present → byte-identical to the pre-existing env-or-default
- *  behavior (DEFAULT_EMBED_URL/DEFAULT_MODEL above). `root` defaults to the OKF bundle root. */
-export function resolveEmbedConfig(root = ROOT) {
+/** Effective embeddings endpoint/model, precedence env > `<root>/.samemind/config.json`
+ *  (project) > `<globalHome>/.samemind/config.json` (global — written by `samemind setup
+ *  --global`'s embed probe) > hardcoded default. `globalHome` defaults to $HOME so a global
+ *  config set up once is honored from any project that doesn't set its own; parameterized (2nd
+ *  arg) so callers/tests can point it at an isolated fake home instead of the real one, or pass
+ *  a falsy value to disable the global tier outright. No config file anywhere → byte-identical
+ *  to the pre-existing env-or-default behavior (DEFAULT_EMBED_URL/DEFAULT_MODEL above). `root`
+ *  defaults to the OKF bundle root. */
+export function resolveEmbedConfig(root = ROOT, globalHome = process.env.HOME) {
   const file = readEmbedConfigFile(root);
+  const global = globalHome ? readEmbedConfigFile(globalHome) : {};
   return {
-    url: process.env.OKF_EMBED_URL || file.embedUrl || 'http://127.0.0.1:8000/v1/embeddings',
-    model: process.env.OKF_EMBED_MODEL || file.embedModel || 'bge-m3',
+    url: process.env.OKF_EMBED_URL || file.embedUrl || global.embedUrl || 'http://127.0.0.1:8000/v1/embeddings',
+    model: process.env.OKF_EMBED_MODEL || file.embedModel || global.embedModel || 'bge-m3',
   };
 }
 

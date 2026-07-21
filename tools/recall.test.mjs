@@ -611,7 +611,12 @@ describe('recall — hybrid mode: rerank hook is off unless OKF_RERANK_URL is se
   });
 });
 
-describe('resolveEmbedConfig — env > <root>/.samemind/config.json > hardcoded default', () => {
+describe('resolveEmbedConfig — env > <root>/.samemind/config.json > <globalHome>/.samemind/config.json > hardcoded default', () => {
+  // A globalHome that never exists — every pre-existing test below passes this explicitly so
+  // none of them silently depend on (or get flaked by) whatever the real machine's actual $HOME
+  // happens to have under ~/.samemind/config.json (samemind setup --global writes there for real).
+  const NO_GLOBAL = join(tmpdir(), 'samemind-recall-test-no-global-home-should-never-exist');
+
   let prevUrl, prevModel;
   beforeEach(() => {
     prevUrl = process.env.OKF_EMBED_URL;
@@ -624,23 +629,23 @@ describe('resolveEmbedConfig — env > <root>/.samemind/config.json > hardcoded 
     if (prevModel !== undefined) process.env.OKF_EMBED_MODEL = prevModel; else delete process.env.OKF_EMBED_MODEL;
   });
 
-  it('no env, no config file → hardcoded default (backward-compat)', () => {
+  it('no env, no config file anywhere → hardcoded default (backward-compat)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'samemind-embedcfg-none-'));
     try {
-      assert.deepEqual(resolveEmbedConfig(dir), { url: 'http://127.0.0.1:8000/v1/embeddings', model: 'bge-m3' });
+      assert.deepEqual(resolveEmbedConfig(dir, NO_GLOBAL), { url: 'http://127.0.0.1:8000/v1/embeddings', model: 'bge-m3' });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it('config file sets url/model when env is empty', () => {
+  it('project config file sets url/model when env is empty', () => {
     const dir = mkdtempSync(join(tmpdir(), 'samemind-embedcfg-file-'));
     try {
       mkdirSync(join(dir, '.samemind'), { recursive: true });
       writeFileSync(join(dir, '.samemind', 'config.json'), JSON.stringify({
         embedUrl: 'http://127.0.0.1:11434/v1/embeddings', embedModel: 'nomic-embed-text',
       }), 'utf8');
-      assert.deepEqual(resolveEmbedConfig(dir), {
+      assert.deepEqual(resolveEmbedConfig(dir, NO_GLOBAL), {
         url: 'http://127.0.0.1:11434/v1/embeddings', model: 'nomic-embed-text',
       });
     } finally {
@@ -648,7 +653,7 @@ describe('resolveEmbedConfig — env > <root>/.samemind/config.json > hardcoded 
     }
   });
 
-  it('env overrides the config file', () => {
+  it('env overrides the project config file', () => {
     const dir = mkdtempSync(join(tmpdir(), 'samemind-embedcfg-envwins-'));
     try {
       mkdirSync(join(dir, '.samemind'), { recursive: true });
@@ -657,18 +662,88 @@ describe('resolveEmbedConfig — env > <root>/.samemind/config.json > hardcoded 
       }), 'utf8');
       process.env.OKF_EMBED_URL = 'http://env-wins:9/v1/embeddings';
       process.env.OKF_EMBED_MODEL = 'env-model';
-      assert.deepEqual(resolveEmbedConfig(dir), { url: 'http://env-wins:9/v1/embeddings', model: 'env-model' });
+      assert.deepEqual(resolveEmbedConfig(dir, NO_GLOBAL), { url: 'http://env-wins:9/v1/embeddings', model: 'env-model' });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it('malformed config.json never throws — falls through to default', () => {
+  it('malformed project config.json never throws — falls through to default', () => {
     const dir = mkdtempSync(join(tmpdir(), 'samemind-embedcfg-malformed-'));
     try {
       mkdirSync(join(dir, '.samemind'), { recursive: true });
       writeFileSync(join(dir, '.samemind', 'config.json'), '{ not valid json', 'utf8');
-      assert.deepEqual(resolveEmbedConfig(dir), { url: 'http://127.0.0.1:8000/v1/embeddings', model: 'bge-m3' });
+      assert.deepEqual(resolveEmbedConfig(dir, NO_GLOBAL), { url: 'http://127.0.0.1:8000/v1/embeddings', model: 'bge-m3' });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('global config file (no project config) fills in url/model — the setup --global tier', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'samemind-embedcfg-project-empty-'));
+    const home = mkdtempSync(join(tmpdir(), 'samemind-embedcfg-globalhome-'));
+    try {
+      mkdirSync(join(home, '.samemind'), { recursive: true });
+      writeFileSync(join(home, '.samemind', 'config.json'), JSON.stringify({
+        embedUrl: 'http://127.0.0.1:8000/v1/embeddings', embedModel: 'global-model',
+      }), 'utf8');
+      assert.deepEqual(resolveEmbedConfig(dir, home), {
+        url: 'http://127.0.0.1:8000/v1/embeddings', model: 'global-model',
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('project config wins over global config when both set (project > global)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'samemind-embedcfg-project-wins-'));
+    const home = mkdtempSync(join(tmpdir(), 'samemind-embedcfg-globalhome-wins-'));
+    try {
+      mkdirSync(join(dir, '.samemind'), { recursive: true });
+      writeFileSync(join(dir, '.samemind', 'config.json'), JSON.stringify({
+        embedUrl: 'http://project:1/v1/embeddings', embedModel: 'project-model',
+      }), 'utf8');
+      mkdirSync(join(home, '.samemind'), { recursive: true });
+      writeFileSync(join(home, '.samemind', 'config.json'), JSON.stringify({
+        embedUrl: 'http://global:2/v1/embeddings', embedModel: 'global-model',
+      }), 'utf8');
+      assert.deepEqual(resolveEmbedConfig(dir, home), {
+        url: 'http://project:1/v1/embeddings', model: 'project-model',
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('env wins over both project and global config', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'samemind-embedcfg-env-over-all-'));
+    const home = mkdtempSync(join(tmpdir(), 'samemind-embedcfg-globalhome-over-all-'));
+    try {
+      mkdirSync(join(dir, '.samemind'), { recursive: true });
+      writeFileSync(join(dir, '.samemind', 'config.json'), JSON.stringify({
+        embedUrl: 'http://project:1/v1/embeddings', embedModel: 'project-model',
+      }), 'utf8');
+      mkdirSync(join(home, '.samemind'), { recursive: true });
+      writeFileSync(join(home, '.samemind', 'config.json'), JSON.stringify({
+        embedUrl: 'http://global:2/v1/embeddings', embedModel: 'global-model',
+      }), 'utf8');
+      process.env.OKF_EMBED_URL = 'http://env-wins:9/v1/embeddings';
+      process.env.OKF_EMBED_MODEL = 'env-model';
+      assert.deepEqual(resolveEmbedConfig(dir, home), { url: 'http://env-wins:9/v1/embeddings', model: 'env-model' });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('globalHome defaults to $HOME but a falsy globalHome disables the global tier outright', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'samemind-embedcfg-no-global-tier-'));
+    try {
+      // Whatever the real machine's $HOME/.samemind/config.json may or may not contain, passing
+      // an explicit falsy globalHome must still fall through to the hardcoded default.
+      assert.deepEqual(resolveEmbedConfig(dir, null), { url: 'http://127.0.0.1:8000/v1/embeddings', model: 'bge-m3' });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

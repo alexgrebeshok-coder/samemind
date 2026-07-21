@@ -49,7 +49,7 @@ function usage() {
   console.log('');
   console.log('Commands:');
   console.log('  init [dir] [--demo]   create a bundle from scratch (empty folder only; --demo — with demo content)');
-  console.log('  setup [...]           one-shot onboarding: detect engine, scaffold bundle, wire install+MCP, probe local embeddings (default: interactive; --yes — no prompts; --dry-run — plan only; --target <dir>)');
+  console.log('  setup [...]           one-shot onboarding: detect engine, scaffold bundle, wire install+MCP, probe local embeddings (default: interactive; --yes — no prompts; --dry-run — plan only; --target <dir>; --global — machine-wide instead of one project)');
   console.log('  query <cmd> ...       structural queries: list | type <T> | tag <t> | get <id> | links | validate');
   console.log('  recall <cmd> ...      search: index | "<query>" [-k N] [--mode bm25|semantic|auto] (default auto: BM25 without an endpoint)');
   console.log('  gde "<query>" ...     human-readable search (semantic + BM25 fallback)');

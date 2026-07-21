@@ -2,7 +2,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync,
+  mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -74,6 +74,106 @@ describe('ensureMcpRegistered — claude-code', () => {
       assert.equal(once, twice, 'second apply must be a byte-for-byte no-op');
       const cfg = JSON.parse(twice);
       assert.equal(Object.keys(cfg.mcpServers).length, 1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('ensureMcpRegistered — claude-code, scope:"user" (global setup, G-A)', () => {
+  // Every test here passes an explicit userConfigPath (tmpdir fixture) — ensureMcpRegistered's
+  // own default (~/.claude.json) must NEVER be hit by this suite; the real file on this machine
+  // already carries exa/context7/playwright and must not be touched by a test run.
+
+  it('apply:false returns a plan string, never calls spawnSyncImpl, never writes', () => {
+    const dir = tmp('mcp-user-plan');
+    try {
+      const userConfigPath = join(dir, 'claude.json');
+      const spawnSyncImpl = () => { throw new Error('must not be called when apply:false'); };
+      const plan = ensureMcpRegistered('claude-code', dir, { scope: 'user', userConfigPath, spawnSyncImpl });
+      assert.equal(typeof plan, 'string');
+      assert.match(plan, /user-scope/);
+      assert.equal(existsSync(userConfigPath), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('native path: spawnSyncImpl reports success → registered natively, fallback JSON merge never runs', () => {
+    const dir = tmp('mcp-user-native-ok');
+    try {
+      const userConfigPath = join(dir, 'claude.json');
+      let calls = 0;
+      const spawnSyncImpl = (cmd, args) => {
+        calls++;
+        assert.equal(cmd, 'claude');
+        assert.deepEqual(args, ['mcp', 'add', '--scope', 'user', 'samemind', '--', 'npx', 'samemind', 'serve']);
+        return { status: 0, error: undefined };
+      };
+      const msg = ensureMcpRegistered('claude-code', dir, { apply: true, scope: 'user', userConfigPath, spawnSyncImpl });
+      assert.equal(calls, 1);
+      assert.match(msg, /registered samemind/i);
+      assert.equal(existsSync(userConfigPath), false, 'native success must not touch the JSON fallback file at all');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('native path missing (spawnSyncImpl throws ENOENT-like) → falls back to JSON merge, preserving exa/context7/playwright', () => {
+    const dir = tmp('mcp-user-native-missing');
+    try {
+      const userConfigPath = join(dir, 'claude.json');
+      const before = {
+        mcpServers: {
+          exa: { command: 'npx', args: ['exa-mcp'] },
+          context7: { command: 'npx', args: ['context7-mcp'] },
+          playwright: { command: 'npx', args: ['playwright-mcp'] },
+        },
+      };
+      writeFileSync(userConfigPath, JSON.stringify(before, null, 2), 'utf8');
+      const spawnSyncImpl = () => { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; };
+
+      const msg = ensureMcpRegistered('claude-code', dir, { apply: true, scope: 'user', userConfigPath, spawnSyncImpl });
+
+      assert.match(msg, /wrote samemind/i);
+      const after = JSON.parse(readFileSync(userConfigPath, 'utf8'));
+      assert.deepEqual(after.mcpServers.exa, before.mcpServers.exa);
+      assert.deepEqual(after.mcpServers.context7, before.mcpServers.context7);
+      assert.deepEqual(after.mcpServers.playwright, before.mcpServers.playwright);
+      assert.deepEqual(after.mcpServers.samemind, { command: 'npx', args: ['samemind', 'serve'] });
+      // a backup of the pre-existing file must exist alongside it
+      const backups = readdirSync(dir).filter(f => f.startsWith('claude.json.bak-'));
+      assert.equal(backups.length, 1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('native path errors (non-zero status, no thrown error) → also falls back to JSON merge', () => {
+    const dir = tmp('mcp-user-native-nonzero');
+    try {
+      const userConfigPath = join(dir, 'claude.json');
+      const spawnSyncImpl = () => ({ status: 1, error: undefined, stderr: 'boom' });
+      const msg = ensureMcpRegistered('claude-code', dir, { apply: true, scope: 'user', userConfigPath, spawnSyncImpl });
+      assert.match(msg, /wrote samemind/i);
+      assert.deepEqual(JSON.parse(readFileSync(userConfigPath, 'utf8')).mcpServers.samemind, { command: 'npx', args: ['samemind', 'serve'] });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fallback onto a corrupt userConfigPath: file left byte-for-byte untouched, honest error returned', () => {
+    const dir = tmp('mcp-user-native-corrupt');
+    try {
+      const userConfigPath = join(dir, 'claude.json');
+      const before = '{ "mcpServers": { not valid';
+      writeFileSync(userConfigPath, before, 'utf8');
+      const spawnSyncImpl = () => { const e = new Error('ENOENT'); throw e; };
+
+      const msg = ensureMcpRegistered('claude-code', dir, { apply: true, scope: 'user', userConfigPath, spawnSyncImpl });
+
+      assert.match(msg, /invalid JSON/i);
+      assert.equal(readFileSync(userConfigPath, 'utf8'), before);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
