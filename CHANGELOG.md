@@ -3,6 +3,27 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.5] — 2026-07-21
+
+### Fixed
+
+- **fix: revert to NPM_TOKEN auth for release — OIDC trusted publishing did not authenticate;
+  provenance still attested via id-token** — `0.6.4`'s OIDC trusted-publishing switch got a
+  green `test`/`smoke` and then `npm publish` failed with `ENEEDAUTH` before it ever reached the
+  registry: the trusted-publisher config on npmjs.com (owner/repo/workflow-filename match) never
+  matched what GitHub Actions sent, so the OIDC token exchange for publish credentials never
+  happened at all. Reverted the `publish` job to the token-auth path that shipped `0.6.0`-`0.6.1`:
+  `actions/setup-node@v4` gets `registry-url: 'https://registry.npmjs.org'` back (it writes
+  `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` into `.npmrc`), and the `npm publish`
+  step gets `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}` back. `id-token: write` and
+  `npm publish --provenance --access public` stay — provenance attestation runs its own OIDC
+  exchange with Sigstore independent of publish auth, so token-based publish auth + OIDC-attested
+  provenance is the standard npm combination, not a fallback that loses provenance. Dropped the
+  `npm install -g npm@latest` step added for OIDC trusted publishing's stricter version
+  requirement (npm >= 11.5.1) — plain token auth + `--provenance` has worked since npm 9.5, well
+  below what `actions/setup-node`'s node 22 already bundles, so the upgrade step was dead weight
+  once trusted publishing was off the table.
+
 ## [0.6.4] — 2026-07-21
 
 ### Fixed
