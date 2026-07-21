@@ -3,6 +3,26 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.3] — 2026-07-21
+
+### Fixed
+
+- **fix: sqlite-backend tests now skip when the optional backend is unavailable** — CI was red
+  on node 20 / no-prebuild since 0.4; product path unchanged. Root cause was in
+  `tools/gde-sqlite.test.mjs`: its `{ skip: skipReason }` guards referenced a variable only
+  assigned inside an async `before()` hook, but `describe()`'s `it(...)` calls (and their option
+  objects) are evaluated synchronously as the suite registers — *before* `before()` ever runs —
+  so `skipReason` was always still `undefined` (falsy) at that point and the sqlite-only
+  assertions ran unconditionally. In CI, the optional sqlite-vec backend is never installed
+  (zero-npm-deps test job) — node 20 lacks `node:sqlite`, node 22 lacks the `sqlite-vec`
+  `optionalDependency` prebuild — so `buildIndex()` honestly falls back to the JSON index (the
+  documented, tested contract), and the test asserting "sqlite path must not also write JSON"
+  failed for real work happening correctly. Moved the availability probe to a top-level `await`
+  ahead of `describe()`, mirroring the pattern `tools/sqlite-index.test.mjs` already used for the
+  same trap. Does **not** add sqlite-vec to CI or otherwise touch the zero-dep JSON fallback —
+  the fix only makes the test honestly skip the sqlite-specific assertions it can't exercise in
+  that environment.
+
 ## [0.6.2] — 2026-07-21
 
 Release hardening — no runtime code changes.
