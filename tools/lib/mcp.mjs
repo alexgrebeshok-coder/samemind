@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 import { ROOT, load, findById } from './okf.mjs';
 import {
-  DEFAULT_EMBED_URL, DEFAULT_MODEL, fetchEmbedding, recallSearch, extractSnippet,
+  fetchEmbedding, recallSearch, extractSnippet, resolveEmbedConfig,
 } from './recall.mjs';
 import { scanForInjection } from './injection.mjs';
 import { buildHeatIndex, heatScore, heatTier } from './hygiene.mjs';
@@ -39,8 +39,10 @@ export const SERVER_VERSION = PKG.version;
 export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 export const DEFAULT_PROTOCOL_VERSION = '2025-06-18';
 
-const EMBED_URL = process.env.OKF_EMBED_URL || DEFAULT_EMBED_URL;
-const EMBED_MODEL = process.env.OKF_EMBED_MODEL || DEFAULT_MODEL;
+// env > <ROOT>/.samemind/config.json > hardcoded default (resolveEmbedConfig — same precedence
+// okf-recall's index build already uses; setup.mjs, U-B, writes that config.json from a live
+// probe, so a bundle set up that way gets semantic `samemind serve` search with zero env vars).
+const { url: EMBED_URL, model: EMBED_MODEL } = resolveEmbedConfig(ROOT);
 const embed = text => fetchEmbedding(text, { url: EMBED_URL, model: EMBED_MODEL });
 
 // Документы, которые вообще видны MCP-инструментам: НИКОГДА secret, mirror включён (единая
@@ -291,7 +293,7 @@ async function memoryHealth() {
     root: ROOT,
     concepts: docs.length,
     searchMode: hasIndex ? 'semantic (index present; BM25 fallback if endpoint unavailable)' : 'bm25 (no semantic index — set OKF_EMBED_URL + run recall index)',
-    embedUrl: process.env.OKF_EMBED_URL || null,
+    embedUrl: EMBED_URL,
     heatTiers,
     version: SERVER_VERSION,
   };

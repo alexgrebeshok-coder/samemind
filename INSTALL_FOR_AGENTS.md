@@ -12,6 +12,30 @@ system-wide, no cloud account.
 
 ---
 
+## Fast path: `npx samemind setup`
+
+Try this first. It composes Steps 0–4 below into one command: detects your
+engine (env var + instruction file), scaffolds a bundle if none exists here
+yet, installs the identity+memory brief into your own instruction file,
+registers samemind as an MCP server, and probes for a local embeddings
+endpoint (honest BM25 fallback if none is running — never silently pretends
+to be semantic).
+
+```sh
+npx samemind setup --yes --target .
+```
+
+**Verify:** the printed summary shows `Bundle:` pointing at a real path and
+your engine listed under `Engine(s):`. If both hold, skip straight to Step 5
+(fill in the identity layer) and Step 6 (confirm end-to-end) below.
+
+Fall back to the manual protocol — Steps 0 through 4 — when `setup` can't
+detect your engine, you need a target other than the project root, or you
+want each step (which bundle, which engine, which MCP config) under your own
+control rather than composed for you.
+
+---
+
 ## Step 0 — Identify yourself
 
 Figure out which engine you are running as. If you're not sure, look at what

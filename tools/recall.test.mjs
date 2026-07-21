@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import {
   stripLinks, docText, contentHash, cosine, passesTier, rankByQuery,
   storageOf, storagesPresent, syncIndex, rankByKeywords, recallSearch, fetchEmbedding,
-  sourceMatches, rrfFuse, fetchRerank,
+  sourceMatches, rrfFuse, fetchRerank, resolveEmbedConfig,
 } from './lib/recall.mjs';
 
 // Deterministic mock-embed: 3-dim bag of words (enough for unit tests).
@@ -608,5 +608,92 @@ describe('recall — hybrid mode: rerank hook is off unless OKF_RERANK_URL is se
     assert.equal(r.mode, 'hybrid');
     assert.equal(r.hits.length, 2);
     assert.equal(r.hits[0].id, 'a'); // unchanged from the no-rerank RRF order
+  });
+});
+
+describe('resolveEmbedConfig — env > <root>/.samemind/config.json > hardcoded default', () => {
+  let prevUrl, prevModel;
+  beforeEach(() => {
+    prevUrl = process.env.OKF_EMBED_URL;
+    prevModel = process.env.OKF_EMBED_MODEL;
+    delete process.env.OKF_EMBED_URL;
+    delete process.env.OKF_EMBED_MODEL;
+  });
+  afterEach(() => {
+    if (prevUrl !== undefined) process.env.OKF_EMBED_URL = prevUrl; else delete process.env.OKF_EMBED_URL;
+    if (prevModel !== undefined) process.env.OKF_EMBED_MODEL = prevModel; else delete process.env.OKF_EMBED_MODEL;
+  });
+
+  it('no env, no config file → hardcoded default (backward-compat)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'samemind-embedcfg-none-'));
+    try {
+      assert.deepEqual(resolveEmbedConfig(dir), { url: 'http://127.0.0.1:8000/v1/embeddings', model: 'bge-m3' });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('config file sets url/model when env is empty', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'samemind-embedcfg-file-'));
+    try {
+      mkdirSync(join(dir, '.samemind'), { recursive: true });
+      writeFileSync(join(dir, '.samemind', 'config.json'), JSON.stringify({
+        embedUrl: 'http://127.0.0.1:11434/v1/embeddings', embedModel: 'nomic-embed-text',
+      }), 'utf8');
+      assert.deepEqual(resolveEmbedConfig(dir), {
+        url: 'http://127.0.0.1:11434/v1/embeddings', model: 'nomic-embed-text',
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('env overrides the config file', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'samemind-embedcfg-envwins-'));
+    try {
+      mkdirSync(join(dir, '.samemind'), { recursive: true });
+      writeFileSync(join(dir, '.samemind', 'config.json'), JSON.stringify({
+        embedUrl: 'http://127.0.0.1:11434/v1/embeddings', embedModel: 'nomic-embed-text',
+      }), 'utf8');
+      process.env.OKF_EMBED_URL = 'http://env-wins:9/v1/embeddings';
+      process.env.OKF_EMBED_MODEL = 'env-model';
+      assert.deepEqual(resolveEmbedConfig(dir), { url: 'http://env-wins:9/v1/embeddings', model: 'env-model' });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('malformed config.json never throws — falls through to default', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'samemind-embedcfg-malformed-'));
+    try {
+      mkdirSync(join(dir, '.samemind'), { recursive: true });
+      writeFileSync(join(dir, '.samemind', 'config.json'), '{ not valid json', 'utf8');
+      assert.deepEqual(resolveEmbedConfig(dir), { url: 'http://127.0.0.1:8000/v1/embeddings', model: 'bge-m3' });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fetchEmbedding honors the config file via its root option (stubbed fetch)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'samemind-embedcfg-fetch-'));
+    const saved = globalThis.fetch;
+    try {
+      mkdirSync(join(dir, '.samemind'), { recursive: true });
+      writeFileSync(join(dir, '.samemind', 'config.json'), JSON.stringify({
+        embedUrl: 'http://127.0.0.1:11434/v1/embeddings', embedModel: 'nomic-embed-text',
+      }), 'utf8');
+      let seenUrl, seenBody;
+      globalThis.fetch = async (url, opts) => {
+        seenUrl = url;
+        seenBody = JSON.parse(opts.body);
+        return { ok: true, json: async () => ({ data: [{ embedding: [0.1] }] }) };
+      };
+      await fetchEmbedding('hi', { dim: null, root: dir });
+      assert.equal(seenUrl, 'http://127.0.0.1:11434/v1/embeddings');
+      assert.equal(seenBody.model, 'nomic-embed-text');
+    } finally {
+      globalThis.fetch = saved;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

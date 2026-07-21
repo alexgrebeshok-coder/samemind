@@ -38,6 +38,52 @@ kanban living in one bundle instead of three separate tools glued together.
 ## Quick start
 
 ```sh
+npx samemind setup
+```
+
+One command: detects your agent (Claude Code, Cursor, Codex, …), scaffolds a
+bundle if there isn't one yet, wires the identity+memory protocol into that
+agent's own instruction file, registers samemind as an MCP server, and probes
+for a local embeddings endpoint. Default is interactive (asks before writing
+anything it doesn't own outright); `--yes` skips every prompt, `--dry-run`
+only prints the plan, `--target <dir>` points it at a project other than the
+current directory.
+
+Real output — the common case, no local embeddings server running, so search
+stays honest BM25 rather than silently pretending to be semantic:
+
+```sh
+$ npx samemind setup --yes
+Detected engine(s): claude-code
+Bundle created in /Users/alex/my-project.
+Installed Claude Code: CLAUDE.md
+  ⚠ no type: Identity concept found in bundle — brief is incomplete
+  ⚠ no type: User entity found in bundle — brief is incomplete
+Semantic off, BM25 fallback — start a local embeddings server (omlx :8000 or Ollama
+:11434, a bge/nomic-shaped model) then re-run `samemind setup`, or set
+OKF_EMBED_URL/OKF_EMBED_MODEL by hand.
+
+=== samemind setup — summary ===
+Engine(s): claude-code
+Bundle:    /Users/alex/my-project
+MCP:       Claude Code: wrote samemind → .mcp.json
+Semantic:  off (BM25 fallback)
+```
+
+The two `⚠` lines are expected for a fresh, non-demo bundle — its identity
+templates are still empty placeholders (see [Identity layer](#identity-layer)
+below); they go away once you fill them in. Run `setup` again any time —
+every step is idempotent (re-running never duplicates an install block or an
+MCP entry). See
+[`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md) if you're an agent installing
+this for yourself, end to end, or want the manual step-by-step this command
+composes.
+
+### Manual, step by step
+
+Prefer full control over each step, or `setup` didn't detect your engine?
+
+```sh
 npx samemind init --demo      # scaffold a bundle here + the fictional Nova demo content
 npx samemind query list       # see what's in it
 npx samemind gde "where did I write about context budget"   # human-readable search
@@ -48,9 +94,7 @@ npx samemind install --agent claude-code   # wire brief+protocol straight into C
 Code, Cursor, Copilot, Codex, Gemini CLI, opencode, Cline, Roo Code, Windsurf,
 Goose, Kiro, Antigravity — writing into whichever instruction file(s) that
 engine reads. See [Compatibility](#compatibility) and
-[docs/adapters.md](docs/adapters.md) for the full matrix, and
-[`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md) if you're an agent installing
-this for yourself, end to end.
+[docs/adapters.md](docs/adapters.md) for the full matrix.
 
 `init` refuses to touch a non-empty directory — run it in a fresh folder, or pass
 a path: `npx samemind init ./my-memory`. Drop `--demo` once you're ready for a real,

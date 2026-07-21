@@ -593,11 +593,37 @@ function initGit(dir) {
   }
 }
 
+/** Writes only if nothing is already there — used by the allowNonEmpty path (setup.mjs, U-B)
+ *  so scaffolding a bundle inside an existing project never clobbers a same-named file the
+ *  project already had. Returns whether it actually wrote. */
+function writeIfAbsent(path, content) {
+  if (existsSync(path)) return false;
+  writeFileSync(path, content, 'utf8');
+  return true;
+}
+
+/** .gitignore is the one collision worth more than skip-if-present: if init leaves an existing
+ *  project .gitignore untouched, `/secret/**` never gets excluded and a later `secret/` note can
+ *  land in git by accident. Appends samemind's block (idempotent, marked) instead of overwriting. */
+function ensureGitignore(dir) {
+  const p = join(dir, '.gitignore');
+  if (!existsSync(p)) { writeFileSync(p, GITIGNORE, 'utf8'); return; }
+  const before = readFileSync(p, 'utf8');
+  if (before.includes('# samemind bundle —')) return; // already merged in
+  writeFileSync(p, `${before.replace(/\n*$/, '\n\n')}# samemind bundle — added by samemind init\n${GITIGNORE}`, 'utf8');
+}
+
 /**
  * Scaffolds a fresh OKF bundle into targetDir.
- * Refuses (returns {ok:false}) if targetDir exists and is non-empty — never overwrites.
+ * Refuses (returns {ok:false}) if targetDir exists and is non-empty — never overwrites —
+ * unless `allowNonEmpty` (setup.mjs, U-B: scaffolding into an existing project directory).
+ * Even then, every write is skip-if-present (writeIfAbsent) except .gitignore, which merges
+ * (ensureGitignore) rather than skips, since that's the one file whose absence would silently
+ * defeat the secret/ tier's git-exclusion. `allowNonEmpty` also skips the auto git init/commit —
+ * an existing directory may already be its own repo with its own history/staged changes, and
+ * silently `git add -A && commit` there would sweep up work that isn't samemind's to commit.
  */
-export function runInit({ targetDir = '.', demo = false, packageRoot = PACKAGE_ROOT } = {}) {
+export function runInit({ targetDir = '.', demo = false, packageRoot = PACKAGE_ROOT, allowNonEmpty = false } = {}) {
   const dir = resolve(targetDir);
 
   if (existsSync(dir)) {
@@ -605,7 +631,7 @@ export function runInit({ targetDir = '.', demo = false, packageRoot = PACKAGE_R
       return { ok: false, reason: `"${dir}" exists and is not a directory` };
     }
     const entries = readdirSync(dir);
-    if (entries.length > 0) {
+    if (entries.length > 0 && !allowNonEmpty) {
       return {
         ok: false,
         reason: `directory "${dir}" is not empty (${entries.length} entries) — samemind init only works on an empty directory, nothing created or overwritten`,
@@ -619,33 +645,36 @@ export function runInit({ targetDir = '.', demo = false, packageRoot = PACKAGE_R
 
   const today = new Date().toISOString().slice(0, 10);
   const bundleName = basename(dir) || 'memory';
+  const write = allowNonEmpty ? writeIfAbsent : (p, c) => { writeFileSync(p, c, 'utf8'); return true; };
 
-  writeFileSync(join(dir, 'index.md'), rootIndexMd(bundleName), 'utf8');
-  writeFileSync(join(dir, 'log.md'), rootLogMd(today), 'utf8');
-  writeFileSync(join(dir, 'DASHBOARD.md'), DASHBOARD_PLACEHOLDER, 'utf8');
-  writeFileSync(join(dir, '.gitignore'), GITIGNORE, 'utf8');
+  write(join(dir, 'index.md'), rootIndexMd(bundleName));
+  write(join(dir, 'log.md'), rootLogMd(today));
+  write(join(dir, 'DASHBOARD.md'), DASHBOARD_PLACEHOLDER);
+  if (allowNonEmpty) ensureGitignore(dir); else writeFileSync(join(dir, '.gitignore'), GITIGNORE, 'utf8');
 
-  writeFileSync(join(dir, 'concepts', '_template.md'), CONCEPTS_TEMPLATE, 'utf8');
-  writeFileSync(join(dir, 'concepts', '_identity-template.md'), IDENTITY_TEMPLATE, 'utf8');
-  writeFileSync(join(dir, 'concepts', '_engine-rule-template.md'), ENGINE_RULE_TEMPLATE, 'utf8');
-  writeFileSync(join(dir, 'concepts', '_decision-template.md'), DECISION_TEMPLATE, 'utf8');
-  writeFileSync(join(dir, 'concepts', '_session-template.md'), SESSION_TEMPLATE, 'utf8');
-  writeFileSync(join(dir, 'concepts', '_analysis-template.md'), ANALYSIS_TEMPLATE, 'utf8');
-  writeFileSync(join(dir, 'concepts', '_research-template.md'), RESEARCH_TEMPLATE, 'utf8');
-  writeFileSync(join(dir, 'concepts', '_idea-template.md'), IDEA_TEMPLATE, 'utf8');
-  writeFileSync(join(dir, 'concepts', 'index.md'), CONCEPTS_INDEX, 'utf8');
-  writeFileSync(join(dir, 'entities', '_template.md'), ENTITIES_TEMPLATE, 'utf8');
-  writeFileSync(join(dir, 'entities', '_user-template.md'), USER_TEMPLATE, 'utf8');
-  writeFileSync(join(dir, 'entities', 'index.md'), ENTITIES_INDEX, 'utf8');
-  writeFileSync(join(dir, 'projects', '_template.md'), PROJECTS_TEMPLATE, 'utf8');
-  writeFileSync(join(dir, 'projects', '_plan-template.md'), PLAN_TEMPLATE, 'utf8');
-  writeFileSync(join(dir, 'projects', '_task-template.md'), TASK_TEMPLATE, 'utf8');
-  writeFileSync(join(dir, 'projects', 'index.md'), PROJECTS_INDEX, 'utf8');
-  writeFileSync(join(dir, 'inbox', 'index.md'), INBOX_INDEX, 'utf8');
-  writeFileSync(join(dir, 'secret', '_template.md'), SECRET_TEMPLATE, 'utf8');
+  write(join(dir, 'concepts', '_template.md'), CONCEPTS_TEMPLATE);
+  write(join(dir, 'concepts', '_identity-template.md'), IDENTITY_TEMPLATE);
+  write(join(dir, 'concepts', '_engine-rule-template.md'), ENGINE_RULE_TEMPLATE);
+  write(join(dir, 'concepts', '_decision-template.md'), DECISION_TEMPLATE);
+  write(join(dir, 'concepts', '_session-template.md'), SESSION_TEMPLATE);
+  write(join(dir, 'concepts', '_analysis-template.md'), ANALYSIS_TEMPLATE);
+  write(join(dir, 'concepts', '_research-template.md'), RESEARCH_TEMPLATE);
+  write(join(dir, 'concepts', '_idea-template.md'), IDEA_TEMPLATE);
+  write(join(dir, 'concepts', 'index.md'), CONCEPTS_INDEX);
+  write(join(dir, 'entities', '_template.md'), ENTITIES_TEMPLATE);
+  write(join(dir, 'entities', '_user-template.md'), USER_TEMPLATE);
+  write(join(dir, 'entities', 'index.md'), ENTITIES_INDEX);
+  write(join(dir, 'projects', '_template.md'), PROJECTS_TEMPLATE);
+  write(join(dir, 'projects', '_plan-template.md'), PLAN_TEMPLATE);
+  write(join(dir, 'projects', '_task-template.md'), TASK_TEMPLATE);
+  write(join(dir, 'projects', 'index.md'), PROJECTS_INDEX);
+  write(join(dir, 'inbox', 'index.md'), INBOX_INDEX);
+  write(join(dir, 'secret', '_template.md'), SECRET_TEMPLATE);
 
   const demoCopied = demo ? copyDemoContent(dir, packageRoot) : 0;
-  const git = initGit(dir);
+  const git = allowNonEmpty
+    ? { ok: false, reason: 'skipped — existing directory may already be its own git repo; commit the new bundle files yourself' }
+    : initGit(dir);
 
   return { ok: true, dir, demoCopied, git };
 }

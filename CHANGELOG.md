@@ -3,6 +3,59 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0] — 2026-07-20
+
+_UX track: onboarding used to be a 6-step manual protocol (`INSTALL_FOR_AGENTS.md`) even
+for the common case. `samemind setup` composes it into one command; a new CI smoke gate
+now installs and runs the actual `npm pack` tarball before every publish, catching the
+class of packaging bug that shipped in 0.1.0 past a fully green `node --test` run._
+
+### Added
+
+- **`samemind setup [--target <dir>] [--yes] [--dry-run]`** (`tools/setup.mjs`) — one-shot
+  onboarding: detect engine → scaffold bundle if needed → install the identity+memory
+  brief into that engine's own instruction file → register the MCP server → probe for a
+  local embeddings endpoint → print a summary. Default is interactive (asks before every
+  write into a file setup doesn't own outright); `--yes` skips every prompt; `--dry-run`
+  only prints the plan, proven byte-for-byte to write nothing.
+- **Engine auto-detect** (`tools/lib/detect-engines.mjs` + env-var signals in `setup.mjs`)
+  — scans a target dir for instruction files already present (`CLAUDE.md`, `AGENTS.md`,
+  `.cursor/rules/`, …) and cross-checks a small env-var allowlist (`CLAUDECODE`,
+  `CURSOR_TRACE_ID`, `CODEX_HOME`/`CODEX_SANDBOX`) for the "fresh clone, engine already
+  running, no instruction file yet" case. An env signal is only trusted without a file
+  behind it when it's the sole signal detected at all — two simultaneous, uncorroborated
+  env signals (e.g. an ambient `CODEX_HOME` leaked in from an unrelated launcher, alongside
+  a real one) are ambiguous noise and get dropped rather than guessed at, closing a false
+  "codex detected" report (and its accompanying warning-noise) on machines where `CODEX_HOME`
+  happens to be set for reasons unrelated to this project.
+- **Local embeddings probe** (`tools/lib/probe-embed.mjs`) — GET-only discovery of a
+  running omlx (`:8000`) or Ollama (`:11434`) server exposing an embedding-shaped model;
+  never touches admin/settings endpoints, never loads/warms a model. `setup` wires a live
+  result straight into `.samemind/config.json` (`embedUrl`/`embedModel`, merged — other
+  keys preserved); a dead/absent server yields an honest BM25-fallback hint, never a
+  silent failure.
+- **`.samemind/config.json`** — per-bundle config file (currently `embedUrl`/`embedModel`
+  from the embeddings probe above); read by `resolveEmbedConfig()` (`tools/lib/recall.mjs`)
+  so semantic search turns on automatically once `setup` finds a local server, no manual
+  `OKF_EMBED_URL` export needed.
+- **CI smoke gate** (`scripts/smoke-tarball.sh` + `smoke` job in
+  `.github/workflows/release.yml`) — `npm pack`s the repo, installs the resulting tarball
+  (not the source tree) into a throwaway project, and runs `init --demo` / `query validate`
+  / `recall` (BM25 path, no network) / `setup --dry-run` against it. `publish` now
+  `needs: [test, smoke]` — a packaging break (missing `files` entry, a broken `bin`
+  symlink, a path that only resolves relative to the repo) fails the gate before
+  publish, not after a user's `npx samemind` silently does nothing.
+
+### Docs
+
+- README **Quick start** leads with `npx samemind setup` (real output, honest-BM25 case)
+  ahead of the previous manual `init`/`install` walkthrough, now demoted to "Manual, step
+  by step" underneath it.
+- `INSTALL_FOR_AGENTS.md` gains a **Fast path** section ahead of Step 0, pointing an
+  installing agent at `samemind setup` first; the original 6-step manual protocol is
+  unchanged below it as the fallback for when `setup` can't detect the engine or finer
+  control is needed.
+
 ## [0.4.1] — 2026-07-20
 
 _Four post-0.4.0 tails found running the memory roadmap against real (non-demo) data: a

@@ -1,7 +1,10 @@
 # release.yml — publish to npm on a `v*` tag push.
-# Reuses ci.yml's test matrix as a gate, then verifies the tag matches package.json's
-# `version` before publishing (a mismatched tag is almost always a forgotten version bump,
-# not something to publish silently under the wrong number).
+# Reuses ci.yml's test matrix as a gate, adds a `smoke` job that installs/runs the actual
+# `npm pack` TARBALL (not the source tree) — the class of packaging bug (missing `files` entry,
+# broken `bin` symlink, a repo-relative path) that shipped in 0.1.0 past a fully green
+# `node --test` run — then verifies the tag matches package.json's `version` before publishing
+# (a mismatched tag is almost always a forgotten version bump, not something to publish silently
+# under the wrong number).
 # Zero npm deps (see ci.yml) — no `npm ci` step needed, nothing to install before testing.
 name: release
 
@@ -26,9 +29,24 @@ jobs:
       - name: Run unit tests
         run: node --test tools/*.test.mjs
 
+  smoke:
+    name: smoke (tarball, node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Pack + install + run the published tarball
+        run: bash scripts/smoke-tarball.sh
+
   publish:
     name: npm publish
-    needs: test
+    needs: [test, smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: read
