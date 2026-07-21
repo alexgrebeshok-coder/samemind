@@ -53,17 +53,21 @@ jobs:
       id-token: write # required by `npm publish --provenance`
     steps:
       - uses: actions/checkout@v4
-      # No `registry-url` here on purpose: actions/setup-node writes it into .npmrc as
-      # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`. With no NODE_AUTH_TOKEN secret
-      # (the point of OIDC trusted publishing — see below), that placeholder expands to an
-      # empty string, npm CLI sees "auth is configured" and skips the OIDC token exchange
-      # entirely, then fails with E404 on the publish PUT. Confirmed root cause, not a guess:
-      # docs.npmjs.com/trusted-publishers' own example omits registry-url, and the same failure
-      # (provenance signs fine, then 404) is documented across npm/cli#8730, npm/cli#8976,
-      # actions/setup-node#1551 and npm/documentation#1960. Default registry is npmjs.org anyway.
+      # token auth + provenance attestation via OIDC id-token: OIDC *trusted publishing*
+      # (npm exchanging id-token for a short-lived publish credential with no NPM_TOKEN at all)
+      # never authenticated here — ENEEDAUTH, the npmjs.com trusted-publisher config didn't
+      # match this owner/repo/workflow. Reverting to the token-auth path that published
+      # 0.6.0-0.6.1: `registry-url` makes setup-node write
+      # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` into .npmrc, and NODE_AUTH_TOKEN
+      # (below) is what fills that placeholder. `id-token: write` stays and `--provenance` still
+      # gets attested — provenance signing rides its own OIDC exchange with Sigstore
+      # independent of *publish* auth, so token-based auth + provenance is the standard,
+      # documented npm combination (not mutually exclusive with trusted publishing, just the
+      # older/simpler half of it).
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Verify tag matches package.json version
         run: |
@@ -75,13 +79,10 @@ jobs:
           fi
           echo "tag v$TAG_VERSION matches package.json version $PKG_VERSION"
 
-      # Trusted publishing (OIDC) needs npm >= 11.5.1; setup-node's bundled npm on node 22
-      # can be older, so force an upgrade right before the publish step.
-      - name: Upgrade npm for OIDC trusted publishing
-        run: npm install -g npm@latest
-
-      # No NPM_TOKEN: npm exchanges the id-token: write OIDC token for a short-lived
-      # publish credential. The trusted publisher (this owner/repo + workflow filename
-      # release.yml) is configured on npmjs.com under the package's Settings, not here.
+      # NPM_TOKEN (repo secret): the actual publish auth. `--provenance` still needs
+      # `id-token: write` above — that's a separate OIDC exchange for the Sigstore
+      # attestation, unrelated to the registry auth token.
       - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public
