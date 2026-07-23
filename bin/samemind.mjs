@@ -46,6 +46,7 @@ const ROUTES = {
   capture: 'tools/capture.mjs',
   ledger: 'tools/ledger.mjs',
   serve: 'tools/mcp-server.mjs',
+  proactive: 'tools/proactive.mjs',
 };
 
 function usage() {
@@ -69,6 +70,7 @@ function usage() {
   console.log('  capture --engine <id> [--source <path>] [--since <ts>] [--dry-run]   read-only capture of a live engine session store → inbox/<engine>.md — see docs/session-capture.md');
   console.log('  ledger <cmd> ...      append-only event ledger: append --actor .. --topic .. --phase .. [--status ..] --action ".." | status | read --topic <t> — see docs/event-ledger.md');
   console.log('  serve                 MCP stdio server (memory_search/get/list/write_inbox/handoff/health/ledger_append/ledger_status) — connect it as an MCP tool');
+  console.log('  proactive "<msg>"     Active Memory prototype: auto top-k recall pack before answer (-k N --json --force --pack)');
 }
 
 export function main(argv = process.argv.slice(2)) {
