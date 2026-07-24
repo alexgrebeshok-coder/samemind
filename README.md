@@ -1,5 +1,9 @@
 # samemind
 
+samemind is a git-native markdown memory bundle for AI coding agents — identity, search, a work ledger, and a kanban board in one place, portable across engines like Claude Code, Cursor, and OpenClaw. No daemon, no required database; BM25 search always works offline, semantic search is optional.
+
+**Latest: v0.7.0** — proactive recall + conflict-aware memory (supersedes-aware, authority tiebreak). See [CHANGELOG.md](CHANGELOG.md).
+
 [![ci](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml/badge.svg)](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml)
 
 **Your personal universal memory for every AI agent. Switch engines. Same mind.**
@@ -85,6 +89,20 @@ Security perimeter (secret visibility, inbox-only writes, path safety): [docs/fu
 - Canon promotion is **human-gated** (inbox → concepts); not auto-mem that rewrites truth silently.
 - Semantic search needs a local/OpenAI-compatible embeddings endpoint (`OKF_EMBED_URL`); without it, BM25 only — by design.
 - Hand-curated scale (roughly 10²–10³ concepts), not a 24/7 life-ingestion daemon — see vs [gbrain](docs/full-guide.md#samemind-vs-gbrain-garry-tan--when-to-use-which).
+
+## FAQ
+
+### Does samemind need a database or background daemon?
+No. It's git-native markdown with no daemon and no required database. BM25 search always works offline; semantic search is optional and needs a local/OpenAI-compatible embeddings endpoint (`OKF_EMBED_URL`).
+
+### Which AI engines does it work with?
+`samemind install` wires the memory protocol into 12 engines (see [docs/adapters.md](docs/adapters.md)), and it exposes an MCP server (`npx samemind serve`) for engines like Claude Code.
+
+### What's new in v0.7.0?
+Proactive recall (`samemind proactive`) assembles a top-k memory pack before an agent answers, and conflict-aware recall excludes superseded or time-expired facts by default (opt-out via `--include-superseded` / `--as-of`). See [CHANGELOG.md](CHANGELOG.md).
+
+### What are the current limits?
+Canon promotion is human-gated (inbox → concepts, not a silent auto-rewrite); semantic search needs an embeddings endpoint or falls back to BM25 by design; scale is hand-curated (roughly 10²–10³ concepts), not a 24/7 ingestion daemon.
 
 ## Tests
 
