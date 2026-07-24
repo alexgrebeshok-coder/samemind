@@ -483,26 +483,36 @@ describe('recall — hybrid mode: finds a paraphrase BM25 misses (Ф3 main DoD c
   });
 });
 
-describe('recall — hybrid mode preserves Ф2 hygiene (superseded stays down after fusion)', () => {
-  it('superseded doc ranks below its replacement even after RRF', async () => {
-    const docs = [
-      {
-        id: 'concepts/old', reserved: false, supersedes: [],
-        fm: { title: 'Lumen approach', type: 'Concept', visibility: 'internal' },
-        body: 'lumen lumen notes',
-      },
-      {
-        id: 'concepts/new', reserved: false, supersedes: ['/concepts/old.md'],
-        fm: { title: 'Lumen approach', type: 'Concept', visibility: 'internal' },
-        body: 'lumen lumen notes',
-      },
-    ];
-    const idx = { items: {
-      'concepts/old': { visibility: 'internal', vector: [1, 0], title: 'Lumen approach', type: 'Concept' },
-      'concepts/new': { visibility: 'internal', vector: [1, 0], title: 'Lumen approach', type: 'Concept' },
-    } };
-    const embed = async () => [1, 0]; // identical vectors — only hygiene distinguishes rank
+describe('recall — hybrid mode preserves Э6 hygiene (superseded excluded / demoted after fusion)', () => {
+  const docs = [
+    {
+      id: 'concepts/old', reserved: false, supersedes: [],
+      fm: { title: 'Lumen approach', type: 'Concept', visibility: 'internal' },
+      body: 'lumen lumen notes',
+    },
+    {
+      id: 'concepts/new', reserved: false, supersedes: ['/concepts/old.md'],
+      fm: { title: 'Lumen approach', type: 'Concept', visibility: 'internal' },
+      body: 'lumen lumen notes',
+    },
+  ];
+  const idx = { items: {
+    'concepts/old': { visibility: 'internal', vector: [1, 0], title: 'Lumen approach', type: 'Concept' },
+    'concepts/new': { visibility: 'internal', vector: [1, 0], title: 'Lumen approach', type: 'Concept' },
+  } };
+  const embed = async () => [1, 0]; // identical vectors — only hygiene distinguishes rank
+
+  it('default: superseded dropped after RRF (only current remains)', async () => {
     const r = await recallSearch({ docs, query: 'lumen notes', mode: 'hybrid', idx, embed, k: 5 });
+    assert.equal(r.mode, 'hybrid');
+    assert.equal(r.hits.length, 1);
+    assert.equal(r.hits[0].id, 'concepts/new');
+  });
+
+  it('includeSuperseded: old ranks below new with label after RRF', async () => {
+    const r = await recallSearch({
+      docs, query: 'lumen notes', mode: 'hybrid', idx, embed, k: 5, includeSuperseded: true,
+    });
     assert.equal(r.mode, 'hybrid');
     assert.equal(r.hits[0].id, 'concepts/new');
     assert.match(r.hits[1].label, /superseded/);

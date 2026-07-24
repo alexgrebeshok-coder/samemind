@@ -108,4 +108,38 @@ describe('proactiveRecall', () => {
     assert.equal(r.skipped, true);
     assert.equal(r.manualRecallsSaved, 0);
   });
+
+  // (г) Э6/6.3 — proactive inherits recall stale-drop; pack must not inject superseded
+  it('(г) proactive pack excludes superseded by default', async () => {
+    const supersedeDocs = [
+      {
+        id: 'concepts/old-price',
+        reserved: false,
+        supersedes: [],
+        supersededBy: ['/concepts/new-price.md'],
+        fm: { title: 'Bentonite price', type: 'Concept', visibility: 'internal' },
+        body: 'The current bentonite price per ton was outdated.',
+      },
+      {
+        id: 'concepts/new-price',
+        reserved: false,
+        supersedes: ['/concepts/old-price.md'],
+        supersededBy: [],
+        fm: { title: 'Bentonite price', type: 'Concept', visibility: 'internal' },
+        body: 'The current bentonite price per ton is the live figure.',
+      },
+    ];
+    const r = await proactiveRecall({
+      docs: supersedeDocs,
+      query: 'what is the bentonite price per ton',
+      k: 5,
+      force: true,
+      ...noThreshold,
+    });
+    assert.equal(r.skipped, false);
+    assert.ok(r.hits.some(h => h.id === 'concepts/new-price'));
+    assert.ok(!r.hits.some(h => h.id === 'concepts/old-price'));
+    assert.ok(r.pack.includes('concepts/new-price'));
+    assert.ok(!r.pack.includes('concepts/old-price'));
+  });
 });

@@ -55,6 +55,7 @@ async function openVecStoreAt(root, model, indexBackend) {
 export async function searchRoot(root, docs, {
   query, mode = 'auto', embed = null, k = 5, includeSecret = false, includeMirror = false,
   excludeSource = null, model = null, indexBackend = process.env.OKF_INDEX_BACKEND || 'auto',
+  includeSuperseded = false, asOf = null,
 } = {}) {
   const store = await openVecStoreAt(root, model, indexBackend);
   const idx = store ? { items: {} } : loadJsonIdxAt(root, model);
@@ -62,6 +63,7 @@ export async function searchRoot(root, docs, {
     docs, query, mode, embed, idx, k, includeSecret, includeMirror, excludeSource,
     vecStore: store, vecSearch: store ? searchVecStore : null, vecCount: store ? vecStoreCount : null,
     events: readEvents(root),
+    includeSuperseded, asOf,
   });
   if (store) closeVecStore(store);
   return result;
@@ -90,6 +92,7 @@ export function resolveGlobalRoot({ noGlobal = false } = {}) {
 export async function searchGlobalHalf(globalRoot, projectDocs, {
   loadOpts = {}, query, mode = 'auto', embed = null, k = 5, includeSecret = false,
   includeMirror = false, excludeSource = null, model = null, indexBackend,
+  includeSuperseded = false, asOf = null,
 } = {}) {
   if (!globalRoot || !existsSync(globalRoot)) return null;
   const projectIds = new Set(projectDocs.map(d => d.id));
@@ -104,6 +107,7 @@ export async function searchGlobalHalf(globalRoot, projectDocs, {
   if (!globalDocs.length) return { hits: [], mode: null, warning: null, dedupWarnings, docs: [] };
   const result = await searchRoot(globalRoot, globalDocs, {
     query, mode, embed, k, includeSecret, includeMirror, excludeSource, model, indexBackend,
+    includeSuperseded, asOf,
   });
   return { ...result, dedupWarnings, docs: globalDocs };
 }

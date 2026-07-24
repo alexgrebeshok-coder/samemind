@@ -51,8 +51,9 @@ export function isSuperseded(doc, supersededMap) {
 // `supersedes`/`isSuperseded` above answer "does some OTHER doc name me as replaced?" (needs the
 // whole corpus via buildSupersededMap). The fields below live on the doc's OWN frontmatter — set
 // by hand, or by a human applying a `tools/reconcile.mjs` proposal — so no cross-doc map is
-// needed to read them. Either signal marks a doc temporally superseded; ranking treats it exactly
-// like `supersedes`/`deprecated` (same SUPERSEDED_PENALTY, never hidden — see hygieneMultiplier).
+// needed to read them. Either signal marks a doc temporally superseded. Recall DEFAULT (Э6/6.3)
+// excludes stale facts via isStaleForRecall; with includeSuperseded=true they reappear demoted by
+// SUPERSEDED_PENALTY (same as `deprecated`, which is always demote-only).
 
 /** `invalid_at: <ISO>` in the past — direct temporal invalidation (vs. `supersedes`, which is
  *  read from the replacing doc). Absent/unparseable/future → false (backward compatible: a
@@ -64,16 +65,66 @@ export function isExpired(doc, now = Date.now()) {
   return Number.isFinite(t) && t <= now;
 }
 
+/** `valid_from: <ISO>` still in the future — fact not yet canon as-of `now`. Absent/unparseable/
+ *  past → false (backward compatible: cards without valid_from are always valid). */
+export function isNotYetValid(doc, now = Date.now()) {
+  const raw = doc?.fm?.valid_from;
+  if (!raw) return false;
+  const t = Date.parse(raw);
+  return Number.isFinite(t) && t > now;
+}
+
 /** `superseded_by: /path.md` set on the OLD fact — the reverse pointer of `supersedes` (which
  *  lives on the NEW fact). `doc.supersededBy` is the normalized array from okf.mjs `parse()`. */
 export function hasSupersededBy(doc) {
   return !!(doc?.supersededBy && doc.supersededBy.length);
 }
 
-/** True if this doc's own frontmatter marks it stale (`invalid_at` in the past, or
- *  `superseded_by` set) — independent of what any other doc says via `supersedes`. */
+/**
+ * True when `superseded_by` points at least one target that exists in the loaded corpus
+ * (`docsById`: id → doc from the same load() as ranking). Dangling superseded_by (target
+ * missing) does NOT count — keep the fact until the replacement is actually in the bundle.
+ * Without a docsById map, falls back to "field is set" (label/penalty path).
+ */
+export function hasResolvedSupersededBy(doc, docsById = null) {
+  if (!hasSupersededBy(doc)) return false;
+  // null/undefined = no corpus map (label/penalty path) → treat field as set
+  if (docsById == null) return true;
+  return doc.supersededBy.some(p => docsById.has(pathToId(p)));
+}
+
+/** True if this doc's own frontmatter marks it stale (`invalid_at` in the past,
+ *  `valid_from` in the future, or `superseded_by` set) — independent of what any other doc
+ *  says via `supersedes`. Used by rank multiplier / labels when stale hits are still shown. */
 export function isTemporallySuperseded(doc, now = Date.now()) {
-  return isExpired(doc, now) || hasSupersededBy(doc);
+  return isExpired(doc, now) || isNotYetValid(doc, now) || hasSupersededBy(doc);
+}
+
+/**
+ * Conflict-aware recall gate (Э6 / 6.3): should this doc be DROPPED from recall by default?
+ * True when ANY of:
+ *   - another concept's `supersedes` names this id (`buildSupersededMap`)
+ *   - own `superseded_by` points to an existing concept in the corpus
+ *   - `invalid_at` ≤ as-of (`now`)
+ *   - `valid_from` > as-of (`now`)
+ * Does NOT cover `deprecated` (still only demoted via SUPERSEDED_PENALTY — separate concern).
+ * Cards with none of these fields → always false (backward compatible).
+ */
+export function isStaleForRecall(doc, supersededMap, { now = Date.now(), docsById = null } = {}) {
+  if (isSuperseded(doc, supersededMap)) return true;
+  if (hasResolvedSupersededBy(doc, docsById)) return true;
+  if (isExpired(doc, now)) return true;
+  if (isNotYetValid(doc, now)) return true;
+  return false;
+}
+
+/** Parse `--as-of` / API asOf into epoch ms. null/'' → Date.now(). Invalid ISO → throws. */
+export function resolveAsOf(asOf) {
+  if (asOf == null || asOf === '') return Date.now();
+  if (typeof asOf === 'number' && Number.isFinite(asOf)) return asOf;
+  const t = Date.parse(String(asOf));
+  if (!Number.isFinite(t)) throw new Error(`invalid as-of date: ${asOf}`);
+  return t;
 }
 
 /**
@@ -252,8 +303,9 @@ export function hygieneMultiplier(doc, supersededMap, { now = Date.now(), heatIn
 }
 
 /** Short inline label for a recall/gde hit, e.g. "[superseded by /concepts/new.md]" or
- *  "⤳ superseded by /concepts/new.md" (bi-temporal, Ф2). '' if clean. */
-export function hygieneLabel(doc, supersededMap) {
+ *  "⤳ superseded by /concepts/new.md" (bi-temporal, Ф2). '' if clean.
+ *  `now` (optional) — same as-of instant as ranking, so labels match --as-of temporal view. */
+export function hygieneLabel(doc, supersededMap, { now = Date.now() } = {}) {
   const by = supersededMap.get(doc.id);
   if (by && by.length) return `[superseded by ${by.map(id => `/${id}.md`).join(', ')}]`;
   if (isDeprecated(doc)) {
@@ -261,7 +313,8 @@ export function hygieneLabel(doc, supersededMap) {
     return `[deprecated${on}]`;
   }
   if (hasSupersededBy(doc)) return `⤳ superseded by ${doc.supersededBy.join(', ')}`;
-  if (isExpired(doc)) return `⤳ superseded (invalid_at ${String(doc.fm.invalid_at).slice(0, 10)})`;
+  if (isExpired(doc, now)) return `⤳ superseded (invalid_at ${String(doc.fm.invalid_at).slice(0, 10)})`;
+  if (isNotYetValid(doc, now)) return `⤳ not yet valid (valid_from ${String(doc.fm.valid_from).slice(0, 10)})`;
   return '';
 }
 

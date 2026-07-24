@@ -215,6 +215,7 @@ export function migrateJsonIndex(store, jsonIdx) {
  */
 export function searchVecStore(store, queryVector, {
   k = 5, includeSecret = false, includeMirror = false, docs = [], excludeSource = null, events = [],
+  includeSuperseded = false, asOf = null,
 } = {}) {
   if (!store?.ok || !store.vecTableReady) return [];
   const total = vecStoreCount(store);
@@ -230,5 +231,7 @@ export function searchVecStore(store, queryVector, {
     id: r.id, title: r.title, type: r.type, visibility: r.visibility,
     rawScore: 1 - r.distance, // vec0 distance_metric=cosine: distance = 1 - cosine similarity
   }));
-  return finalizeRanked(candidates, { k, includeSecret, includeMirror, docs, excludeSource, events });
+  return finalizeRanked(candidates, {
+    k, includeSecret, includeMirror, docs, excludeSource, events, includeSuperseded, asOf,
+  });
 }

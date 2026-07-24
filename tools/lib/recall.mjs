@@ -3,7 +3,10 @@ import { createHash } from 'node:crypto';
 import { existsSync, statSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildCorpus, bm25Score, stemRu, tokenize } from './bm25.mjs';
-import { buildSupersededMap, buildHeatIndex, hygieneMultiplier, hygieneLabel } from './hygiene.mjs';
+import {
+  buildSupersededMap, buildHeatIndex, hygieneMultiplier, hygieneLabel,
+  isStaleForRecall, resolveAsOf,
+} from './hygiene.mjs';
 import { displayTitle, displayType, ROOT } from './okf.mjs';
 
 // Размерность проверяется только если OKF_EMBED_DIM задана явно. Иначе принимаем любую
@@ -109,32 +112,40 @@ export function sourceMatches(doc, source) {
 
 /**
  * Shared post-processing for a list of raw semantic candidates ({id, title, type, visibility,
- * rawScore}): tier filter, anti-echo (excludeSource), hygiene multiplier (supersedes/deprecated/
- * importance/decay — see docs/memory-hygiene.md), sort, slice to k. Used by BOTH the in-memory
- * JSON-index path (rankByQuery, below — candidates = every item, cosine over all of them) and the
- * sqlite-vec backend (lib/sqlite-index.mjs searchVecStore — candidates = the overfetched KNN pool
- * already scored by vec0's own distance metric). Keeping this in one place means the two backends
- * can never drift on tier/hygiene semantics, only on how `rawScore` gets computed.
+ * rawScore}): tier filter, anti-echo (excludeSource), conflict-aware stale drop (supersedes /
+ * invalid_at / valid_from — Э6/6.3, default exclude; opt-in includeSuperseded), hygiene multiplier
+ * (deprecated/importance/decay/heat — see docs/memory-hygiene.md), sort, slice to k. Used by BOTH
+ * the in-memory JSON-index path (rankByQuery) and the sqlite-vec backend (searchVecStore).
  * `docs` — full parsed concepts (for fm.supersedes etc.); without them (or for an id outside docs)
- * the hygiene multiplier is neutral (1) — same backward-compat contract as before this was split out.
- * `events` (Ф5, optional) — ledger events (tools/lib/ledger.mjs `readEvents()`); grouped into a
- * heatIndex ONCE per call (not per candidate) and folded into the same hygieneMultiplier pass —
- * no separate heat-ranking step, so bm25/semantic/hybrid all pick it up for free. Omitted (default
- * []) → heat is a no-op, byte-for-byte identical to before Ф5.
+ * the hygiene multiplier is neutral (1) and stale-drop is a no-op — same backward-compat as before.
+ * `events` (Ф5, optional) — ledger events; grouped into a heatIndex ONCE per call.
+ * `includeSuperseded` (default false) — when false, drop isStaleForRecall hits; when true, keep them
+ * demoted via SUPERSEDED_PENALTY (audit / history).
+ * `asOf` — ISO date or epoch ms for temporal bounds (default: now). See resolveAsOf.
  */
 export function finalizeRanked(candidates, {
   k = 5, includeSecret = false, includeMirror = false, docs = [], excludeSource = null, events = [],
+  includeSuperseded = false, asOf = null,
 } = {}) {
   const docsById = new Map(docs.map(d => [d.id, d]));
   const supersededMap = buildSupersededMap(docs);
   const heatIndex = events.length ? buildHeatIndex(events) : null;
+  const now = resolveAsOf(asOf);
   return candidates
     .filter(c => passesTier(c.visibility, { includeSecret, includeMirror }))
     .filter(c => !sourceMatches(docsById.get(c.id), excludeSource))
+    .filter(c => {
+      if (includeSuperseded || !docs.length) return true;
+      const doc = docsById.get(c.id);
+      if (!doc) return true;
+      return !isStaleForRecall(doc, supersededMap, { now, docsById });
+    })
     .map(c => {
       const doc = docsById.get(c.id);
-      const score = doc ? c.rawScore * hygieneMultiplier(doc, supersededMap, { heatIndex }) : c.rawScore;
-      const label = doc ? hygieneLabel(doc, supersededMap) : '';
+      const score = doc
+        ? c.rawScore * hygieneMultiplier(doc, supersededMap, { heatIndex, now })
+        : c.rawScore;
+      const label = doc ? hygieneLabel(doc, supersededMap, { now }) : '';
       // Prefer the live doc's fm for title/type: candidates may carry a cached title/type from an
       // index built before displayTitle/displayType existed (or before this doc had one at all) —
       // `c.title`/`c.type` remain the fallback for the rare id not present in `docs`.
@@ -288,16 +299,23 @@ export function keywordScore(text, query) {
 }
 
 /** Единый fallback-ранкер: BM25 по title/description/tags/телу концептов (docText), с той же
- *  гигиеной ранга, что и rankByQuery (supersedes/deprecated/importance/decay/heat — Ф5).
+ *  гигиеной ранга, что и rankByQuery (supersedes/deprecated/importance/decay/heat — Ф5) и
+ *  conflict-aware stale drop (Э6/6.3 — default exclude superseded/expired/not-yet-valid).
  *  Без сети, без зависимостей. Используется и gde, и okf-recall — один механизм фолбэба. */
-export function rankByKeywords(docs, query, { k = 5, includeSecret = false, includeMirror = true, excludeSource = null, events = [] } = {}) {
+export function rankByKeywords(docs, query, {
+  k = 5, includeSecret = false, includeMirror = true, excludeSource = null, events = [],
+  includeSuperseded = false, asOf = null,
+} = {}) {
+  const now = resolveAsOf(asOf);
+  const docsById = new Map(docs.map(d => [d.id, d]));
+  const supersededMap = buildSupersededMap(docs);
   const pool = docs
     .filter(d => !d.reserved)
     .filter(d => passesTier(d.fm.visibility, { includeSecret, includeMirror }))
-    .filter(d => !sourceMatches(d, excludeSource));
+    .filter(d => !sourceMatches(d, excludeSource))
+    .filter(d => includeSuperseded || !isStaleForRecall(d, supersededMap, { now, docsById }));
   if (!pool.length) return [];
   const corpus = buildCorpus(pool, { textOf: docText });
-  const supersededMap = buildSupersededMap(docs);
   const heatIndex = events.length ? buildHeatIndex(events) : null;
   return pool
     .map(d => {
@@ -306,11 +324,11 @@ export function rankByKeywords(docs, query, { k = 5, includeSecret = false, incl
         id: d.id,
         title: displayTitle(d.fm),
         type: displayType(d.fm),
-        score: rawScore * hygieneMultiplier(d, supersededMap, { heatIndex }),
+        score: rawScore * hygieneMultiplier(d, supersededMap, { heatIndex, now }),
         rawScore,
         file: d.file,
         body: d.body,
-        label: hygieneLabel(d, supersededMap),
+        label: hygieneLabel(d, supersededMap, { now }),
       };
     })
     .filter(r => r.rawScore > 0)
@@ -423,15 +441,19 @@ export async function recallSearch({
   // that predates Ф4 behaves byte-for-byte as before.
   vecStore = null, vecSearch = null, vecCount = null,
   k = 5, includeSecret = false, includeMirror = false, excludeSource = null, events = [],
+  // Э6/6.3 conflict-aware: default drop superseded/expired/not-yet-valid; audit via includeSuperseded;
+  // asOf = temporal point-in-time for valid_from/invalid_at (ISO or epoch ms).
+  includeSuperseded = false, asOf = null,
 }) {
-  const bm25 = () => rankByKeywords(docs, query, { k, includeSecret, includeMirror, excludeSource, events });
+  const rankOpts = { k, includeSecret, includeMirror, excludeSource, events, includeSuperseded, asOf };
+  const bm25 = () => rankByKeywords(docs, query, rankOpts);
   const useVec = !!(vecStore && vecSearch);
   const hasIndex = useVec
     ? (vecCount ? vecCount(vecStore) > 0 : true)
     : !!(idx && idx.items && Object.keys(idx.items).length > 0);
   const semanticRank = (qv, kk) => (useVec
-    ? vecSearch(vecStore, qv, { k: kk, includeSecret, includeMirror, docs, excludeSource, events })
-    : rankByQuery(idx.items, qv, { k: kk, includeSecret, includeMirror, docs, excludeSource, events }));
+    ? vecSearch(vecStore, qv, { ...rankOpts, k: kk, docs })
+    : rankByQuery(idx.items, qv, { ...rankOpts, k: kk, docs }));
 
   if (mode === 'bm25') return { hits: bm25(), mode: 'bm25', warning: null };
 
@@ -454,7 +476,7 @@ export async function recallSearch({
     }
     try {
       const poolK = Math.max(docs.length, 1);
-      const bm25Full = rankByKeywords(docs, query, { k: poolK, includeSecret, includeMirror, excludeSource });
+      const bm25Full = rankByKeywords(docs, query, { ...rankOpts, k: poolK });
       const qv = await embed(query);
       const semFull = semanticRank(qv, poolK);
       const fused = rrfFuse([bm25Full, semFull]);

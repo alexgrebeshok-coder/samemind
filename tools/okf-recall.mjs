@@ -90,6 +90,7 @@ export function parseArgs(argv = process.argv.slice(2)) {
   const includeSecret = argv.includes('--include-secret');
   const includeMirror = argv.includes('--include-mirror');
   const includeInbox = argv.includes('--include-inbox');
+  const includeSuperseded = argv.includes('--include-superseded');
   const noGlobal = argv.includes('--no-global');
   const ki = argv.indexOf('-k');
   const k = ki >= 0 ? parseInt(argv[ki + 1], 10) || 5 : 5;
@@ -100,11 +101,18 @@ export function parseArgs(argv = process.argv.slice(2)) {
   }
   const ei = argv.indexOf('--exclude-source');
   const excludeSource = ei >= 0 ? argv[ei + 1] : null;
+  const ai = argv.indexOf('--as-of');
+  const asOf = ai >= 0 ? argv[ai + 1] : null;
+  if (ai >= 0 && !asOf) throw new Error('--as-of requires an ISO date (e.g. 2025-06-01)');
   const positional = argv.filter((a, i) => !a.startsWith('-')
     && !(ki >= 0 && i === ki + 1)
     && !(mi >= 0 && i === mi + 1)
-    && !(ei >= 0 && i === ei + 1));
-  return { positional, k, includeSecret, includeMirror, includeInbox, mode, excludeSource, noGlobal };
+    && !(ei >= 0 && i === ei + 1)
+    && !(ai >= 0 && i === ai + 1));
+  return {
+    positional, k, includeSecret, includeMirror, includeInbox, mode, excludeSource, noGlobal,
+    includeSuperseded, asOf,
+  };
 }
 
 async function buildIndex(includeSecret, includeMirror, includeInbox) {
@@ -127,7 +135,9 @@ async function buildIndex(includeSecret, includeMirror, includeInbox) {
   console.log(`index (json): ${built} new/changed, ${reused} unchanged, ${total} total (model ${MODEL})`);
 }
 
-async function query(q, k, includeSecret, includeMirror, includeInbox, mode, excludeSource, noGlobal) {
+async function query(q, k, includeSecret, includeMirror, includeInbox, mode, excludeSource, noGlobal, {
+  includeSuperseded = false, asOf = null,
+} = {}) {
   // BM25 ranks over concept bodies, so we load the bundle in every mode.
   const docs = load({ includeSecret, includeMirror, includeInbox }).filter(d => !d.reserved);
   const store = await openBackend();
@@ -136,6 +146,7 @@ async function query(q, k, includeSecret, includeMirror, includeInbox, mode, exc
     docs, query: q, mode, embed, idx: idx || { items: {} }, k, includeSecret, includeMirror, excludeSource,
     vecStore: store, vecSearch: store ? searchVecStore : null, vecCount: store ? vecStoreCount : null,
     events: readEvents(ROOT), // Ф5: tiered heat, same hygiene pass
+    includeSuperseded, asOf,
   });
   if (store) closeVecStore(store);
 
@@ -147,6 +158,7 @@ async function query(q, k, includeSecret, includeMirror, includeInbox, mode, exc
   const globalHalf = await searchGlobalHalf(globalRoot, docs, {
     loadOpts: { includeSecret, includeMirror, includeInbox },
     query: q, mode, embed, k, includeSecret, includeMirror, excludeSource, model: MODEL,
+    includeSuperseded, asOf,
   });
   const { hits, mode: used, warning, dedupWarnings } = mergeWithGlobal(projectResult, globalHalf, k);
 
@@ -167,11 +179,19 @@ async function query(q, k, includeSecret, includeMirror, includeInbox, mode, exc
 
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
-  const { positional, k, includeSecret, includeMirror, includeInbox, mode, excludeSource, noGlobal } = parseArgs();
+  const {
+    positional, k, includeSecret, includeMirror, includeInbox, mode, excludeSource, noGlobal,
+    includeSuperseded, asOf,
+  } = parseArgs();
   try {
     if (positional[0] === 'index') await buildIndex(includeSecret, includeMirror, includeInbox);
-    else if (positional.length) await query(positional.join(' '), k, includeSecret, includeMirror, includeInbox, mode, excludeSource, noGlobal);
-    else console.log('Usage: okf-recall.mjs index | "<query>" [-k N] [--mode bm25|semantic|hybrid|auto] [--include-mirror] [--include-secret] [--include-inbox] [--exclude-source <id>] [--no-global]');
+    else if (positional.length) {
+      await query(positional.join(' '), k, includeSecret, includeMirror, includeInbox, mode, excludeSource, noGlobal, {
+        includeSuperseded, asOf,
+      });
+    } else {
+      console.log('Usage: okf-recall.mjs index | "<query>" [-k N] [--mode bm25|semantic|hybrid|auto] [--include-mirror] [--include-secret] [--include-inbox] [--include-superseded] [--as-of <ISO>] [--exclude-source <id>] [--no-global]');
+    }
   } catch (e) {
     console.error('Error:', e.message);
     if (mode !== 'bm25') console.error('Hint: --mode bm25 searches without an endpoint; --mode auto (default) enables semantic search when OKF_EMBED_URL is set.');

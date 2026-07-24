@@ -170,13 +170,15 @@ no corpus scan required — same append-only spirit, never delete, only label:
 | `superseded_by` | `/path.md` (or a list) — the reverse of `supersedes`, pointing forward from the OLD fact to its replacement | You, or a human applying a `reconcile` proposal |
 
 Absent fields = always valid — every concept written before Ф2 is
-unaffected. `invalid_at` in the past, or a non-empty `superseded_by`, marks a
-doc **temporally superseded**: same `SUPERSEDED_PENALTY` rank multiplier as
-`supersedes`/`deprecated`, never hidden, labeled `⤳ superseded by
-/concepts/new.md` or `⤳ superseded (invalid_at 2026-01-01)` in recall/gde
-output. `valid_from` is parsed but not yet used for ranking (a
-not-yet-valid future-dated fact isn't penalized) — a future-dated fact
-predating its own `valid_from` is a corner case for a later phase, not Ф2.
+unaffected. As of Э6/6.3, recall **excludes by default** any concept that is
+stale as-of now: named by another concept's `supersedes` (`buildSupersededMap`),
+own `superseded_by` pointing at an existing concept, `invalid_at` ≤ now, or
+`valid_from` > now. Opt-in audit: `--include-superseded` (CLI / API
+`includeSuperseded: true`) re-includes them demoted by `SUPERSEDED_PENALTY` and
+labeled `⤳ superseded by /concepts/new.md` / `invalid_at …` /
+`not yet valid (valid_from …)`. Point-in-time: `--as-of <ISO>` (API `asOf`)
+evaluates the same bounds against that instant. `deprecated` is still
+demote-only (not hard-dropped). Cards without these fields behave as before.
 
 ### `tools/reconcile.mjs` — proposals, not writes
 
