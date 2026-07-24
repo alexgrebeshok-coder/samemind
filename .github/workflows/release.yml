@@ -53,21 +53,19 @@ jobs:
       id-token: write # required by `npm publish --provenance`
     steps:
       - uses: actions/checkout@v4
-      # token auth + provenance attestation via OIDC id-token: OIDC *trusted publishing*
-      # (npm exchanging id-token for a short-lived publish credential with no NPM_TOKEN at all)
-      # never authenticated here — ENEEDAUTH, the npmjs.com trusted-publisher config didn't
-      # match this owner/repo/workflow. Reverting to the token-auth path that published
-      # 0.6.0-0.6.1: `registry-url` makes setup-node write
-      # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` into .npmrc, and NODE_AUTH_TOKEN
-      # (below) is what fills that placeholder. `id-token: write` stays and `--provenance` still
-      # gets attested — provenance signing rides its own OIDC exchange with Sigstore
-      # independent of *publish* auth, so token-based auth + provenance is the standard,
-      # documented npm combination (not mutually exclusive with trusted publishing, just the
-      # older/simpler half of it).
+      # OIDC trusted publishing (v0.7.0+): NO NPM_TOKEN. npm detects the GitHub Actions OIDC
+      # environment (id-token: write above) and exchanges it for a short-lived publish
+      # credential against the npmjs.com Trusted Publisher configured for
+      # alexgrebeshok-coder/samemind + workflow release.yml. NODE_AUTH_TOKEN is deliberately
+      # NOT set on the publish step — setting it makes npm take the legacy token path instead
+      # of OIDC. `registry-url` stays so npm targets the public registry; `--provenance` rides
+      # the same OIDC identity. Requires npm >= 11.5.1, hence the upgrade below (node 22 ships 10.x).
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'
+      - name: Upgrade npm for OIDC trusted publishing (needs >= 11.5.1)
+        run: npm install -g npm@latest
 
       - name: Verify tag matches package.json version
         run: |
@@ -79,10 +77,6 @@ jobs:
           fi
           echo "tag v$TAG_VERSION matches package.json version $PKG_VERSION"
 
-      # NPM_TOKEN (repo secret): the actual publish auth. `--provenance` still needs
-      # `id-token: write` above — that's a separate OIDC exchange for the Sigstore
-      # attestation, unrelated to the registry auth token.
-      - name: Publish to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # OIDC trusted publishing: no env token — npm uses the GitHub OIDC identity.
+      - name: Publish to npm (OIDC trusted publishing — no token)
         run: npm publish --provenance --access public
