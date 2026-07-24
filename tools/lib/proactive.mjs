@@ -99,7 +99,9 @@ export function formatPack(hits, docsById, {
     const body = doc?.body || '';
     const snip = extractSnippet(body, query, { contextLines: snippetLines })
       || body.slice(0, 400).replace(/\s+/g, ' ').trim();
-    const block = `### ${h.id} — ${title}\n${snip}`.trim();
+    // Э6/6.1: surface conflict / supersede labels from rank hits so proactive pack shows the fight.
+    const label = h.label ? ` ${h.label}` : '';
+    const block = `### ${h.id} — ${title}${label}\n${snip}`.trim();
     if (used + block.length + 2 > maxChars && blocks.length) break;
     blocks.push(block);
     used += block.length + 2;
@@ -190,6 +192,8 @@ export async function proactiveRecall({
       score: h.score,
       title: h.title || docsById.get(h.id)?.fm?.title || '',
       type: h.type || docsById.get(h.id)?.fm?.type || '',
+      // Э6: pass through supersede/conflict labels from rank (empty string if clean)
+      label: h.label || '',
     })),
     pack: pack.text,
     tokens: pack.tokens,

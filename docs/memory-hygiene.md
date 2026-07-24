@@ -63,6 +63,26 @@ Use it to hand-curate weight independent of recency: a load-bearing
 `Identity`/`EngineRule` node can be pinned above 3 so it never gets crowded
 out by decay or by noisier concepts with better keyword overlap.
 
+### `authority` (Э6/6.1)
+
+Optional trust signal for **live contradiction pairs** (same `type`, similar
+title/tags, neither supersedes the other — see `tools/consolidate.mjs`
+Contradictions section / `findContradictions` in `tools/lib/hygiene.mjs`).
+
+```yaml
+authority: canon      # or: derived | observed
+# authority: 5        # or a number (higher = more trusted)
+```
+
+- Enum order: `canon` > `derived` > `observed` (mapped to 3 / 2 / 1).
+- Absent → **neutral** (neither better nor worse): when either side of a pair
+  lacks authority, that axis is skipped and recency decides next.
+- Does **not** change score for non-conflicting hits. When both members of a
+  contradiction pair appear in a recall top-k, they are ordered
+  **authority ↓ → `valid_from`/`timestamp` fresher ↓ → raw score**, and the
+  loser is labeled `⚔ conflicts with <winnerId>` (both BM25 and semantic;
+  proactive inherits the label in the pack).
+
 ### `timestamp` (already standard)
 
 No new field — hygiene just starts reading the existing OKF `timestamp` to

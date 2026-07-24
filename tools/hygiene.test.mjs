@@ -20,10 +20,11 @@ import {
   buildHeatIndex, heatScore, heatTier, heatMultiplier,
   SUPERSEDED_PENALTY, DEFAULT_IMPORTANCE, DECAY_AFTER_DAYS, DECAY_FULL_DAYS, DECAY_MIN_MULTIPLIER,
   HEAT_WINDOW_DAYS,
+  titleTokens, jaccard, findContradictions,
+  authorityValue, docRecencyMs, conflictLabel, compareConflictPair, AUTHORITY_LEVELS,
 } from './lib/hygiene.mjs';
-import { rankByKeywords, rankByQuery, recallSearch } from './lib/recall.mjs';
+import { rankByKeywords, rankByQuery, recallSearch, applyConflictTiebreak } from './lib/recall.mjs';
 import { forget, setDeprecated } from './forget.mjs';
-import { titleTokens, jaccard, findContradictions } from './consolidate.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const QUERY = join(HERE, 'okf-query.mjs');
@@ -1059,5 +1060,193 @@ describe('bi-temporal — recall: default excludes stale; includeSuperseded demo
     assert.equal(audit[0].id, 'concepts/current');
     assert.equal(audit[1].id, 'concepts/expired');
     assert.match(audit[1].label, /⤳ superseded/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10. authority / recency conflict tiebreak (Э6 / 6.1)
+// ---------------------------------------------------------------------------
+
+describe('authority helpers (Э6/6.1)', () => {
+  it('authorityValue: number, enum, absent→null, junk→null', () => {
+    assert.equal(authorityValue({ fm: { authority: 5 } }), 5);
+    assert.equal(authorityValue({ fm: { authority: '4' } }), 4);
+    assert.equal(authorityValue({ fm: { authority: 'canon' } }), AUTHORITY_LEVELS.canon);
+    assert.equal(authorityValue({ fm: { authority: 'derived' } }), AUTHORITY_LEVELS.derived);
+    assert.equal(authorityValue({ fm: { authority: 'observed' } }), AUTHORITY_LEVELS.observed);
+    assert.equal(authorityValue({ fm: { authority: 'CANON' } }), AUTHORITY_LEVELS.canon);
+    assert.equal(authorityValue({ fm: {} }), null);
+    assert.equal(authorityValue({ fm: { authority: '' } }), null);
+    assert.equal(authorityValue({ fm: { authority: 'nope' } }), null);
+  });
+
+  it('docRecencyMs: valid_from preferred over timestamp', () => {
+    assert.equal(
+      docRecencyMs({ fm: { valid_from: '2024-06-01T00:00:00Z', timestamp: '2020-01-01T00:00:00Z' } }),
+      Date.parse('2024-06-01T00:00:00Z'),
+    );
+    assert.equal(
+      docRecencyMs({ fm: { timestamp: '2023-01-01T00:00:00Z' } }),
+      Date.parse('2023-01-01T00:00:00Z'),
+    );
+    assert.equal(docRecencyMs({ fm: {} }), null);
+  });
+
+  it('conflictLabel shape', () => {
+    assert.equal(conflictLabel('concepts/other'), '⚔ conflicts with concepts/other');
+  });
+
+  it('compareConflictPair: authority then recency then score', () => {
+    const high = { fm: { authority: 'canon', timestamp: '2020-01-01T00:00:00Z' } };
+    const low = { fm: { authority: 'observed', timestamp: '2025-01-01T00:00:00Z' } };
+    assert.ok(compareConflictPair(high, low, 1, 9) < 0); // high wins despite lower score
+    const older = { fm: { timestamp: '2020-01-01T00:00:00Z' } };
+    const newer = { fm: { timestamp: '2025-01-01T00:00:00Z' } };
+    assert.ok(compareConflictPair(newer, older, 1, 1) < 0);
+    // one missing authority → neutral on that axis → recency decides
+    const withAuth = { fm: { authority: 5, timestamp: '2020-01-01T00:00:00Z' } };
+    const noAuth = { fm: { timestamp: '2025-01-01T00:00:00Z' } };
+    assert.ok(compareConflictPair(noAuth, withAuth, 1, 1) < 0);
+  });
+});
+
+/** Two live facts that findContradictions flags (same type, near-duplicate titles, no supersede). */
+function conflictPairDocs({ authorityA, authorityB, tsA, tsB, bodyBoost = '' } = {}) {
+  return [
+    {
+      id: 'concepts/retrieval-strategy', reserved: false, supersedes: [], supersededBy: [],
+      fm: {
+        title: 'Retrieval strategy', type: 'Concept', visibility: 'internal', tags: ['memory'],
+        ...(authorityA != null ? { authority: authorityA } : {}),
+        ...(tsA ? { timestamp: tsA } : {}),
+      },
+      body: `Retrieval strategy for memory ranking and recall. ${bodyBoost}`,
+    },
+    {
+      id: 'concepts/retrieval-approach', reserved: false, supersedes: [], supersededBy: [],
+      fm: {
+        title: 'Retrieval approach', type: 'Concept', visibility: 'internal', tags: ['memory'],
+        ...(authorityB != null ? { authority: authorityB } : {}),
+        ...(tsB ? { timestamp: tsB } : {}),
+      },
+      body: `Retrieval approach for memory ranking and recall. ${bodyBoost}`,
+    },
+    {
+      id: 'concepts/unrelated-widget', reserved: false, supersedes: [], supersededBy: [],
+      fm: { title: 'Unrelated widget', type: 'Concept', visibility: 'internal' },
+      body: 'Completely different topic about widgets and bolts.',
+    },
+  ];
+}
+
+describe('Э6/6.1 — authority/recency tiebreak + conflict highlight', () => {
+  it('(a) conflicting pair ordered by authority (bm25 + semantic)', () => {
+    // Lower raw BM25 for the high-authority doc (shorter body) so score alone would put it second;
+    // authority must flip the pair.
+    const docs = conflictPairDocs({
+      authorityA: 'observed', // strategy
+      authorityB: 'canon',     // approach — wins
+      tsA: '2025-01-01T00:00:00Z',
+      tsB: '2020-01-01T00:00:00Z',
+    });
+    // Make strategy score higher via more query-term density, still authority on approach wins.
+    docs[0].body = 'Retrieval strategy retrieval strategy memory ranking recall. '.repeat(4);
+    docs[1].body = 'Retrieval approach for memory ranking and recall.';
+
+    const found = findContradictions(docs);
+    assert.ok(found.some(c =>
+      (c.a === 'concepts/retrieval-strategy' && c.b === 'concepts/retrieval-approach')
+      || (c.b === 'concepts/retrieval-strategy' && c.a === 'concepts/retrieval-approach')));
+
+    const ranked = rankByKeywords(docs, 'retrieval strategy memory ranking', { k: 5 });
+    const ids = ranked.map(r => r.id);
+    const iApproach = ids.indexOf('concepts/retrieval-approach');
+    const iStrategy = ids.indexOf('concepts/retrieval-strategy');
+    assert.ok(iApproach >= 0 && iStrategy >= 0, `both in hits: ${ids.join(',')}`);
+    assert.ok(iApproach < iStrategy, `canon before observed: ${ids.join(',')}`);
+
+    // semantic path (identical vectors → equal rawScore; authority decides)
+    const items = {
+      'concepts/retrieval-strategy': { vector: [1, 0], title: 'Retrieval strategy', type: 'Concept', visibility: 'internal' },
+      'concepts/retrieval-approach': { vector: [1, 0], title: 'Retrieval approach', type: 'Concept', visibility: 'internal' },
+      'concepts/unrelated-widget': { vector: [0, 1], title: 'Unrelated widget', type: 'Concept', visibility: 'internal' },
+    };
+    const sem = rankByQuery(items, [1, 0], { k: 5, docs });
+    assert.equal(sem[0].id, 'concepts/retrieval-approach');
+    assert.equal(sem[1].id, 'concepts/retrieval-strategy');
+  });
+
+  it('(b) equal/absent authority → ordered by timestamp freshness', () => {
+    const docs = conflictPairDocs({
+      tsA: '2020-01-01T00:00:00Z', // strategy older
+      tsB: '2025-06-01T00:00:00Z', // approach fresher
+    });
+    // Equal bodies so BM25 scores match closely
+    docs[0].body = 'Retrieval strategy for memory ranking and recall path.';
+    docs[1].body = 'Retrieval approach for memory ranking and recall path.';
+
+    const ranked = rankByKeywords(docs, 'retrieval memory ranking', { k: 5 });
+    const ids = ranked.map(r => r.id);
+    const iApproach = ids.indexOf('concepts/retrieval-approach');
+    const iStrategy = ids.indexOf('concepts/retrieval-strategy');
+    assert.ok(iApproach >= 0 && iStrategy >= 0);
+    assert.ok(iApproach < iStrategy, `fresher first: ${ids.join(',')}`);
+  });
+
+  it('(c) loser gets ⚔ conflicts with <winner>', () => {
+    const docs = conflictPairDocs({
+      authorityA: 1,
+      authorityB: 5,
+    });
+    const ranked = rankByKeywords(docs, 'retrieval memory', { k: 5 });
+    const loser = ranked.find(r => r.id === 'concepts/retrieval-strategy');
+    const winner = ranked.find(r => r.id === 'concepts/retrieval-approach');
+    assert.ok(loser && winner);
+    assert.match(loser.label, /⚔ conflicts with concepts\/retrieval-approach/);
+    assert.equal(winner.label.includes('conflicts with'), false);
+  });
+
+  it('(d) corpus without conflicts/authority — order+labels byte-stable vs score-only', () => {
+    const docs = [
+      {
+        id: 'projects/lumen', reserved: false, supersedes: [], supersededBy: [],
+        fm: { title: 'Lumen notes editor', type: 'Project', visibility: 'internal' },
+        body: 'Lumen is a notes editor project with graph links.',
+      },
+      {
+        id: 'projects/atlas', reserved: false, supersedes: [], supersededBy: [],
+        fm: { title: 'Atlas research corpus', type: 'Project', visibility: 'internal' },
+        body: 'Atlas holds the research corpus and search index.',
+      },
+      {
+        id: 'concepts/quartz', reserved: false, supersedes: [], supersededBy: [],
+        fm: { title: 'Quartz mineral', type: 'Concept', visibility: 'internal' },
+        body: 'Quartz is a mineral used in industrial applications.',
+      },
+    ];
+    assert.deepEqual(findContradictions(docs), []);
+    const ranked = rankByKeywords(docs, 'lumen notes editor', { k: 5 });
+    // No conflict labels on any hit
+    for (const r of ranked) {
+      assert.equal(r.label, '');
+    }
+    // applyConflictTiebreak is identity when no pairs in hits
+    const same = applyConflictTiebreak(ranked, docs);
+    assert.equal(same, ranked); // same array reference
+    assert.equal(ranked[0].id, 'projects/lumen');
+  });
+
+  it('applyConflictTiebreak does not reorder non-conflicting neighbors', () => {
+    const docs = conflictPairDocs({ authorityA: 'observed', authorityB: 'canon' });
+    const hits = [
+      { id: 'concepts/unrelated-widget', score: 10, label: '' },
+      { id: 'concepts/retrieval-strategy', score: 9, label: '' }, // observed, higher raw
+      { id: 'concepts/retrieval-approach', score: 8, label: '' }, // canon, should rise above strategy only
+    ];
+    const out = applyConflictTiebreak(hits, docs);
+    assert.equal(out[0].id, 'concepts/unrelated-widget'); // untouched top
+    assert.equal(out[1].id, 'concepts/retrieval-approach');
+    assert.equal(out[2].id, 'concepts/retrieval-strategy');
+    assert.match(out[2].label, /⚔ conflicts with concepts\/retrieval-approach/);
   });
 });

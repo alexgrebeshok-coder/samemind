@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { buildCorpus, bm25Score, stemRu, tokenize } from './bm25.mjs';
 import {
   buildSupersededMap, buildHeatIndex, hygieneMultiplier, hygieneLabel,
-  isStaleForRecall, resolveAsOf,
+  isStaleForRecall, resolveAsOf, compareConflictPair, conflictLabel,
+  findContradictions, isDeprecated,
 } from './hygiene.mjs';
 import { displayTitle, displayType, ROOT } from './okf.mjs';
 
@@ -111,11 +112,91 @@ export function sourceMatches(doc, source) {
 }
 
 /**
+ * Э6/6.1 — among recall hits, if a contradiction pair (findContradictions) of two LIVE facts
+ * both appear, order the pair by authority ↓ → recency ↓ → score, and label the loser
+ * `⚔ conflicts with <winnerId>`. Non-conflicting hits keep their relative order.
+ *
+ * Skips pairs where either side is already "resolved" by other hygiene signals:
+ *   - superseded / temporal stale (isStaleForRecall)
+ *   - deprecated (forget) — already demoted+labeled; not a live fight
+ * So includeSuperseded audit hits and deprecated twins keep their pre-6.1 labels only.
+ *
+ * No pairs / empty docs → returns the same array reference (byte-identical backward compat).
+ */
+export function applyConflictTiebreak(hits, docs) {
+  if (!hits?.length || !docs?.length) return hits;
+  const pairs = findContradictions(docs);
+  if (!pairs.length) return hits;
+
+  const hitIds = new Set(hits.map(h => h.id));
+  const active = pairs.filter(p => hitIds.has(p.a) && hitIds.has(p.b));
+  if (!active.length) return hits;
+
+  const docsById = new Map(docs.map(d => [d.id, d]));
+  const supersededMap = buildSupersededMap(docs);
+  const isLiveConflictMember = (doc) => {
+    if (!doc) return false;
+    if (isDeprecated(doc)) return false;
+    if (isStaleForRecall(doc, supersededMap, { docsById })) return false;
+    return true;
+  };
+
+  // Shallow-copy hits so we can swap/label without mutating the caller's array elements.
+  const out = hits.map(h => ({ ...h }));
+  const indexOf = id => out.findIndex(h => h.id === id);
+  // peer → set of winners this id loses to (for multi-pair labels)
+  const losesTo = new Map();
+
+  for (const { a, b } of active) {
+    const ia = indexOf(a);
+    const ib = indexOf(b);
+    if (ia < 0 || ib < 0) continue;
+    const docA = docsById.get(a);
+    const docB = docsById.get(b);
+    // Only two live facts — skip if either is already superseded/expired/deprecated.
+    if (!isLiveConflictMember(docA) || !isLiveConflictMember(docB)) continue;
+
+    const cmp = compareConflictPair(docA, docB, out[ia].score, out[ib].score);
+    // cmp < 0 → a wins; > 0 → b wins; 0 → keep existing order; later = loser for label.
+    let winId, loseId, iWin, iLose;
+    if (cmp < 0) { winId = a; loseId = b; iWin = ia; iLose = ib; }
+    else if (cmp > 0) { winId = b; loseId = a; iWin = ib; iLose = ia; }
+    else if (ia < ib) { winId = a; loseId = b; iWin = ia; iLose = ib; }
+    else { winId = b; loseId = a; iWin = ib; iLose = ia; }
+
+    if (iLose < iWin) {
+      // Swap so winner sits above loser; other hits keep slots.
+      const tmp = out[iWin];
+      out[iWin] = out[iLose];
+      out[iLose] = tmp;
+    }
+    if (!losesTo.has(loseId)) losesTo.set(loseId, new Set());
+    losesTo.get(loseId).add(winId);
+  }
+
+  if (!losesTo.size) {
+    // All candidate pairs were non-live (deprecated/stale) — no order/label change.
+    // Still return `out` (shallow copies) only if we already decided to mutate… we didn't
+    // touch labels/order, but we did map-copy. Prefer original reference for identity tests
+    // when nothing applied.
+    return hits;
+  }
+  for (const h of out) {
+    const peers = losesTo.get(h.id);
+    if (!peers?.size) continue;
+    const tag = conflictLabel([...peers].sort().join(', '));
+    h.label = h.label ? `${h.label} ${tag}` : tag;
+  }
+  return out;
+}
+
+/**
  * Shared post-processing for a list of raw semantic candidates ({id, title, type, visibility,
  * rawScore}): tier filter, anti-echo (excludeSource), conflict-aware stale drop (supersedes /
  * invalid_at / valid_from — Э6/6.3, default exclude; opt-in includeSuperseded), hygiene multiplier
- * (deprecated/importance/decay/heat — see docs/memory-hygiene.md), sort, slice to k. Used by BOTH
- * the in-memory JSON-index path (rankByQuery) and the sqlite-vec backend (searchVecStore).
+ * (deprecated/importance/decay/heat — see docs/memory-hygiene.md), sort, slice to k, then
+ * authority/recency conflict tiebreak + label (Э6/6.1). Used by BOTH the in-memory JSON-index
+ * path (rankByQuery) and the sqlite-vec backend (searchVecStore).
  * `docs` — full parsed concepts (for fm.supersedes etc.); without them (or for an id outside docs)
  * the hygiene multiplier is neutral (1) and stale-drop is a no-op — same backward-compat as before.
  * `events` (Ф5, optional) — ledger events; grouped into a heatIndex ONCE per call.
@@ -131,7 +212,7 @@ export function finalizeRanked(candidates, {
   const supersededMap = buildSupersededMap(docs);
   const heatIndex = events.length ? buildHeatIndex(events) : null;
   const now = resolveAsOf(asOf);
-  return candidates
+  const ranked = candidates
     .filter(c => passesTier(c.visibility, { includeSecret, includeMirror }))
     .filter(c => !sourceMatches(docsById.get(c.id), excludeSource))
     .filter(c => {
@@ -155,6 +236,7 @@ export function finalizeRanked(candidates, {
     })
     .sort((a, b) => b.score - a.score)
     .slice(0, k);
+  return applyConflictTiebreak(ranked, docs);
 }
 
 /**
@@ -299,8 +381,9 @@ export function keywordScore(text, query) {
 }
 
 /** Единый fallback-ранкер: BM25 по title/description/tags/телу концептов (docText), с той же
- *  гигиеной ранга, что и rankByQuery (supersedes/deprecated/importance/decay/heat — Ф5) и
- *  conflict-aware stale drop (Э6/6.3 — default exclude superseded/expired/not-yet-valid).
+ *  гигиеной ранга, что и rankByQuery (supersedes/deprecated/importance/decay/heat — Ф5),
+ *  conflict-aware stale drop (Э6/6.3 — default exclude superseded/expired/not-yet-valid) и
+ *  authority/recency conflict tiebreak + label (Э6/6.1).
  *  Без сети, без зависимостей. Используется и gde, и okf-recall — один механизм фолбэба. */
 export function rankByKeywords(docs, query, {
   k = 5, includeSecret = false, includeMirror = true, excludeSource = null, events = [],
@@ -317,7 +400,7 @@ export function rankByKeywords(docs, query, {
   if (!pool.length) return [];
   const corpus = buildCorpus(pool, { textOf: docText });
   const heatIndex = events.length ? buildHeatIndex(events) : null;
-  return pool
+  const ranked = pool
     .map(d => {
       const rawScore = bm25Score(query, d.id, corpus);
       return {
@@ -334,6 +417,7 @@ export function rankByKeywords(docs, query, {
     .filter(r => r.rawScore > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, k);
+  return applyConflictTiebreak(ranked, docs);
 }
 
 const FALLBACK_WARN_OFF = 'semantic off, BM25 fallback — set OKF_EMBED_URL for semantic search';
@@ -481,7 +565,8 @@ export async function recallSearch({
       const semFull = semanticRank(qv, poolK);
       const fused = rrfFuse([bm25Full, semFull]);
       const reranked = await maybeRerank(query, fused, docs);
-      return { hits: reranked.slice(0, k), mode: 'hybrid', warning: null };
+      // Э6/6.1: hybrid path bypasses finalizeRanked's post-slice tiebreak — apply here too.
+      return { hits: applyConflictTiebreak(reranked.slice(0, k), docs), mode: 'hybrid', warning: null };
     } catch (e) {
       return { hits: bm25(), mode: 'bm25', warning: `hybrid unavailable (${e.message}) — BM25 fallback` };
     }

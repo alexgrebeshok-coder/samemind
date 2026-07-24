@@ -142,4 +142,48 @@ describe('proactiveRecall', () => {
     assert.ok(r.pack.includes('concepts/new-price'));
     assert.ok(!r.pack.includes('concepts/old-price'));
   });
+
+  // (д) Э6/6.1 — proactive inherits conflict highlight + authority order
+  it('(д) proactive inherits ⚔ conflicts with label and authority order', async () => {
+    const conflictDocs = [
+      {
+        id: 'concepts/retrieval-strategy',
+        reserved: false,
+        supersedes: [],
+        supersededBy: [],
+        fm: {
+          title: 'Retrieval strategy', type: 'Concept', visibility: 'internal', tags: ['memory'],
+          authority: 'observed',
+        },
+        body: 'Retrieval strategy for memory ranking and recall path one.',
+      },
+      {
+        id: 'concepts/retrieval-approach',
+        reserved: false,
+        supersedes: [],
+        supersededBy: [],
+        fm: {
+          title: 'Retrieval approach', type: 'Concept', visibility: 'internal', tags: ['memory'],
+          authority: 'canon',
+        },
+        body: 'Retrieval approach for memory ranking and recall path two.',
+      },
+    ];
+    const r = await proactiveRecall({
+      docs: conflictDocs,
+      query: 'retrieval strategy memory ranking approach',
+      k: 5,
+      force: true,
+      ...noThreshold,
+    });
+    assert.equal(r.skipped, false);
+    const ids = r.hits.map(h => h.id);
+    const iApproach = ids.indexOf('concepts/retrieval-approach');
+    const iStrategy = ids.indexOf('concepts/retrieval-strategy');
+    assert.ok(iApproach >= 0 && iStrategy >= 0);
+    assert.ok(iApproach < iStrategy, `canon before observed in proactive: ${ids.join(',')}`);
+    const loser = r.hits.find(h => h.id === 'concepts/retrieval-strategy');
+    assert.match(loser.label, /⚔ conflicts with concepts\/retrieval-approach/);
+    assert.match(r.pack, /⚔ conflicts with/);
+  });
 });

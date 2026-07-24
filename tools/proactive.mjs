@@ -86,6 +86,7 @@ async function main() {
           id: h.id, score: h.score,
           title: h.title || docsById.get(h.id)?.fm?.title || '',
           type: h.type || '',
+          label: h.label || '',
         })),
         pack: pack.text, tokens: pack.tokens, chars: pack.chars,
         included: pack.included,

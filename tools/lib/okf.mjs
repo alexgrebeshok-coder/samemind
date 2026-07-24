@@ -228,6 +228,10 @@ export function parse(file, root = ROOT) {
   // valid_from / invalid_at: ISO-date bi-temporal bounds. No special normalization needed —
   // the generic key:value branch above already parses them as plain strings; absent = always
   // valid (backward compatible with every existing concept that predates Ф2).
+  // authority: optional number (higher = more trusted) or enum canon|derived|observed —
+  // also left as the raw string/number from parseFrontmatter; consumers use
+  // hygiene.mjs `authorityValue()` (absent = neutral). Backward compatible: cards without
+  // the field behave exactly as before (Э6/6.1).
   return {
     file, id, base, reserved: RESERVED.has(base), fm, hasFM, body, links, relations,
     supersedes, supersededBy,

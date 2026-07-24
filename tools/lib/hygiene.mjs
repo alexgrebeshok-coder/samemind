@@ -318,6 +318,134 @@ export function hygieneLabel(doc, supersededMap, { now = Date.now() } = {}) {
   return '';
 }
 
+// --- authority / conflict tiebreak (Э6 / 6.1) -------------------------------------------------
+// When two LIVE facts contradict each other (same type, similar title/tags, neither supersedes
+// the other — see tools/consolidate.mjs `findContradictions`) and BOTH appear in a recall hit
+// list, we do NOT drop either (unlike supersede-gate 6.3). We only: (1) order the pair by
+// authority ↓ → recency ↓ → existing score, and (2) label the loser so the agent sees the fight.
+// Cards without authority / without a contradiction pair → byte-identical to pre-6.1 ranking.
+
+/** Named authority tiers → comparable numbers (higher = more trusted). */
+export const AUTHORITY_LEVELS = Object.freeze({
+  canon: 3,
+  derived: 2,
+  observed: 1,
+});
+
+/**
+ * `authority` frontmatter: number (higher = more trusted) OR enum
+ * `canon` > `derived` > `observed`. Absent / unparseable → `null` (neutral: neither better nor
+ * worse — when comparing, only both-set values decide; otherwise fall through to recency/score).
+ * Frontmatter mini-parser yields strings; Number() accepts "5" the same way importance does.
+ */
+export function authorityValue(doc) {
+  const raw = doc?.fm?.authority;
+  if (raw === undefined || raw === null || raw === '') return null;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  const s = String(raw).trim().toLowerCase();
+  if (!s) return null;
+  if (Object.prototype.hasOwnProperty.call(AUTHORITY_LEVELS, s)) return AUTHORITY_LEVELS[s];
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Recency for conflict tiebreak: prefer `valid_from`, else `timestamp`. Epoch ms or null if
+ * neither is a parseable date (null loses to any real date; two nulls fall through to score).
+ */
+export function docRecencyMs(doc) {
+  const raw = doc?.fm?.valid_from || doc?.fm?.timestamp;
+  if (!raw) return null;
+  const t = Date.parse(raw);
+  return Number.isFinite(t) ? t : null;
+}
+
+/** Inline label on the losing side of a live contradiction pair (Э6/6.1). */
+export function conflictLabel(peerId) {
+  return `⚔ conflicts with ${peerId}`;
+}
+
+/**
+ * Compare two docs inside a contradiction pair for recall order.
+ * Returns <0 if `a` should rank above `b`, >0 if `b` above `a`, 0 if equal on all axes.
+ * Axes (strict order): authority (both set) ↓ → recency ↓ → `scoreA`/`scoreB` (caller-supplied
+ * pre-tiebreak scores, higher better). Missing authority on either side → skip that axis
+ * (neutral). Missing recency on either side → skip that axis.
+ */
+export function compareConflictPair(docA, docB, scoreA = 0, scoreB = 0) {
+  const av = authorityValue(docA);
+  const bv = authorityValue(docB);
+  // Higher authority first: av > bv → a wins → negative (standard sort comparator).
+  if (av != null && bv != null && av !== bv) return bv - av;
+
+  const ra = docRecencyMs(docA);
+  const rb = docRecencyMs(docB);
+  if (ra != null && rb != null && ra !== rb) return rb - ra; // fresher first
+
+  if (scoreA !== scoreB) return scoreB - scoreA;
+  return 0;
+}
+
+// --- contradiction pairs (shared with tools/consolidate.mjs) ---------------------------------
+// Lived in consolidate.mjs first; lifted here so recall can call findContradictions without a
+// consolidate → sqlite-index → recall → consolidate import cycle. consolidate.mjs re-exports
+// these for its CLI + reconcile.mjs. Logic is unchanged (title/tag Jaccard, no embeddings).
+
+/** Jaccard(title ∪ tags tokens) ≥ this → candidate contradiction pair for a human. */
+export const CONTRADICTION_SIM = 0.34;
+const CONTRADICTION_STOPWORDS = new Set(['the', 'a', 'an', 'and', 'of', 'for', 'to', 'in', 'on']);
+
+/** Tokens of a concept's title+tags: lower, split on non-letter/digit, stopwords/short dropped. */
+export function titleTokens(d) {
+  const text = `${d.fm?.title || ''} ${(d.fm?.tags || []).join(' ')}`.toLowerCase();
+  return new Set(text.split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 3 && !CONTRADICTION_STOPWORDS.has(w)));
+}
+
+/** Jaccard similarity of two token sets — 0 if either is empty. */
+export function jaccard(a, b) {
+  if (!a.size || !b.size) return 0;
+  let inter = 0;
+  for (const x of a) if (b.has(x)) inter++;
+  return inter / (a.size + b.size - inter);
+}
+
+/** ids (pathToId) this doc's `supersedes` points at — pure string mapping, no filesystem. */
+const supersedesTargets = d => (d.supersedes || []).map(pathToId);
+/** ids (pathToId) this doc's `superseded_by` points at — reverse pointer, same shape (Ф2). */
+const supersededByTargets = d => (d.supersededBy || []).map(pathToId);
+
+/**
+ * Pairs of same-type concepts with title/tag similarity ≥ threshold, where neither supersedes
+ * (or is marked superseded_by) the other — candidates for a human to resolve (merge, supersede,
+ * or leave be). Deliberately simple: title/tag token Jaccard, no embeddings required.
+ * Same function tools/consolidate.mjs used; recall (Э6/6.1) reuses it for tiebreak/labels.
+ */
+export function findContradictions(canonDocs, { threshold = CONTRADICTION_SIM } = {}) {
+  const byType = new Map();
+  for (const d of canonDocs) {
+    const t = d.fm?.type || '∅';
+    if (!byType.has(t)) byType.set(t, []);
+    byType.get(t).push(d);
+  }
+  const out = [];
+  for (const [type, group] of byType) {
+    for (let i = 0; i < group.length; i++) {
+      for (let j = i + 1; j < group.length; j++) {
+        const a = group[i], b = group[j];
+        const aTargets = supersedesTargets(a);
+        const bTargets = supersedesTargets(b);
+        if (aTargets.includes(b.id) || bTargets.includes(a.id)) continue;
+        const aSB = supersededByTargets(a);
+        const bSB = supersededByTargets(b);
+        if (aSB.includes(b.id) || bSB.includes(a.id)) continue;
+        const score = jaccard(titleTokens(a), titleTokens(b));
+        if (score >= threshold) out.push({ a: a.id, b: b.id, type, score });
+      }
+    }
+  }
+  return out.sort((x, y) => y.score - x.score);
+}
+
 /** Banner block for `okf-query get` — printed above the raw file content. '' if nothing to flag. */
 export function hygieneBanner(doc, supersededMap) {
   const lines = [];
