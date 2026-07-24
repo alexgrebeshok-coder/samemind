@@ -9,8 +9,12 @@ describe('bm25 — tokenize', () => {
     assert.deepEqual(tokenize('Lumen-Notes, editor!'), ['lumen-notes', 'editor']);
   });
 
-  it('handles cyrillic (Unicode \\p{L})', () => {
-    assert.deepEqual(tokenize('Предпроектная подготовка трассы!'), ['предпроектная', 'подготовка', 'трассы']);
+  it('handles cyrillic + RU-стеммит (B3b: падежи сходятся к одной основе)', () => {
+    // tokenize теперь применяет stemRu в единой точке — так запрос и документы
+    // нормализуются одинаково (иначе BM25 промахивается по падежу).
+    assert.deepEqual(tokenize('Предпроектная подготовка трассы!'), ['предпроект', 'подготовк', 'трасс']);
+    // смысл фичи: разные словоформы → одна основа
+    assert.deepEqual(tokenize('семейному'), tokenize('семейный'));
   });
 
   it('drops tokens shorter than 2 chars', () => {
