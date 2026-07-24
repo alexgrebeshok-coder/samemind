@@ -3,6 +3,37 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.0] — 2026-07-24
+
+Э6 — proactive + conflict-aware memory. All additive and backward-compatible: bundles without
+`supersedes`/`valid_from`/`authority` and callers without the new flags behave exactly as in 0.6.5.
+
+### Added
+
+- **Proactive memory (`samemind proactive "<msg>"`)** — Active Memory pattern: auto top-k recall
+  pack assembled *before* an agent answers, no explicit `recall` call. Compact snippet pack with a
+  hard char cap; skips non-fact-shaped / weak-match queries. On the reference corpus: comparable
+  hit-rate to full-body recall at ~6× fewer tokens.
+- **Conflict-aware recall (Э6/6.3)** — recall/proactive exclude superseded and time-expired facts
+  by default (`superseded_by` resolved · `invalid_at` past · `valid_from` future). Opt-in
+  `--include-superseded` (audit: kept, demoted, labeled) and `--as-of <ISO>` (point-in-time recall
+  respecting `valid_from`/`invalid_at`). Works across BM25, semantic and hybrid paths.
+- **Authority/recency tiebreak + conflict highlight (Э6/6.1)** — optional `authority` frontmatter
+  (`canon`/`derived`/`observed` or a number). Within a *detected* contradiction pair recall orders
+  by authority → recency → score and labels the loser `⚔ conflicts with <id>`. Non-conflicting
+  results are untouched.
+
+### Changed
+
+- **RU-aware BM25 tokenizer** — a light built-in Russian stemmer (no new dependency) applied in the
+  single tokenization point, so query and documents normalize the same way (fixes case/declension
+  misses, e.g. dative). Relative `minScore` floor for the proactive pack drops weak matches instead
+  of injecting noise.
+- **Contradiction detector reads the flat memory schema** — groups by `metadata.type` (via
+  `displayType`) and tokenizes `name`/`description` when OKF `title`/`tags` are absent. One honest
+  similarity bar for every schema (no lowered/manufactured threshold); `reconcile`/`reflect` stay
+  human-gated and never write canon.
+
 ## [0.6.5] — 2026-07-21
 
 ### Fixed
