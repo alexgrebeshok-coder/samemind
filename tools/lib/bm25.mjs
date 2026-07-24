@@ -3,10 +3,43 @@
 // Формула: score(D,Q) = Σ IDF(qi) · f(qi,D)·(k1+1) / (f(qi,D) + k1·(1−b+b·|D|/avgdl)).
 
 const TOKEN_RE = /[^\p{L}\p{N}-]+/u;
+const CYRILLIC_RE = /[а-яё]/i;
+const MIN_STEM_LEN = 3;
 
-/** Токены текста: lower, split по не-(буква/цифра/дефис), длина ≥2. Кириллица и латиница — через \p{L}. */
+// Conservative RU suffix strip (B3b): dative/adjective/noun endings; longest first.
+// Latin/digits untouched. MIN_STEM_LEN avoids бот≠ботинок overstem.
+const RU_SUFFIXES = [
+  'ующего', 'ующему', 'ующими', 'ующая', 'ующие', 'ующий',
+  'ского', 'скому', 'скими', 'ской', 'ская', 'ские', 'ским',
+  'ениями', 'ению', 'ения', 'ением',
+  'ного', 'ными', 'ной', 'ную', 'ных', 'ным', 'ная', 'ные',
+  'ого', 'ому', 'ыми', 'ими',
+  'ией', 'ием', 'иях', 'иям', 'ами', 'ах', 'ов', 'ев', 'ам', 'ом', 'ем',
+  'ую', 'ые', 'ая', 'ой', 'ей', 'ий', 'ый',
+  'ия', 'ию', 'ии', 'ью',
+  'ить', 'ать', 'еть', 'ешь', 'ете', 'али', 'или', 'ите', 'ла', 'ли', 'ло',
+  'ке', 'ку', 'ки', 'кой',
+  'у', 'ы', 'и', 'е', 'а', 'я', 'ь', 'о',
+];
+
+/** Light Russian suffix stemmer; identity for non-Cyrillic tokens. */
+export function stemRu(word) {
+  if (!word || !CYRILLIC_RE.test(word)) return word;
+  const w = word.toLowerCase();
+  if (w.length <= MIN_STEM_LEN) return w;
+  for (const suf of RU_SUFFIXES) {
+    if (!w.endsWith(suf)) continue;
+    const stem = w.slice(0, -suf.length);
+    if (stem.length >= MIN_STEM_LEN) return stem;
+  }
+  return w;
+}
+
+/** Токены текста: lower, split, RU-stem, длина ≥2. Единая точка для BM25 и queryTerms. */
 export function tokenize(text) {
-  return (text || '').toLowerCase().split(TOKEN_RE).filter(t => t.length >= 2);
+  return (text || '').toLowerCase().split(TOKEN_RE)
+    .filter(t => t.length >= 2)
+    .map(t => stemRu(t));
 }
 
 /**

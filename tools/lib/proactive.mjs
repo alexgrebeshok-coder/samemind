@@ -12,9 +12,36 @@ import { extractSnippet, rankByKeywords, queryTerms } from './recall.mjs';
 
 export const CHARS_PER_TOKEN = 4;
 export const DEFAULT_K = 5;
-export const DEFAULT_MIN_SCORE = 0; // BM25 unbounded; 0 = keep all top-k
+/** @deprecated use minScoreAbsolute/minScoreRatio */
+export const DEFAULT_MIN_SCORE = 0;
+// B3b calibration on 15 golden cases + adversarial «рецепт борща» (soul-memory, 2026-07-23):
+// golden tops ≥9 (post-stem); irrelevant borscht top ≈5.2; dative miss pre-stem was 4.9.
+export const DEFAULT_MIN_SCORE_ABSOLUTE = 6.0;
+export const DEFAULT_MIN_SCORE_RATIO = 0.30;
 export const DEFAULT_SNIPPET_LINES = 3;
 export const DEFAULT_MAX_CHARS = 6000; // ~1500 tokens hard cap for injected pack
+
+function hitScore(h) {
+  return h?.score ?? h?.rawScore ?? 0;
+}
+
+/** Filter ranked hits: relative floor + absolute min; detect weak top for skip. */
+export function filterProactiveHits(rawHits, {
+  k = DEFAULT_K,
+  minScoreAbsolute = DEFAULT_MIN_SCORE_ABSOLUTE,
+  minScoreRatio = DEFAULT_MIN_SCORE_RATIO,
+} = {}) {
+  if (!rawHits?.length) return { hits: [], weakMatch: false };
+  const topScore = hitScore(rawHits[0]);
+  if (minScoreAbsolute > 0 && topScore < minScoreAbsolute) {
+    return { hits: [], weakMatch: true };
+  }
+  const relativeThreshold = minScoreRatio > 0 ? minScoreRatio * topScore : 0;
+  const hits = rawHits
+    .filter(h => hitScore(h) >= relativeThreshold)
+    .slice(0, k);
+  return { hits, weakMatch: false };
+}
 
 /**
  * Rough token estimate (same heuristic as brief.mjs: 4 chars/token).
@@ -44,15 +71,15 @@ export function shouldProactive(query, { minTerms = 2 } = {}) {
  */
 export function rankForProactive(docs, query, {
   k = DEFAULT_K,
-  minScore = DEFAULT_MIN_SCORE,
+  minScoreAbsolute = DEFAULT_MIN_SCORE_ABSOLUTE,
+  minScoreRatio = DEFAULT_MIN_SCORE_RATIO,
   rank = null,
   events = [],
 } = {}) {
   const rankFn = rank || ((d, q, opts) => rankByKeywords(d, q, opts));
-  const hits = rankFn(docs, query, { k: Math.max(k * 2, k), events }) || [];
-  return hits
-    .filter(h => (h.score ?? 0) >= minScore)
-    .slice(0, k);
+  const raw = rankFn(docs, query, { k: Math.max(k * 3, k), events }) || [];
+  if (minScoreAbsolute === 0 && minScoreRatio === 0) return raw.slice(0, k);
+  return filterProactiveHits(raw, { k, minScoreAbsolute, minScoreRatio }).hits;
 }
 
 /**
@@ -92,7 +119,9 @@ export function formatPack(hits, docsById, {
  * @param {string} opts.query - incoming user message
  * @param {number} [opts.k=5]
  * @param {function} [opts.rank] - optional ranker(docs, query, opts) → hits
- * @param {number} [opts.minScore=0]
+ * @param {number} [opts.minScore=0] — legacy alias for minScoreAbsolute
+ * @param {number} [opts.minScoreAbsolute=6]
+ * @param {number} [opts.minScoreRatio=0.30]
  * @param {number} [opts.maxChars=6000]
  * @param {Array} [opts.events=[]] - ledger events for heat (optional)
  */
@@ -101,7 +130,8 @@ export async function proactiveRecall({
   query,
   k = DEFAULT_K,
   rank = null,
-  minScore = DEFAULT_MIN_SCORE,
+  minScoreAbsolute = DEFAULT_MIN_SCORE_ABSOLUTE,
+  minScoreRatio = DEFAULT_MIN_SCORE_RATIO,
   maxChars = DEFAULT_MAX_CHARS,
   snippetLines = DEFAULT_SNIPPET_LINES,
   events = [],
@@ -123,14 +153,32 @@ export async function proactiveRecall({
     };
   }
 
-  const hits = rankForProactive(docs, q, { k, minScore, rank, events });
+  const rankFn = rank || ((d, q, opts) => rankByKeywords(d, q, opts));
+  const rawHits = rankFn(docs, q, { k: Math.max(k * 3, k), events }) || [];
+  const { hits, weakMatch } = filterProactiveHits(rawHits, {
+    k,
+    minScoreAbsolute,
+    minScoreRatio,
+  });
+
+  if (weakMatch) {
+    return {
+      skipped: true,
+      reason: 'weak match',
+      query: q,
+      hits: [],
+      pack: '',
+      tokens: 0,
+      chars: 0,
+      latencyMs: Math.round(performance.now() - t0),
+      manualRecallsSaved: 0,
+    };
+  }
+
   const docsById = new Map((docs || []).map(d => [d.id, d]));
   const pack = formatPack(hits, docsById, { snippetLines, maxChars, query: q });
   const latencyMs = Math.round(performance.now() - t0);
 
-  // One proactive pack = one manual `samemind recall` the agent no longer has to fire.
-  // If top hit is strong enough that agent would also have called `get` — count as 1 still
-  // (honest lower bound; multi-hop saves are out of scope for the prototype).
   const manualRecallsSaved = hits.length ? 1 : 0;
 
   return {

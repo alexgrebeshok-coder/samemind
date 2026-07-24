@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, statSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildCorpus, bm25Score } from './bm25.mjs';
+import { buildCorpus, bm25Score, stemRu, tokenize } from './bm25.mjs';
 import { buildSupersededMap, buildHeatIndex, hygieneMultiplier, hygieneLabel } from './hygiene.mjs';
 import { displayTitle, displayType, ROOT } from './okf.mjs';
 
@@ -229,9 +229,17 @@ export async function fetchEmbedding(text, {
 
 const TERM_RE = /[^\p{L}\p{N}-]+/u;
 
-/** Токены запроса для keyword/snippet (слова ≥2 символов). */
+/** Токены запроса — тот же пайплайн, что BM25 (включая RU-stem). */
 export function queryTerms(query) {
-  return (query || '').toLowerCase().split(TERM_RE).filter(t => t.length >= 2);
+  return tokenize(query);
+}
+
+function lineMatchesTerm(lineLower, term) {
+  if (lineLower.includes(term)) return true;
+  for (const w of lineLower.split(TERM_RE)) {
+    if (w.length >= 2 && stemRu(w) === term) return true;
+  }
+  return false;
 }
 
 /** 2–3 строки вокруг лучшего совпадения запроса в теле документа. */
@@ -247,7 +255,7 @@ export function extractSnippet(body, query, { contextLines = 1 } = {}) {
     const lineLower = lines[i].toLowerCase();
     let score = 0;
     for (const t of terms) {
-      if (lineLower.includes(t)) score += t.length + (lineLower.split(t).length - 1) * 2;
+      if (lineMatchesTerm(lineLower, t)) score += t.length + 2;
     }
     if (score > bestScore) {
       bestScore = score;
