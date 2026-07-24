@@ -7,7 +7,7 @@
 // so it stays unit-testable on synthetic fixtures. Only collectSupersedeEdges() touches disk
 // (existsSync) — it's used by `okf-query validate`/`links`, which always run on a real bundle.
 import { existsSync } from 'node:fs';
-import { pathToId, resolveRelationPath } from './okf.mjs';
+import { displayType, pathToId, resolveRelationPath } from './okf.mjs';
 
 export const SUPERSEDED_PENALTY = 0.35;      // superseded/deprecated docs rank at 35% of a clean doc
 export const DEFAULT_IMPORTANCE = 3;         // neutral — importanceMultiplier = 1.0
@@ -393,12 +393,58 @@ export function compareConflictPair(docA, docB, scoreA = 0, scoreB = 0) {
 
 /** Jaccard(title ∪ tags tokens) ≥ this → candidate contradiction pair for a human. */
 export const CONTRADICTION_SIM = 0.34;
+/** Soul-schema cards (name/description, no title/tags) — shorter token sets; pair with name-slug overlap. */
+export const CONTRADICTION_SIM_SOUL = 0.22;
+/** Description slice for soul fallback — long prose dilutes Jaccard if taken whole. */
+export const CONTRADICTION_SOUL_DESC_SLICE = 80;
 const CONTRADICTION_STOPWORDS = new Set(['the', 'a', 'an', 'and', 'of', 'for', 'to', 'in', 'on']);
 
-/** Tokens of a concept's title+tags: lower, split on non-letter/digit, stopwords/short dropped. */
+function usesSoulTokenFallback(fm) {
+  const hasTitle = fm?.title != null && String(fm.title).trim() !== '';
+  const hasTags = Array.isArray(fm?.tags) && fm.tags.length > 0;
+  return !hasTitle && !hasTags;
+}
+
+function tokenizeContradictionText(text) {
+  return new Set(String(text).toLowerCase().split(/[^\p{L}\p{N}]+/u)
+    .filter(w => w.length >= 3 && !CONTRADICTION_STOPWORDS.has(w)));
+}
+
+/** Tokens of a concept's title+tags: lower, split on non-letter/digit, stopwords/short dropped.
+ *  Soul-schema fallback (only when BOTH title and tags are absent): `name` (hyphens→spaces) +
+ *  truncated `description` — see displayTitle/displayType in okf.mjs. */
 export function titleTokens(d) {
-  const text = `${d.fm?.title || ''} ${(d.fm?.tags || []).join(' ')}`.toLowerCase();
-  return new Set(text.split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 3 && !CONTRADICTION_STOPWORDS.has(w)));
+  const fm = d?.fm || {};
+  let text;
+  if (!usesSoulTokenFallback(fm)) {
+    text = `${fm.title || ''} ${(fm.tags || []).join(' ')}`;
+  } else {
+    const name = String(fm.name || '').replace(/-/g, ' ');
+    const desc = String(fm.description || '').slice(0, CONTRADICTION_SOUL_DESC_SLICE);
+    text = `${name} ${desc}`;
+  }
+  return tokenizeContradictionText(text);
+}
+
+/** Hyphen-split slug tokens — used with soul fallback for name-heavy overlap (e.g. samemind-product). */
+function nameSlugTokens(d) {
+  return tokenizeContradictionText(String(d?.fm?.name || '').replace(/-/g, ' '));
+}
+
+/** Similarity for contradiction pairing — OKF path is title/tag Jaccard only; soul path also considers slug overlap. */
+function contradictionScore(a, b) {
+  const score = jaccard(titleTokens(a), titleTokens(b));
+  if (usesSoulTokenFallback(a.fm) || usesSoulTokenFallback(b.fm)) {
+    return Math.max(score, jaccard(nameSlugTokens(a), nameSlugTokens(b)));
+  }
+  return score;
+}
+
+function pairThreshold(a, b, threshold) {
+  if (usesSoulTokenFallback(a.fm) || usesSoulTokenFallback(b.fm)) {
+    return Math.min(threshold, CONTRADICTION_SIM_SOUL);
+  }
+  return threshold;
 }
 
 /** Jaccard similarity of two token sets — 0 if either is empty. */
@@ -423,7 +469,7 @@ const supersededByTargets = d => (d.supersededBy || []).map(pathToId);
 export function findContradictions(canonDocs, { threshold = CONTRADICTION_SIM } = {}) {
   const byType = new Map();
   for (const d of canonDocs) {
-    const t = d.fm?.type || '∅';
+    const t = displayType(d.fm) || '∅';
     if (!byType.has(t)) byType.set(t, []);
     byType.get(t).push(d);
   }
@@ -438,8 +484,9 @@ export function findContradictions(canonDocs, { threshold = CONTRADICTION_SIM } 
         const aSB = supersededByTargets(a);
         const bSB = supersededByTargets(b);
         if (aSB.includes(b.id) || bSB.includes(a.id)) continue;
-        const score = jaccard(titleTokens(a), titleTokens(b));
-        if (score >= threshold) out.push({ a: a.id, b: b.id, type, score });
+        const score = contradictionScore(a, b);
+        const th = pairThreshold(a, b, threshold);
+        if (score >= th) out.push({ a: a.id, b: b.id, type, score });
       }
     }
   }

@@ -13,7 +13,7 @@ import { ROOT, load } from './lib/okf.mjs';
 // Contradiction detector lives in hygiene.mjs (shared with recall Э6/6.1). Re-export so
 // reconcile.mjs and existing `import { findContradictions } from './consolidate.mjs'` keep working.
 export {
-  titleTokens, jaccard, findContradictions, CONTRADICTION_SIM,
+  titleTokens, jaccard, findContradictions, CONTRADICTION_SIM, CONTRADICTION_SIM_SOUL,
 } from './lib/hygiene.mjs';
 import { findContradictions } from './lib/hygiene.mjs';
 import { openVecStore, closeVecStore, vecStoreCount, readAllItems, migrateJsonIndex } from './lib/sqlite-index.mjs';
@@ -88,7 +88,11 @@ async function loadVectorItems() {
 export async function buildConsolidationMap(docs) {
   // канон-цели = концепты в подпапках (entities/projects/concepts/references/secret);
   // top-level README/ARCHITECTURE — документация, не темы для дедупа, в цели не берём.
-  const canon = docs.filter(d => engineOf(d.id) === 'canon' && d.id.includes('/'));
+  // Flat soul-memory bundles (no `/` in ids) — every frontmatter card is canon; skip index stubs w/o FM.
+  const canonCandidates = docs.filter(d => engineOf(d.id) === 'canon' && !d.reserved);
+  const canon = canonCandidates.some(d => d.id.includes('/'))
+    ? canonCandidates.filter(d => d.id.includes('/'))
+    : canonCandidates.filter(d => d.hasFM);
   const raw   = docs.filter(d => ['claude-code', 'openclaw', 'inbox'].includes(engineOf(d.id))
                                   && d.base !== 'index.md');
   const canonSlugs = new Set(canon.map(d => slugOf(d.id)));

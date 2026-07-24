@@ -782,6 +782,71 @@ describe('consolidate — contradiction heuristic (pure)', () => {
     // silent no-op. This test just documents/asserts that expectation held (no throw, no crash).
     assert.equal(typeof findContradictions, 'function');
   });
+
+  it('findContradictions: soul-schema (name/description/metadata.type, no title/tags) groups by metadata.type', () => {
+    const docs = [
+      {
+        id: 'fsnb-mcp-product', supersedes: [], supersededBy: [],
+        fm: {
+          name: 'fsnb-mcp-product',
+          description: 'ФСНБ-MCP продукт — легальность решена, 5 инструментов реальный ingest 6/6',
+          metadata: { type: 'project', node_type: 'memory' },
+        },
+      },
+      {
+        id: 'sbis-mcp-product', supersedes: [], supersededBy: [],
+        fm: {
+          name: 'sbis-mcp-product',
+          description: 'sbis-mcp продукт — npm@0.1.0 (7 read-ЭДО, 14/14 моки); live ждёт кнопку Саши',
+          metadata: { type: 'project', node_type: 'memory' },
+        },
+      },
+      {
+        id: 'rule-runner-self-edit', supersedes: [], supersededBy: [],
+        fm: {
+          name: 'rule-runner-self-edit',
+          description: 'Наряд, правящий agent-run.sh, НЕ исполнять через этот же раннер',
+          metadata: { type: 'feedback', node_type: 'memory' },
+        },
+      },
+    ];
+    const found = findContradictions(docs);
+    assert.ok(found.some(c =>
+      (c.a === 'fsnb-mcp-product' && c.b === 'sbis-mcp-product')
+      || (c.b === 'fsnb-mcp-product' && c.a === 'sbis-mcp-product')));
+    assert.equal(found.find(c => [c.a, c.b].includes('rule-runner-self-edit')), undefined);
+    assert.ok(found.every(c => c.type === 'project'));
+  });
+
+  it('findContradictions: OKF title/tags path byte-identical to pre-fallback (no name/description bleed)', () => {
+    const docs = [
+      { id: 'concepts/retrieval-strategy', supersedes: [], fm: { type: 'Concept', title: 'Retrieval strategy', tags: ['memory'] } },
+      { id: 'concepts/retrieval-approach', supersedes: [], fm: { type: 'Concept', title: 'Retrieval approach', tags: ['memory'] } },
+      { id: 'concepts/context-budget', supersedes: [], fm: { type: 'Concept', title: 'Context budget', tags: ['memory'] } },
+      {
+        id: 'concepts/soul-shaped-but-okf',
+        supersedes: [],
+        fm: {
+          type: 'Concept', title: 'Widget catalog', tags: ['parts'],
+          name: 'ignored-slug', description: 'ignored soul description tokens',
+        },
+      },
+    ];
+    const found = findContradictions(docs);
+    const pairIds = found.map(c => [c.a, c.b].sort().join('\x1f'));
+    assert.ok(pairIds.includes('concepts/retrieval-approach\x1fconcepts/retrieval-strategy'));
+    assert.ok(!found.some(c => [c.a, c.b].includes('concepts/soul-shaped-but-okf')));
+    assert.ok(!found.some(c => [c.a, c.b].includes('concepts/context-budget')));
+    const soulShaped = titleTokens({ fm: { title: 'Widget catalog', tags: ['parts'], name: 'ignored-slug', description: 'ignored soul description tokens' } });
+    assert.ok(!soulShaped.has('ignored'));
+    assert.ok(!soulShaped.has('soul'));
+    const t = titleTokens({ fm: { title: 'The Old Retrieval Idea', tags: ['memory'] } });
+    assert.ok(t.has('old'));
+    assert.ok(t.has('retrieval'));
+    assert.ok(t.has('idea'));
+    assert.ok(t.has('memory'));
+    assert.ok(!t.has('the'));
+  });
 });
 
 // ---------------------------------------------------------------------------
