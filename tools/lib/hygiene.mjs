@@ -391,11 +391,11 @@ export function compareConflictPair(docA, docB, scoreA = 0, scoreB = 0) {
 // consolidate → sqlite-index → recall → consolidate import cycle. consolidate.mjs re-exports
 // these for its CLI + reconcile.mjs. Logic is unchanged (title/tag Jaccard, no embeddings).
 
-/** Jaccard(title ∪ tags tokens) ≥ this → candidate contradiction pair for a human. */
+/** Jaccard(title ∪ tags tokens) ≥ this → candidate contradiction pair for a human.
+ *  ONE honest bar for every schema. Soul cards (curated-in-place) legitimately yield ~0 pairs at
+ *  this threshold — that's correct, not a miss (no manufactured/lowered soul bar; decision Саши 24.07). */
 export const CONTRADICTION_SIM = 0.34;
-/** Soul-schema cards (name/description, no title/tags) — shorter token sets; pair with name-slug overlap. */
-export const CONTRADICTION_SIM_SOUL = 0.22;
-/** Description slice for soul fallback — long prose dilutes Jaccard if taken whole. */
+/** Description slice for the soul token fallback — long prose dilutes Jaccard if taken whole. */
 export const CONTRADICTION_SOUL_DESC_SLICE = 80;
 const CONTRADICTION_STOPWORDS = new Set(['the', 'a', 'an', 'and', 'of', 'for', 'to', 'in', 'on']);
 
@@ -424,27 +424,6 @@ export function titleTokens(d) {
     text = `${name} ${desc}`;
   }
   return tokenizeContradictionText(text);
-}
-
-/** Hyphen-split slug tokens — used with soul fallback for name-heavy overlap (e.g. samemind-product). */
-function nameSlugTokens(d) {
-  return tokenizeContradictionText(String(d?.fm?.name || '').replace(/-/g, ' '));
-}
-
-/** Similarity for contradiction pairing — OKF path is title/tag Jaccard only; soul path also considers slug overlap. */
-function contradictionScore(a, b) {
-  const score = jaccard(titleTokens(a), titleTokens(b));
-  if (usesSoulTokenFallback(a.fm) || usesSoulTokenFallback(b.fm)) {
-    return Math.max(score, jaccard(nameSlugTokens(a), nameSlugTokens(b)));
-  }
-  return score;
-}
-
-function pairThreshold(a, b, threshold) {
-  if (usesSoulTokenFallback(a.fm) || usesSoulTokenFallback(b.fm)) {
-    return Math.min(threshold, CONTRADICTION_SIM_SOUL);
-  }
-  return threshold;
 }
 
 /** Jaccard similarity of two token sets — 0 if either is empty. */
@@ -484,9 +463,8 @@ export function findContradictions(canonDocs, { threshold = CONTRADICTION_SIM } 
         const aSB = supersededByTargets(a);
         const bSB = supersededByTargets(b);
         if (aSB.includes(b.id) || bSB.includes(a.id)) continue;
-        const score = contradictionScore(a, b);
-        const th = pairThreshold(a, b, threshold);
-        if (score >= th) out.push({ a: a.id, b: b.id, type, score });
+        const score = jaccard(titleTokens(a), titleTokens(b));
+        if (score >= threshold) out.push({ a: a.id, b: b.id, type, score });
       }
     }
   }

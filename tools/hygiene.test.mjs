@@ -783,8 +783,9 @@ describe('consolidate — contradiction heuristic (pure)', () => {
     assert.equal(typeof findContradictions, 'function');
   });
 
-  it('findContradictions: soul-schema (name/description/metadata.type, no title/tags) groups by metadata.type', () => {
+  it('findContradictions: soul-schema — displayType groups by metadata.type + name/description fallback catches a GENUINE near-duplicate at the honest bar; different-topic same-type does NOT flood (no lowered soul threshold — decision Саши 24.07)', () => {
     const docs = [
+      // Two DIFFERENT products, same metadata.type — must NOT pair at the honest bar (0.34).
       {
         id: 'fsnb-mcp-product', supersedes: [], supersededBy: [],
         fm: {
@@ -801,6 +802,25 @@ describe('consolidate — contradiction heuristic (pure)', () => {
           metadata: { type: 'project', node_type: 'memory' },
         },
       },
+      // A GENUINE near-duplicate soul pair (near-identical name + identical description) — SHOULD pair,
+      // proving displayType grouping + name/description tokenisation work on the flat schema.
+      {
+        id: 'family-bot-fix', supersedes: [], supersededBy: [],
+        fm: {
+          name: 'family-bot-fix',
+          description: 'Семейный бот: LLM оживлён на DeepSeek, реальные ID и дни рождения семьи вписаны',
+          metadata: { type: 'project', node_type: 'memory' },
+        },
+      },
+      {
+        id: 'family-bot-fix-dup', supersedes: [], supersededBy: [],
+        fm: {
+          name: 'family-bot-fix-dup',
+          description: 'Семейный бот: LLM оживлён на DeepSeek, реальные ID и дни рождения семьи вписаны',
+          metadata: { type: 'project', node_type: 'memory' },
+        },
+      },
+      // Different metadata.type — never compared against the project group.
       {
         id: 'rule-runner-self-edit', supersedes: [], supersededBy: [],
         fm: {
@@ -811,9 +831,12 @@ describe('consolidate — contradiction heuristic (pure)', () => {
       },
     ];
     const found = findContradictions(docs);
-    assert.ok(found.some(c =>
-      (c.a === 'fsnb-mcp-product' && c.b === 'sbis-mcp-product')
-      || (c.b === 'fsnb-mcp-product' && c.a === 'sbis-mcp-product')));
+    const pairs = found.map(c => [c.a, c.b].sort().join('|'));
+    // fallback works: the genuine near-duplicate surfaces at the honest 0.34 bar
+    assert.ok(pairs.includes(['family-bot-fix', 'family-bot-fix-dup'].sort().join('|')));
+    // honest zero: two DIFFERENT products of the same type do NOT pair (no manufactured soul bar/slug boost)
+    assert.ok(!pairs.includes(['fsnb-mcp-product', 'sbis-mcp-product'].sort().join('|')));
+    // different metadata.type is never compared, however similar
     assert.equal(found.find(c => [c.a, c.b].includes('rule-runner-self-edit')), undefined);
     assert.ok(found.every(c => c.type === 'project'));
   });

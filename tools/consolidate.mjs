@@ -13,7 +13,7 @@ import { ROOT, load } from './lib/okf.mjs';
 // Contradiction detector lives in hygiene.mjs (shared with recall Э6/6.1). Re-export so
 // reconcile.mjs and existing `import { findContradictions } from './consolidate.mjs'` keep working.
 export {
-  titleTokens, jaccard, findContradictions, CONTRADICTION_SIM, CONTRADICTION_SIM_SOUL,
+  titleTokens, jaccard, findContradictions, CONTRADICTION_SIM,
 } from './lib/hygiene.mjs';
 import { findContradictions } from './lib/hygiene.mjs';
 import { openVecStore, closeVecStore, vecStoreCount, readAllItems, migrateJsonIndex } from './lib/sqlite-index.mjs';
