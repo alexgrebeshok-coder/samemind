@@ -12,7 +12,7 @@ and who has gone quiet**. All additive; bundles and callers from 0.7.x behave ex
 ### Added
 
 - **`samemind fleet`** (`init` | `status` | `assign`) — the engine registry as a first-class,
-  declared artifact (`fleet.json` in the bundle root). `init` seeds it from the engines actually
+  declared artifact (`fleet/registry.json` in the bundle). `init` seeds it from the engines actually
   present in the target directory, reusing `detectEngines()` (`tools/lib/detect-engines.mjs`) rather
   than re-declaring a second detection table. `status` prints the roster plus overdue engines;
   `assign` records a naryad (goal + boundaries + verify + reporting topic) against one engine.
