@@ -1,14 +1,14 @@
 // recall.mjs — чистая логика recall-индекса (okf-recall + gde + тесты).
 import { createHash } from 'node:crypto';
 import { existsSync, statSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { buildCorpus, bm25Score, stemRu, tokenize } from './bm25.mjs';
 import {
   buildSupersededMap, buildHeatIndex, hygieneMultiplier, hygieneLabel,
   isStaleForRecall, resolveAsOf, compareConflictPair, conflictLabel,
   findContradictions, isDeprecated,
 } from './hygiene.mjs';
-import { displayTitle, displayType, ROOT } from './okf.mjs';
+import { displayTitle, displayType, ROOT, pathToId } from './okf.mjs';
 
 // Размерность проверяется только если OKF_EMBED_DIM задана явно. Иначе принимаем любую
 // (OpenAI text-embedding-3-* — 1536/3072, bge-m3 — 1024, …): требование фиксированной dim
@@ -609,4 +609,112 @@ export function checkIndexStale(idx, docs, { idxPath, maxAgeMs = DEFAULT_STALE_A
   }
   if (mismatches > 0) reasons.push(`${mismatches}/${sample.length} documents changed`);
   return { stale: reasons.length > 0, reasons };
+}
+
+// --- G2: 1-hop graph expand (relations + reverse wikilinks) --------------------------------
+
+export const DEFAULT_EXPAND_BUDGET = 5;
+
+/** Bundle root implied by a parsed doc's own file/id pair (id = relative(root, file) sans
+ *  `.md` — see okf.mjs `parse()`), so a bundle-absolute link (`/entities/b.md`) resolves against
+ *  THIS doc's root even when `docs` mixes two bundles (project ∪ global) with different module-
+ *  level ROOTs — avoids depending on okf.mjs's `resolveLink`, which resolves against the single
+ *  module-level ROOT and would mis-resolve a global-root doc's links when OKF_ROOT is the project. */
+function inferRootDir(doc) {
+  const suffix = '/' + doc.id + '.md';
+  return doc.file.endsWith(suffix) ? doc.file.slice(0, -suffix.length) : dirname(doc.file);
+}
+
+/** Markdown link target (raw string from `d.links`) → the doc it points at, or null if it
+ *  doesn't resolve to any doc in `docsByFile`. Bundle-absolute (`/x.md`) resolves against the
+ *  linking doc's own root (inferRootDir); relative resolves against the linking doc's directory. */
+function resolveLinkId(fromDoc, target, docsByFile) {
+  const t = String(target || '');
+  if (!t) return null;
+  const abs = t.startsWith('/') ? join(inferRootDir(fromDoc), t.slice(1)) : resolve(dirname(fromDoc.file), t);
+  return docsByFile.get(abs)?.id ?? null;
+}
+
+/**
+ * G2 — 1-hop graph expand after top-k recall: pull in docs connected to a hit via a typed
+ * `relations` edge (either direction — same "connected" reading the `rel` CLI command already
+ * shows both ways) or a REVERSE wikilink (some other doc's markdown `[text](path.md)` link
+ * pointing AT the hit — "who cites this", not the hit's own outbound links). Budget-capped
+ * (shared across all seed hits, not per-hit), deduped against the seeds and against itself, and
+ * subject to the same hygiene gate live recall already applies: superseded/expired
+ * (`isStaleForRecall`) and `deprecated` docs are never pulled in.
+ *
+ * `docs` — the full parsed pool the expand graph is walked over (project docs, or project ∪
+ * deduped-global docs — caller's choice; since a global doc whose id collides with a project doc
+ * is already dropped upstream — see compose-roots.mjs `searchGlobalHalf` — passing the union
+ * still gives "project wins" for free, no extra logic needed here).
+ *
+ * Returns an array of hit-shaped rows `{ id, title, type, score: 0, expandedFrom, label }` —
+ * `score` is not a rank (there is no ranking signal for a graph neighbor), only present so
+ * callers that expect the hit shape don't have to special-case it; `label` always reads
+ * `(+1 hop from <seedId>)` and is meant to print AFTER the primary results, never merged into
+ * their sort. Empty hits/docs/budget → `[]`.
+ *
+ * ponytail: single 1-hop pass, not N-hop BFS — `--expand-hops` values above 1 are capped to 1 by
+ * the CLI layer (tools/okf-recall.mjs); revisit if a real 2-hop use case shows up.
+ */
+export function expandHits(hits, docs, { budget = DEFAULT_EXPAND_BUDGET, asOf = null } = {}) {
+  if (!hits?.length || !docs?.length || budget <= 0) return [];
+
+  const docsById = new Map(docs.map(d => [d.id, d]));
+  const docsByFile = new Map(docs.map(d => [d.file, d]));
+  const supersededMap = buildSupersededMap(docs);
+  const now = resolveAsOf(asOf);
+  const isLive = doc => !!doc && !isDeprecated(doc) && !isStaleForRecall(doc, supersededMap, { now, docsById });
+
+  // Reverse indices, built once over `docs` (not per-hit) — O(docs), not O(hits × docs).
+  const inboundRelations = new Map(); // toId -> Set(fromId)
+  const inboundLinks = new Map();     // toId -> Set(fromId)
+  for (const d of docs) {
+    for (const paths of Object.values(d.relations || {})) {
+      for (const p of paths) {
+        const toId = pathToId(p);
+        if (!inboundRelations.has(toId)) inboundRelations.set(toId, new Set());
+        inboundRelations.get(toId).add(d.id);
+      }
+    }
+    for (const l of d.links || []) {
+      const toId = resolveLinkId(d, l, docsByFile);
+      if (!toId) continue;
+      if (!inboundLinks.has(toId)) inboundLinks.set(toId, new Set());
+      inboundLinks.get(toId).add(d.id);
+    }
+  }
+
+  const seen = new Set(hits.map(h => h.id)); // seeds are never re-added as "expanded"
+  const out = [];
+  for (const hit of hits) {
+    if (out.length >= budget) break;
+    const doc = docsById.get(hit.id);
+    if (!doc) continue;
+
+    const neighborIds = new Set();
+    for (const paths of Object.values(doc.relations || {})) {
+      for (const p of paths) neighborIds.add(pathToId(p)); // outbound relations
+    }
+    for (const fromId of inboundRelations.get(doc.id) || []) neighborIds.add(fromId); // inbound relations
+    for (const fromId of inboundLinks.get(doc.id) || []) neighborIds.add(fromId);     // reverse wikilinks
+
+    for (const nid of neighborIds) {
+      if (out.length >= budget) break;
+      if (seen.has(nid)) continue;
+      const ndoc = docsById.get(nid);
+      if (!isLive(ndoc)) continue;
+      seen.add(nid);
+      out.push({
+        id: nid,
+        title: displayTitle(ndoc.fm),
+        type: displayType(ndoc.fm),
+        score: 0,
+        expandedFrom: hit.id,
+        label: `(+1 hop from ${hit.id})`,
+      });
+    }
+  }
+  return out;
 }
