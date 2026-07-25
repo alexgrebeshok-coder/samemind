@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import {
-  runCapture, maskSecrets, extractClaudeCodeSession, loadState, ADAPTERS,
+  runCapture, maskSecrets, extractClaudeCodeSession, loadState, ADAPTERS, CAPTURE_GATE_THRESHOLD,
 } from './capture.mjs';
 
 function tmpDir(prefix) {
@@ -295,5 +295,91 @@ describe('capture --engine generic-markdown', () => {
 describe('adapter registry', () => {
   it('exposes exactly the two MVP engines', () => {
     assert.deepEqual(Object.keys(ADAPTERS).sort(), ['claude-code', 'generic-markdown']);
+  });
+});
+
+// Bulk-capture human gate (agentic-KG construction pattern: intent → file-list → extract,
+// research 20260725) — a capture landing CAPTURE_GATE_THRESHOLD+ new items unattended stops
+// and requires --yes or --limit N instead of writing straight to inbox/.
+describe('capture bulk-confirmation gate', () => {
+  function writeBulkFixtures(src, count) {
+    for (let i = 0; i < count; i++) {
+      const sessionId = `bbbbbbbb-0000-0000-0000-${String(i).padStart(12, '0')}`;
+      const day = String(i + 1).padStart(2, '0');
+      writeClaudeFixture(join(src, `proj-${i}`), sessionId, {
+        finalText: `bulk session ${i}`,
+        timestamp: `2026-07-${day}T10:00:00.000Z`,
+      });
+    }
+  }
+
+  it('computes an accurate plan and requires confirmation at/above the gate threshold', () => {
+    const bundleRoot = tmpDir('samemind-bundle-');
+    const src = tmpDir('samemind-claude-src-');
+    writeBulkFixtures(src, CAPTURE_GATE_THRESHOLD);
+
+    const result = runCapture({ engine: 'claude-code', source: src, root: bundleRoot });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.needsConfirmation, true);
+    assert.equal(result.plan.count, CAPTURE_GATE_THRESHOLD);
+    assert.equal(result.plan.inboxFile, join(bundleRoot, 'inbox', 'claude-code.md'));
+    assert.ok(result.plan.oldest < result.plan.newest);
+    // preview only — same "nothing written" contract as --dry-run
+    assert.equal(existsSync(join(bundleRoot, 'inbox', 'claude-code.md')), false);
+    assert.equal(existsSync(join(bundleRoot, '.samemind-capture-state.json')), false);
+  });
+
+  it('one below the threshold: no gate, writes directly', () => {
+    const bundleRoot = tmpDir('samemind-bundle-');
+    const src = tmpDir('samemind-claude-src-');
+    writeBulkFixtures(src, CAPTURE_GATE_THRESHOLD - 1);
+
+    const result = runCapture({ engine: 'claude-code', source: src, root: bundleRoot });
+    assert.equal(result.needsConfirmation, false);
+    assert.equal(result.captured.length, CAPTURE_GATE_THRESHOLD - 1);
+    assert.ok(existsSync(result.inboxFile));
+  });
+
+  it('--yes skips the gate and writes even above the threshold', () => {
+    const bundleRoot = tmpDir('samemind-bundle-');
+    const src = tmpDir('samemind-claude-src-');
+    writeBulkFixtures(src, CAPTURE_GATE_THRESHOLD + 5);
+
+    const result = runCapture({
+      engine: 'claude-code', source: src, root: bundleRoot, yes: true,
+    });
+    assert.equal(result.needsConfirmation, false);
+    assert.equal(result.captured.length, CAPTURE_GATE_THRESHOLD + 5);
+    assert.ok(existsSync(result.inboxFile));
+  });
+
+  it('--limit narrows the candidate set below the gate, no --yes needed', () => {
+    const bundleRoot = tmpDir('samemind-bundle-');
+    const src = tmpDir('samemind-claude-src-');
+    writeBulkFixtures(src, CAPTURE_GATE_THRESHOLD + 10);
+
+    const result = runCapture({
+      engine: 'claude-code', source: src, root: bundleRoot, limit: 3,
+    });
+    assert.equal(result.needsConfirmation, false);
+    assert.equal(result.captured.length, 3);
+    assert.equal(result.limitedOut, CAPTURE_GATE_THRESHOLD + 10 - 3);
+    assert.ok(existsSync(result.inboxFile));
+  });
+
+  it('--dry-run on a bulk source prints a plan and still writes nothing', () => {
+    const bundleRoot = tmpDir('samemind-bundle-');
+    const src = tmpDir('samemind-claude-src-');
+    writeBulkFixtures(src, CAPTURE_GATE_THRESHOLD);
+
+    const result = runCapture({
+      engine: 'claude-code', source: src, root: bundleRoot, dryRun: true,
+    });
+    assert.equal(result.dryRun, true);
+    assert.equal(result.needsConfirmation, false); // dry-run short-circuits ahead of the gate check
+    assert.equal(result.plan.count, CAPTURE_GATE_THRESHOLD);
+    assert.equal(existsSync(join(bundleRoot, 'inbox', 'claude-code.md')), false);
+    assert.equal(existsSync(join(bundleRoot, '.samemind-capture-state.json')), false);
   });
 });

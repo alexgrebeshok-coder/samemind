@@ -69,7 +69,7 @@ function usage() {
   console.log('  install --agent <id>  wire brief+protocol into an engine\'s instruction file (--list — list them; --agent all — into all existing ones)');
   console.log('  export <dir> [...]    shareable OKF-bundle (no secret/mirror/inbox); --visibility public|internal --dry-run --to-gbrain');
   console.log('  import <dir> [...]    accept a foreign OKF-bundle; --into inbox|concepts (default inbox) — see docs/interop.md');
-  console.log('  capture --engine <id> [--source <path>] [--since <ts>] [--dry-run]   read-only capture of a live engine session store → inbox/<engine>.md — see docs/session-capture.md');
+  console.log('  capture --engine <id> [--source <path>] [--since <ts>] [--limit N] [--yes] [--dry-run]   read-only capture of a live engine session store → inbox/<engine>.md; bulk (20+ new items) asks for confirmation first — see docs/session-capture.md');
   console.log('  ledger <cmd> ...      append-only event ledger: append --actor .. --topic .. --phase .. [--status ..] --action ".." | status | read --topic <t> — see docs/event-ledger.md');
   console.log('  fleet <cmd> ...       engine registry: init [--target <dir>] | status | assign --engine <id> --topic <t> --goal ".." --verify ".." — see docs/fleet.md');
   console.log('  serve                 MCP stdio server (memory_search/get/list/write_inbox/handoff/health/ledger_append/ledger_status) — connect it as an MCP tool');
