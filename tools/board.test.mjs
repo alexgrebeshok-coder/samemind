@@ -11,8 +11,10 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildBoard } from './board.mjs';
+import { buildBoard, buildBoardModel, OVERDUE_ENGINES_LIMIT } from './board.mjs';
 import { runInit } from './init.mjs';
+import { buildRegistry, writeRegistry } from './lib/fleet.mjs';
+import { appendEvent } from './lib/ledger.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BOARD = join(HERE, 'board.mjs');
@@ -265,6 +267,103 @@ describe('init — DASHBOARD placeholder', () => {
       assert.match(c, /samemind board --write/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─────────────────────────── board: 🔥 Overdue engines (fleet) ───────────────────────────
+
+describe('board — 🔥 Overdue engines (unit, pure buildBoard/buildBoardModel)', () => {
+  function overdueRow(id, extra = {}) {
+    return {
+      id, role: 'executor', status: 'active', lastSeen: null, silentSec: null, heartbeatSec: 3600, overdue: true, ...extra,
+    };
+  }
+
+  it('empty overdueEngines → section is OMITTED entirely (unlike Open failures, no standing "(0)" heading)', () => {
+    const md = buildBoard([], { now: NOW, overdueEngines: [] });
+    assert.ok(!md.includes('🔥 Overdue engines'), 'section absent when there is nothing to show');
+  });
+
+  it('defaults to [] when overdueEngines is not passed — no crash, section still absent', () => {
+    const model = buildBoardModel([], { now: NOW });
+    assert.deepEqual(model.overdueEnginesShown, []);
+    assert.equal(model.overdueEnginesTotal, 0);
+    assert.ok(!buildBoard([], { now: NOW }).includes('🔥 Overdue engines'));
+  });
+
+  it('renders each overdue engine with id/role/silence/limit/last-seen', () => {
+    const md = buildBoard([], {
+      now: NOW,
+      overdueEngines: [overdueRow('grok', { lastSeen: '2026-07-01T10:00:00.000Z', silentSec: 777600, heartbeatSec: 86400 })],
+    });
+    assert.match(md, /## 🔥 Overdue engines \(1\)/);
+    assert.match(md, /\*\*grok\*\* — executor, silent 777600s \(limit 86400s\) _\(last seen 2026-07-01 10:00\)_/);
+  });
+
+  it('a never-seen engine (silentSec/lastSeen null) renders "∞" and "never seen"', () => {
+    const md = buildBoard([], { now: NOW, overdueEngines: [overdueRow('ghost')] });
+    assert.match(md, /\*\*ghost\*\* — executor, silent ∞ \(limit 3600s\) _\(last seen never seen\)_/);
+  });
+
+  it('appears after 🔥 Open failures and before 🆕 Backlog when both are present', () => {
+    const md = buildBoard([], {
+      now: NOW,
+      openFailures: [{
+        ts: '2026-01-01T00:00:00Z', actor: 'a', topic: 'x', phase: 'fail', status: 'fail', action: 'x broke',
+      }],
+      overdueEngines: [overdueRow('grok')],
+    });
+    const failIdx = md.indexOf('## 🔥 Open failures');
+    const overdueIdx = md.indexOf('## 🔥 Overdue engines');
+    const backlogIdx = md.indexOf('## 🆕 Backlog');
+    assert.ok(failIdx >= 0 && failIdx < overdueIdx && overdueIdx < backlogIdx);
+  });
+
+  it('caps display at OVERDUE_ENGINES_LIMIT, most-silent first, with a "…and N more" note and full count in the heading', () => {
+    const many = Array.from({ length: OVERDUE_ENGINES_LIMIT + 2 }, (_, i) =>
+      overdueRow(`engine-${i}`, { silentSec: (i + 1) * 100, heartbeatSec: 60 }));
+    const model = buildBoardModel([], { now: NOW, overdueEngines: many });
+    assert.equal(model.overdueEnginesTotal, OVERDUE_ENGINES_LIMIT + 2);
+    assert.equal(model.overdueEnginesShown.length, OVERDUE_ENGINES_LIMIT);
+    // most-silent first: the highest silentSec sorts first
+    assert.equal(model.overdueEnginesShown[0].id, `engine-${OVERDUE_ENGINES_LIMIT + 1}`);
+
+    const md = buildBoard([], { now: NOW, overdueEngines: many });
+    assert.match(md, new RegExp(`## 🔥 Overdue engines \\(${OVERDUE_ENGINES_LIMIT + 2}\\)`));
+    assert.match(md, /…and 2 more — `samemind fleet status`/);
+  });
+});
+
+describe('board — 🔥 Overdue engines (CLI integration, real fleet registry + ledger)', () => {
+  let root;
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), 'samemind-fleet-board-cli-'));
+    runInit({ targetDir: root });
+    writeRegistry(root, buildRegistry({ engines: [{ id: 'grok', role: 'executor', heartbeatSec: 60 }] }));
+    appendEvent(root, {
+      actor: 'grok', topic: 't', phase: 'start', action: 'began long ago', ts: '2020-01-01T00:00:00Z',
+    });
+  });
+  after(() => { rmSync(root, { recursive: true, force: true }); });
+
+  it('samemind board surfaces the real overdue engine from fleet/registry.json + the ledger', () => {
+    const r = runCLI(root, []);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /## 🔥 Overdue engines \(1\)/);
+    assert.match(r.out, /\*\*grok\*\*/);
+  });
+
+  it('no fleet registry at all → section absent, rest of the board unaffected', () => {
+    const bareRoot = mkdtempSync(join(tmpdir(), 'samemind-fleet-board-bare-'));
+    try {
+      runInit({ targetDir: bareRoot });
+      const r = runCLI(bareRoot, []);
+      assert.equal(r.code, 0, r.out);
+      assert.ok(!r.out.includes('🔥 Overdue engines'));
+      assert.match(r.out, /^# Dashboard/);
+    } finally {
+      rmSync(bareRoot, { recursive: true, force: true });
     }
   });
 });

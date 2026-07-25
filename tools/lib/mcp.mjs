@@ -1,6 +1,7 @@
 // mcp.mjs — логика MCP-инструментов samemind (транспорт-агностичная; см. ../mcp-server.mjs).
-// 8 инструментов: memory_search | memory_get | memory_list | memory_write_inbox | memory_handoff
-// | memory_health | memory_ledger_append | memory_ledger_status.
+// 10 инструментов: memory_search | memory_get | memory_list | memory_write_inbox | memory_handoff
+// | memory_health | memory_ledger_append | memory_ledger_status | memory_fleet_status
+// | memory_fleet_assign.
 //
 // Безопасность (см. наряд N3):
 //  - visibility: secret НИКОГДА не попадает в docs, которые видят инструменты (load({includeSecret:false}))
@@ -13,6 +14,13 @@
 //  - memory_ledger_append: тот же контракт, что write_inbox — actor из env SAMEMIND_AGENT
 //    (санитизируется), пишет ТОЛЬКО в ledger/events.jsonl, `action` сканируется на
 //    prompt-injection (issue #3, docs/event-ledger.md); события никогда не удаляются.
+//  - memory_fleet_status / memory_fleet_assign: тонкая MCP-обёртка над готовой чистой
+//    логикой tools/lib/fleet.mjs (heartbeat/buildAssignment) — никакой логики не дублируется.
+//    status read-only (никогда не мутирует); assign переиспользует appendEvent, поэтому
+//    получает тот же injection-скан над `action`, что и memory_ledger_append, бесплатно.
+//    Невалидный движок/статус/отсутствующий verify — hard error, не тихий фолбэк
+//    (см. docs/fleet.md "Security"). Имена *_fleet_* — не *_status/_assign* без префикса —
+//    ради единого memory_-неймспейса инструментов (см. docs/fleet.md "Future", предвиденное).
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, relative, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,6 +35,7 @@ import { loadIdx } from '../okf-recall.mjs';
 import { resolveGlobalRoot, searchGlobalHalf, mergeWithGlobal } from './compose-roots.mjs';
 import { buildHandoff, DEFAULT_DAYS as HANDOFF_DEFAULT_DAYS } from '../handoff.mjs';
 import { appendEvent, readEvents, summarizeLedger, PHASES, STATUSES } from './ledger.mjs';
+import { readRegistry, heartbeat, findEngine, buildAssignment } from './fleet.mjs';
 import { atomicWriteFileSync } from '../../lib/atomic-write.mjs';
 import { withFileLock } from '../../lib/file-lock.mjs';
 import { safeMdPath, assertSafeConceptId, sanitizeAgentName } from '../../lib/safe-path.mjs';
@@ -141,6 +150,27 @@ export const TOOLS = [
     name: 'memory_ledger_status',
     description: 'Read-only summary of the event ledger: current stage per topic (last event) and open failures — fail/block-phase events not yet closed by a later done-phase or ok-status event of the same topic — freshest first. See docs/event-ledger.md.',
     inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'memory_fleet_status',
+    description: 'Read-only fleet registry summary (fleet/registry.json): every declared engine with its role/status and a heartbeat — last seen (from the event ledger), seconds silent, and whether that exceeds its declared heartbeatSec (overdue). No registry yet → { registry: false }. Never mutates anything. See docs/fleet.md.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'memory_fleet_assign',
+    description: 'Declare an assignment to one engine already in the fleet registry (fleet/registry.json) and log it as a `start` event in the event ledger (ledger/events.jsonl) — same storage memory_ledger_append uses, no second format. `verify` is required: an assignment without a verification step is a wish, not a task. Fails hard — does not silently fall back — when the registry is missing, the engine is unknown, or the engine is not `active`. The combined action text runs through the same prompt-injection scan every write path in this project uses (never dropped, only flagged quarantine:true). See docs/fleet.md.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        engine: { type: 'string', description: 'Engine id already declared in fleet/registry.json (see memory_fleet_status)' },
+        topic: { type: 'string', description: 'Naryad/work-item id' },
+        goal: { type: 'string', description: 'What the engine should accomplish' },
+        verify: { type: 'string', description: 'How the result will be verified — required' },
+        boundaries: { type: 'array', items: { type: 'string' }, description: 'Optional path/scope boundaries' },
+        stopPoints: { type: 'array', items: { type: 'string' }, description: "Optional override of stop-points (default: the registry's own stopPoints)" },
+      },
+      required: ['engine', 'topic', 'goal', 'verify'],
+    },
   },
 ];
 
@@ -339,6 +369,54 @@ async function memoryLedgerStatus() {
   };
 }
 
+async function memoryFleetStatus() {
+  const registry = readRegistry(ROOT);
+  if (!registry) {
+    return {
+      registry: false, message: 'no fleet registry yet — run `samemind fleet init`', engines: [], overdue: [],
+    };
+  }
+  const engines = heartbeat(registry.engines, readEvents(ROOT), Date.now());
+  return {
+    registry: true,
+    stopPoints: registry.stopPoints,
+    engines,
+    overdue: engines.filter(e => e.overdue).map(e => e.id),
+  };
+}
+
+async function memoryFleetAssign({
+  engine, topic, goal, verify, boundaries, stopPoints,
+} = {}) {
+  const registry = readRegistry(ROOT);
+  if (!registry) throw new Error('memory_fleet_assign: no fleet registry — run `samemind fleet init` first');
+  const eng = findEngine(registry, engine);
+  if (!eng) throw new Error(`memory_fleet_assign: engine "${engine}" is not in the registry`);
+  if (eng.status !== 'active') throw new Error(`memory_fleet_assign: engine "${engine}" is "${eng.status}", not active — not assignable`);
+  const effectiveStopPoints = Array.isArray(stopPoints) && stopPoints.length ? stopPoints : registry.stopPoints;
+  const assignment = buildAssignment({
+    engine, topic, goal, verify, boundaries, stopPoints: effectiveStopPoints,
+  });
+  const rec = appendEvent(ROOT, {
+    actor: assignment.engine,
+    topic: assignment.topic,
+    phase: 'start',
+    status: 'ok',
+    action: `assigned: ${assignment.goal} — verify: ${assignment.verify}`,
+    artifact: assignment.boundaries.join('; ') || null,
+  });
+  return {
+    ok: true,
+    engine: assignment.engine,
+    topic: assignment.topic,
+    goal: assignment.goal,
+    verify: assignment.verify,
+    stopPoints: assignment.stopPoints,
+    quarantine: rec.quarantine,
+    matches: rec.matches,
+  };
+}
+
 const HANDLERS = {
   memory_search: memorySearch,
   memory_get: memoryGet,
@@ -348,6 +426,8 @@ const HANDLERS = {
   memory_health: memoryHealth,
   memory_ledger_append: memoryLedgerAppend,
   memory_ledger_status: memoryLedgerStatus,
+  memory_fleet_status: memoryFleetStatus,
+  memory_fleet_assign: memoryFleetAssign,
 };
 
 /** Выполняет вызов инструмента, никогда не бросает — ошибки → { isError: true }. */

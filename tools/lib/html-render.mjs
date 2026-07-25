@@ -238,6 +238,13 @@ function openFailureCard(f) {
   return `<div class="card"><div class="card-head"><span class="badge badge-blocked">${esc(f.phase)}/${esc(f.status)}</span><span class="card-title">${esc(f.topic)}</span><span class="cite">${esc(f.actor)}, ${when}</span></div><div class="desc">${esc(f.action)}</div>${artifact}</div>`;
 }
 
+/** Fleet 🔥 Overdue engines card (docs/fleet.md, `heartbeat()` row) — same red badge as Open failures. */
+function overdueEngineCard(r) {
+  const seen = r.lastSeen ? esc(String(r.lastSeen).slice(0, 16).replace('T', ' ')) : 'never seen';
+  const silent = r.silentSec === null || r.silentSec === undefined ? '∞' : `${r.silentSec}s`;
+  return `<div class="card"><div class="card-head"><span class="badge badge-blocked">${esc(r.role)}</span><span class="card-title">${esc(r.id)}</span><span class="cite">silent ${silent}, limit ${r.heartbeatSec}s</span></div><div class="desc">last seen ${seen}</div></div>`;
+}
+
 function planCard(d) {
   const desc = oneline(d);
   return `<div class="card"><div class="card-head"><span class="badge badge-plan">${esc(statusOf(d) || '?')}</span><span class="card-title">${esc(titleOf(d))}</span><span class="cite">${esc(linkOf(d))}</span></div>${desc ? `<div class="desc">${esc(desc)}</div>` : ''}</div>`;
@@ -288,6 +295,7 @@ export function renderBoardHtml(model) {
     ideaIncubating, ideaSpark, ideaAdopted, ideasVisible, byId,
     recent, sessions,
     openFailuresShown, openFailuresTotal,
+    overdueEnginesShown, overdueEnginesTotal,
   } = model;
 
   const kanbanSvg = svgKanbanBars([
@@ -316,6 +324,15 @@ export function renderBoardHtml(model) {
     ? `<p class="muted">…and ${openFailuresTotal - openFailuresShown.length} more — <code>samemind ledger status</code></p>`
     : '';
   body += `<h2>🔥 Open failures <span class="count">(${openFailuresTotal})</span></h2>${cardsOrEmpty(openFailuresShown || [], openFailureCard)}${openFailuresNote}`;
+
+  // 🔥 Overdue engines (fleet, docs/fleet.md): omitted entirely when there are none — same
+  // reasoning as the markdown board (tools/board.mjs `buildBoard`).
+  if (overdueEnginesTotal) {
+    const overdueNote = overdueEnginesTotal > (overdueEnginesShown?.length || 0)
+      ? `<p class="muted">…and ${overdueEnginesTotal - overdueEnginesShown.length} more — <code>samemind fleet status</code></p>`
+      : '';
+    body += `<h2>🔥 Overdue engines <span class="count">(${overdueEnginesTotal})</span></h2>${cardsOrEmpty(overdueEnginesShown || [], overdueEngineCard)}${overdueNote}`;
+  }
 
   body += `<h2>🆕 Backlog <span class="count">(${backlog.length})</span></h2>${cardsOrEmpty(backlog, d => taskCard(d, nowMs, 'backlog', 'backlog'))}`;
   body += `<h2>🔧 In progress <span class="count">(${inprog.length})</span></h2>${cardsOrEmpty(inprog, d => taskCard(d, nowMs, 'inprogress', 'in progress'))}`;

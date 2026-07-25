@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { load, ROOT, pathToId } from './lib/okf.mjs';
 import { atomicWriteFileSync } from '../lib/atomic-write.mjs';
 import { readEvents, summarizeLedger } from './lib/ledger.mjs';
+import { readRegistry, heartbeat } from './lib/fleet.mjs';
 
 export const DASHBOARD_NAME = 'DASHBOARD.md';
 
@@ -34,6 +35,7 @@ const DEFAULT_RECENT_DAYS = 7;
 const SESSION_SUMMARY_LIMIT = 3;
 export const AGING_THRESHOLD_DAYS = 7;     // blocked older than this is flagged "aging"
 export const OPEN_FAILURES_LIMIT = 5;      // event-ledger 🔥 Open failures: shown cap (see docs/event-ledger.md)
+export const OVERDUE_ENGINES_LIMIT = 5;    // fleet 🔥 Overdue engines: shown cap (see docs/fleet.md)
 const DESC_MAX = 140;
 
 // Plans shown on the board: active planning states. `done` and `superseded` are history
@@ -173,6 +175,20 @@ export function renderOpenFailure(f) {
   return `- **${f.topic}** — ${f.action} _(${f.actor}, ${f.phase}/${f.status}, ${when})_${tail}`;
 }
 
+/** Most-silent first: never-seen (silentSec null) sorts ahead of any finite silence. */
+const bySilenceDesc = (a, b) => {
+  const as = a.silentSec === null || a.silentSec === undefined ? Infinity : a.silentSec;
+  const bs = b.silentSec === null || b.silentSec === undefined ? Infinity : b.silentSec;
+  return bs - as;
+};
+
+/** One line for a 🔥 Overdue engines entry: `heartbeat()`'s row for one silent engine. */
+export function renderOverdueEngine(r) {
+  const seen = r.lastSeen ? String(r.lastSeen).slice(0, 16).replace('T', ' ') : 'never seen';
+  const silent = r.silentSec === null || r.silentSec === undefined ? '∞' : `${r.silentSec}s`;
+  return `- **${r.id}** — ${r.role}, silent ${silent} (limit ${r.heartbeatSec}s) _(last seen ${seen})_`;
+}
+
 /** Append a `## heading (n)` section with items; `_(empty)_` when empty. */
 function section(L, heading, items, render, nowMs) {
   L.push(`## ${heading} (${items.length})`, '');
@@ -195,6 +211,7 @@ export function buildBoardModel(docs, {
   recentDays = DEFAULT_RECENT_DAYS,
   project = null,
   openFailures = [],
+  overdueEngines = [],
 } = {}) {
   const nowMs = now instanceof Date ? now.getTime() : Number(now) || Date.now();
   const cs = (docs || []).filter(d => !d.reserved);
@@ -207,6 +224,14 @@ export function buildBoardModel(docs, {
   const openFailuresShown = [...openFailures]
     .sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')))
     .slice(0, OPEN_FAILURES_LIMIT);
+
+  // Fleet 🔥 Overdue engines (docs/fleet.md): same discipline as Open failures — the caller
+  // reads fleet/registry.json + the ledger and passes already-computed `heartbeat()` rows
+  // (pre-filtered to `overdue: true`) in, so this stays a pure function of its arguments.
+  // Unlike Open failures, an empty list means the section is OMITTED entirely (see buildBoard)
+  // — most bundles have no fleet registry at all, and a permanent "(0)" heading would be noise.
+  const overdueEnginesTotal = overdueEngines.length;
+  const overdueEnginesShown = [...overdueEngines].sort(bySilenceDesc).slice(0, OVERDUE_ENGINES_LIMIT);
 
   const tasks = cs.filter(d => typeOf(d) === 'task');
   const inProject = d => taskProjectMatches(d, project);
@@ -244,6 +269,7 @@ export function buildBoardModel(docs, {
     ideaIncubating, ideaSpark, ideaAdopted, ideasVisible, byId,
     recent, sessions,
     openFailuresShown, openFailuresTotal,
+    overdueEnginesShown, overdueEnginesTotal,
   };
 }
 
@@ -258,6 +284,7 @@ export function buildBoard(docs, opts = {}) {
     backlog, inprog, blocked, done, plans,
     ideaAdopted, ideasVisible, byId, recent, sessions,
     openFailuresShown, openFailuresTotal,
+    overdueEnginesShown, overdueEnginesTotal,
   } = m;
 
   const L = [];
@@ -281,6 +308,17 @@ export function buildBoard(docs, opts = {}) {
     }
   }
   L.push('');
+
+  // 🔥 Overdue engines (fleet, docs/fleet.md): omitted entirely when there are none — most
+  // bundles have no fleet registry, and a standing "(0)" heading would be noise for them.
+  if (overdueEnginesTotal > 0) {
+    L.push(`## 🔥 Overdue engines (${overdueEnginesTotal})`, '');
+    for (const r of overdueEnginesShown) L.push(renderOverdueEngine(r));
+    if (overdueEnginesTotal > overdueEnginesShown.length) {
+      L.push(`_…and ${overdueEnginesTotal - overdueEnginesShown.length} more — \`samemind fleet status\`_`);
+    }
+    L.push('');
+  }
 
   section(L, '🆕 Backlog', backlog, renderTask, nowMs);
   section(L, '🔧 In progress', inprog, renderTask, nowMs);
@@ -339,13 +377,21 @@ export async function main(argv = process.argv.slice(2)) {
   // Event ledger (docs/event-ledger.md) is not part of the OKF graph — read it separately
   // and summarize to open failures here, in the I/O layer, so buildBoardModel/buildBoard stay
   // pure functions of their arguments (same reasoning as `now` being injectable).
-  const { openFailures } = summarizeLedger(readEvents(ROOT));
+  const events = readEvents(ROOT);
+  const { openFailures } = summarizeLedger(events);
+  // Fleet registry (docs/fleet.md) is likewise not an OKF concept — read it here, in the I/O
+  // layer, and reduce to the overdue subset via the same `heartbeat()` the CLI/MCP use, so
+  // buildBoardModel/buildBoard never touch the filesystem themselves. No registry → [].
+  const registry = readRegistry(ROOT);
+  const overdueEngines = registry ? heartbeat(registry.engines, events, Date.now()).filter(e => e.overdue) : [];
 
   if (html) {
     // --html: self-contained HTML projection (tools/lib/html-render.mjs) — canon stays
     // markdown, this is a generated face, never storage. See gbrain idea-html-projections.
     const { renderBoardHtml } = await import('./lib/html-render.mjs');
-    const model = buildBoardModel(docs, { now: Date.now(), project, openFailures });
+    const model = buildBoardModel(docs, {
+      now: Date.now(), project, openFailures, overdueEngines,
+    });
     const page = renderBoardHtml(model);
     if (out) {
       atomicWriteFileSync(out, page);
@@ -356,7 +402,9 @@ export async function main(argv = process.argv.slice(2)) {
     return;
   }
 
-  const md = buildBoard(docs, { now: Date.now(), project, openFailures });
+  const md = buildBoard(docs, {
+    now: Date.now(), project, openFailures, overdueEngines,
+  });
 
   if (write) {
     const target = boardPath(ROOT);

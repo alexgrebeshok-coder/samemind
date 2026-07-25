@@ -253,18 +253,46 @@ samemind fleet assign --engine <id> --topic <t> --goal "..." --verify "..." [--b
   `verify`, an unknown `engine`, or a non-`active` engine are hard errors —
   `fleet assign` never falls back to assigning "something" to "someone."
 
-## Future: role-aware heartbeat thresholds, MCP tools
+## MCP
 
-Not built here (flagged, not shipped, per this naryad's scope):
+Two tools, alongside the eight already documented in the
+[README → MCP](../README.md#mcp) / [docs/event-ledger.md → MCP](event-ledger.md#mcp) —
+thin wrappers over the same pure `tools/lib/fleet.mjs` this document covers, no logic
+duplicated:
 
-- **A `memory_fleet_status`/`memory_fleet_assign` MCP tool pair**, mirroring
-  `memory_ledger_append`/`memory_ledger_status` (`docs/event-ledger.md`
-  → "MCP"), so an agent can check/declare fleet state over the same
-  stdio server it already uses for memory — not built here since nothing in
-  this naryad's scope asked for it yet.
-- **`samemind board` integration.** `docs/event-ledger.md`'s ledger gained a
-  🔥 Open failures board section; a fleet 🔥 Overdue engines section would be
-  the analogous next step, once there's a real caller for it.
+| Tool | Purpose |
+|------|---------|
+| `memory_fleet_status` | `{}` → registry + heartbeat rows (who's silent). Read-only, never mutates. No registry yet → `{ registry: false }`. |
+| `memory_fleet_assign` | `{engine, topic, goal, verify, boundaries?, stopPoints?}` → declares an assignment, logs it as a ledger `start` event — same storage `memory_ledger_append` uses, no second format. |
+
+`memory_fleet_assign` refuses, not guesses, exactly like `fleet assign` (CLI):
+missing registry, unknown engine, or a non-`active` engine are hard errors. The
+constructed `action` text runs through `appendEvent`'s own injection scan
+(`tools/lib/ledger.mjs`), the same guarantee `memory_ledger_append` gets — nothing
+special has to be added at the MCP layer for that, since both paths converge on
+the same `appendEvent`.
+
+## Board integration
+
+`samemind board` (`docs/work-discipline.md`) gains a **🔥 Overdue engines**
+section, the fleet analogue of the ledger's 🔥 Open failures
+(`docs/event-ledger.md` → "Board integration"): same mechanics — a pure
+`buildBoardModel`/`buildBoard` (`tools/board.mjs`) option (`overdueEngines`,
+default `[]`), capped at `OVERDUE_ENGINES_LIMIT` (5), same `--html` styling
+(reuses the blocked/red badge). One deliberate difference: this section is
+**omitted entirely** when there are no overdue engines — unlike Open
+failures, which always shows a `(0)` heading — because most bundles have no
+fleet registry at all, and a standing empty heading on every board would be
+noise for them. `board.mjs`'s `main()` is the only place that reads
+`fleet/registry.json` and calls `heartbeat()`; the model-building functions
+stay pure functions of their arguments, same as `now`/`openFailures`.
+
+## Future: role-aware heartbeat thresholds
+
+Not built here (flagged, not shipped, per this naryad's scope): heartbeat
+thresholds that vary by `role` (a `director` going silent may warrant a
+shorter fuse than a `reserve` engine) rather than the flat per-engine
+`heartbeatSec` this registry already supports.
 
 ## See also
 

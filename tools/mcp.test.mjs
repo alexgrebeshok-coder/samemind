@@ -173,13 +173,14 @@ describe('MCP stdio — initialize handshake', () => {
 });
 
 describe('MCP stdio — tools/list', () => {
-  it('advertises exactly the 8 memory_* tools', async () => {
+  it('advertises exactly the 10 memory_* tools', async () => {
     const client = startClient();
     try {
       await initialized(client);
       const res = await client.request('tools/list', {});
       const names = res.result.tools.map(t => t.name).sort();
       assert.deepEqual(names, [
+        'memory_fleet_assign', 'memory_fleet_status',
         'memory_get', 'memory_handoff', 'memory_health', 'memory_ledger_append', 'memory_ledger_status',
         'memory_list', 'memory_search', 'memory_write_inbox',
       ]);
