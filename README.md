@@ -2,7 +2,7 @@
 
 samemind is a git-native markdown memory bundle for AI coding agents — identity, search, a work ledger, and a kanban board in one place, portable across engines like Claude Code, Cursor, and OpenClaw. No daemon, no required database; BM25 search always works offline, semantic search is optional.
 
-**Latest: v0.7.0** — proactive recall + conflict-aware memory (supersedes-aware, authority tiebreak). See [CHANGELOG.md](CHANGELOG.md).
+**Latest: v0.8.0** — fleet layer: a declared registry of the engines sharing one bundle, plus heartbeat (who stopped reporting). See [CHANGELOG.md](CHANGELOG.md).
 
 [![ci](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml/badge.svg)](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml)
 
@@ -17,6 +17,7 @@ Git-native markdown bundle (no daemon, no required DB): identity, search, handof
 | Wire format | ad hoc | [OKF v0.1](docs/interop.md) export/import |
 | Identity | flat notes | `Identity` / `User` / `EngineRule` → budgeted `brief` |
 | Work | separate tools | [event ledger](docs/event-ledger.md) + board in the same bundle |
+| Multi-engine ops | assumed, never checked | [fleet registry](docs/fleet.md) + heartbeat: who reports, who went quiet |
 | Engines | often one client | `samemind install` → 12 engines ([adapters](docs/adapters.md)) |
 | Capture | — | `samemind capture` (read-only session → inbox) |
 
@@ -55,6 +56,7 @@ Details: [docs/full-guide.md § Global mode](docs/full-guide.md#global-mode) (ar
 | `board` | Kanban over tasks/plans/ideas |
 | `capture` | Pull engine transcripts → `inbox/` |
 | `ledger` | Append-only work events |
+| `fleet` | Declared engine registry: who reports, who went quiet ([docs/fleet.md](docs/fleet.md)) |
 | `serve` | MCP: `memory_search`, `memory_get`, `memory_write_inbox`, … |
 | `forget` / `export` / `import` | Hygiene + OKF packs |
 
@@ -79,6 +81,7 @@ Security perimeter (secret visibility, inbox-only writes, path safety): [docs/fu
 | Identity + `brief` | [docs/identity-layer.md](docs/identity-layer.md) |
 | Hygiene, supersedes, heat | [docs/memory-hygiene.md](docs/memory-hygiene.md) |
 | Event ledger | [docs/event-ledger.md](docs/event-ledger.md) |
+| Fleet registry + heartbeat | [docs/fleet.md](docs/fleet.md) |
 | Session capture | [docs/session-capture.md](docs/session-capture.md) |
 | Compaction / handoff | [docs/compaction-recipe.md](docs/compaction-recipe.md) |
 | OKF interop | [docs/interop.md](docs/interop.md) |
@@ -97,6 +100,14 @@ No. It's git-native markdown with no daemon and no required database. BM25 searc
 
 ### Which AI engines does it work with?
 `samemind install` wires the memory protocol into 12 engines (see [docs/adapters.md](docs/adapters.md)), and it exposes an MCP server (`npx samemind serve`) for engines like Claude Code.
+
+### What's new in v0.8.0?
+
+The **fleet layer**: `samemind fleet init | status | assign`. A memory bundle shared by several
+engines answers "what do we know" — it cannot answer "is everyone still working, and did anyone stop
+telling us". The registry declares each engine's reporting cadence, `status` shows who is overdue,
+the board renders a `🕰 Overdue engines` section above blocked tasks, and MCP exposes
+`memory_fleet_status` / `memory_fleet_assign`. See [docs/fleet.md](docs/fleet.md).
 
 ### What's new in v0.7.0?
 Proactive recall (`samemind proactive`) assembles a top-k memory pack before an agent answers, and conflict-aware recall excludes superseded or time-expired facts by default (opt-out via `--include-superseded` / `--as-of`). See [CHANGELOG.md](CHANGELOG.md).

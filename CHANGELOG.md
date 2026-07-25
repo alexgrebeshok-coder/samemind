@@ -3,6 +3,39 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.0] — 2026-07-25
+
+Fleet layer — a declared registry of the engines that share one memory bundle, plus the two things
+multi-engine operation needs and no memory layer can infer on its own: **who is supposed to report,
+and who has gone quiet**. All additive; bundles and callers from 0.7.x behave exactly as before.
+
+### Added
+
+- **`samemind fleet`** (`init` | `status` | `assign`) — the engine registry as a first-class,
+  declared artifact (`fleet.json` in the bundle root). `init` seeds it from the engines actually
+  present in the target directory, reusing `detectEngines()` (`tools/lib/detect-engines.mjs`) rather
+  than re-declaring a second detection table. `status` prints the roster plus overdue engines;
+  `assign` records a naryad (goal + boundaries + verify + reporting topic) against one engine.
+- **Heartbeat / overdue detection** (`tools/lib/fleet.mjs`) — an engine declares the cadence it is
+  expected to report at; anything silent past that cadence is *overdue*. Pure functions with `now`
+  injected, exactly like the board's aging — so tests never need a real clock or a real ledger.
+- **Board section `🕰 Overdue engines`** — rendered above `🔴 Blocked`, same shape and cap as
+  `🔥 Open failures`, carried into the `--html` projection. An engine that stopped reporting is a
+  sharper signal than a task sitting at `blocked`, so it reads first.
+- **MCP tools `memory_fleet_status` / `memory_fleet_assign`** — same contract as
+  `memory_ledger_status` / `memory_ledger_append`: read-only status never mutates, dictionaries are
+  validated (not coerced), `actor` comes from `SAMEMIND_AGENT`, and free text runs through the same
+  prompt-injection scan every writable tier in this package uses.
+- **`docs/fleet.md`** — the layer's contract, the reporting-ownership rule (one summary owner, event
+  owners per engine), and Design decisions, including why the registry is declared rather than
+  inferred at read time.
+
+### Why
+
+A memory bundle shared by several engines answers "what do we know". It cannot answer "is everyone
+still working, and did anyone stop telling us". Ours stopped for two days before anyone noticed —
+the layer exists so that failure mode is visible by construction, not by luck.
+
 ## [0.7.0] — 2026-07-24
 
 Э6 — proactive + conflict-aware memory. All additive and backward-compatible: bundles without
