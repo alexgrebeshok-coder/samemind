@@ -8,12 +8,12 @@
 // Host header doesn't name localhost/127.0.0.1, as defense against DNS rebinding from a page
 // on another origin that a browser on this machine might load.
 import http from 'node:http';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, watch as fsWatch, openSync, readSync, closeSync } from 'node:fs';
 import { dirname, extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { load, findById } from './okf.mjs';
-import { readEvents, summarizeLedger } from './ledger.mjs';
+import { readEvents, summarizeLedger, ledgerFile, ledgerDir } from './ledger.mjs';
 import { readRegistry, heartbeat } from './fleet.mjs';
 import { buildBoardModel, dateOf, statusOf } from '../board.mjs';
 import { buildHandoffModel } from '../handoff.mjs';
@@ -67,6 +67,7 @@ function hostAllowed(host) {
 const API_ENDPOINTS = [
   'GET /api/health', 'GET /api/board', 'GET /api/handoff', 'GET /api/fleet',
   'GET /api/ledger', 'GET /api/concepts', 'GET /api/concept/<id>', 'GET /api/graph',
+  'GET /api/events/stream',
 ];
 
 function placeholderHtml() {
@@ -157,6 +158,102 @@ const API_ROUTES = {
   '/api/graph': apiGraph,
 };
 
+// --- live event stream: GET /api/events/stream (SSE) -------------------------------------
+//
+// One hub per createUiServer() call, shared by every connected client (spec allows either a
+// per-client offset or a common emitter — a shared emitter is the smaller diff: one
+// watcher/offset no matter how many browser tabs are open, torn down when the last client
+// leaves so an idle server holds no open handles).
+
+const HEARTBEAT_MS = 25000;
+const POLL_MS = 2000;
+
+function createLedgerStreamHub(root) {
+  const clients = new Set(); // { res, hb }
+  let offset = 0;
+  let stopWatch = null;
+
+  /** Reads whatever grew past `offset` since the last check, parses complete lines (corrupt
+   *  ones skipped, same contract as ledger.mjs readEvents), and broadcasts each as an
+   *  `event` SSE message. A trailing line with no newline yet is left for the next tick. */
+  function checkForNewLines() {
+    const file = ledgerFile(root);
+    if (!existsSync(file)) return;
+    let size;
+    try { size = statSync(file).size; } catch { return; }
+    if (size < offset) offset = 0; // truncated/rotated underneath us — restart from scratch
+    if (size <= offset) return;
+    const len = size - offset;
+    const buf = Buffer.alloc(len);
+    let fd;
+    try { fd = openSync(file, 'r'); } catch { return; }
+    try { readSync(fd, buf, 0, len, offset); } finally { closeSync(fd); }
+    const lines = buf.toString('utf8').split('\n');
+    const partial = lines.pop(); // last chunk with no trailing \n yet — hold back
+    offset = size - Buffer.byteLength(partial, 'utf8');
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let ev;
+      try { ev = JSON.parse(line); } catch { continue; }
+      const payload = `event: event\ndata: ${JSON.stringify(wrap('ledger-event', ev))}\n\n`;
+      for (const c of clients) c.res.write(payload);
+    }
+  }
+
+  function startWatch() {
+    offset = existsSync(ledgerFile(root)) ? statSync(ledgerFile(root)).size : 0;
+    const dir = ledgerDir(root);
+    let watcher = null;
+    // fs.watch needs the directory to already exist, and Node's own docs warn it isn't
+    // reliable on every platform/load condition (events can be coalesced or dropped, not just
+    // "slow") — so the 2s poll always runs alongside it, not only when fs.watch is unavailable
+    // or errors. fs.watch is the low-latency common case; the poll is the correctness backstop.
+    if (existsSync(dir)) {
+      try {
+        watcher = fsWatch(dir, { persistent: false }, () => checkForNewLines());
+        watcher.on('error', () => { watcher.close(); watcher = null; });
+      } catch { /* dir vanished between the check and the call — poll still covers it */ }
+    }
+    const poll = setInterval(checkForNewLines, POLL_MS);
+    stopWatch = () => { if (watcher) watcher.close(); clearInterval(poll); };
+  }
+
+  function addClient(res) {
+    if (clients.size === 0) startWatch();
+    const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch { /* client gone */ } }, HEARTBEAT_MS);
+    const client = { res, hb };
+    clients.add(client);
+    return client;
+  }
+
+  function removeClient(client) {
+    clearInterval(client.hb);
+    clients.delete(client);
+    if (clients.size === 0 && stopWatch) { stopWatch(); stopWatch = null; }
+  }
+
+  /** Ends every open stream and stops watching — called from server.close(). */
+  function endAll() {
+    for (const c of [...clients]) { clearInterval(c.hb); try { c.res.end(); } catch { /* already gone */ } }
+    clients.clear();
+    if (stopWatch) { stopWatch(); stopWatch = null; }
+  }
+
+  return { addClient, removeClient, endAll };
+}
+
+function handleEventsStream(req, res, root, hub) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+  });
+  const events = readEvents(root).slice(-50);
+  res.write(`event: snapshot\ndata: ${JSON.stringify(wrap('ledger-snapshot', { events }))}\n\n`);
+  const client = hub.addClient(res);
+  req.on('close', () => hub.removeClient(client));
+}
+
 /** GET /api/concept/<id>: validated through the same traversal guard memory_get uses. */
 function handleConceptDetail(res, root, idRaw) {
   let rel;
@@ -186,7 +283,7 @@ function serveStaticFile(res, distDir, relPath) {
   return true;
 }
 
-function handleRequest(req, res, root, distDir) {
+function handleRequest(req, res, root, distDir, hub) {
   if (!hostAllowed(req.headers.host)) { sendJson(res, 403, { error: 'forbidden host' }); return; }
   if (req.method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return; }
 
@@ -203,6 +300,10 @@ function handleRequest(req, res, root, distDir) {
 
   if (pathname.startsWith('/api/concept/')) {
     handleConceptDetail(res, root, pathname.slice('/api/concept/'.length));
+    return;
+  }
+  if (pathname === '/api/events/stream') {
+    handleEventsStream(req, res, root, hub);
     return;
   }
   if (Object.prototype.hasOwnProperty.call(API_ROUTES, pathname)) {
@@ -231,11 +332,23 @@ function handleRequest(req, res, root, distDir) {
  *  (tools/ui.mjs binds 127.0.0.1 only, per docs/ui-spec.md §0). */
 export function createUiServer({ root, distDir = null } = {}) {
   if (!root) throw new Error('createUiServer: "root" is required');
-  return http.createServer((req, res) => {
+  const hub = createLedgerStreamHub(root);
+  const server = http.createServer((req, res) => {
     try {
-      handleRequest(req, res, root, distDir);
+      handleRequest(req, res, root, distDir, hub);
     } catch (e) {
       sendJson(res, 500, { error: e.message });
     }
   });
+  // SSE clients are keep-alive connections http.Server#close() will otherwise wait on forever
+  // (its callback only fires once every connection is gone). End our own streams first, then
+  // force-drop any lingering socket so close() actually completes — "server close() гасит все
+  // стримы" per spec, and the thing that makes the "no hanging handles" test possible.
+  const origClose = server.close.bind(server);
+  server.close = (cb) => {
+    hub.endAll();
+    if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+    return origClose(cb);
+  };
+  return server;
 }

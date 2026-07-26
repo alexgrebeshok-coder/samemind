@@ -4,7 +4,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, appendFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -276,3 +276,109 @@ describe('createUiServer — static assets from distDir', () => {
     assert.notEqual(r.status, 200);
   });
 });
+
+// ─────────────────────────────── live event stream: GET /api/events/stream (SSE) ───────────────────────────────
+
+/** Opens an SSE connection and buffers parsed `{ event, data }` messages as they arrive
+ *  (heartbeat `: ping` comments are swallowed, not pushed). `ready` resolves once headers
+ *  are in; caller destroys `req` when done with the stream. */
+function sseConnect(port, path, { host } = {}) {
+  const req = http.request({
+    hostname: '127.0.0.1', port, path, method: 'GET',
+    headers: host ? { Host: host } : {},
+  });
+  const state = { status: null, buf: '', events: [] };
+  const ready = new Promise((resolvePromise, reject) => {
+    req.on('response', (res) => {
+      state.status = res.statusCode;
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        state.buf += chunk;
+        let idx;
+        while ((idx = state.buf.indexOf('\n\n')) !== -1) {
+          const raw = state.buf.slice(0, idx);
+          state.buf = state.buf.slice(idx + 2);
+          if (!raw.trim() || raw.startsWith(':')) continue; // heartbeat comment
+          const lines = raw.split('\n');
+          const eventLine = lines.find((l) => l.startsWith('event: '));
+          const dataLine = lines.find((l) => l.startsWith('data: '));
+          if (!dataLine) continue;
+          state.events.push({ event: eventLine ? eventLine.slice(7) : 'message', data: JSON.parse(dataLine.slice(6)) });
+        }
+      });
+      resolvePromise(res);
+    });
+    req.on('error', reject);
+  });
+  req.end();
+  return { req, state, ready };
+}
+
+async function waitForSse(state, predicate, timeoutMs = 3000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const hit = state.events.find(predicate);
+    if (hit) return hit;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`timed out waiting for SSE event, got: ${JSON.stringify(state.events)}`);
+}
+
+describe('createUiServer — GET /api/events/stream (SSE)', () => {
+  let dir, server, port;
+
+  before(async () => {
+    dir = tmp('ui-sse');
+    mkdirSync(join(dir, 'ledger'), { recursive: true });
+    writeFileSync(join(dir, 'ledger', 'events.jsonl'), JSON.stringify({
+      ts: '2026-07-26T00:00:00.000Z', actor: 'test', topic: 'sse-fixture', phase: 'start',
+      status: 'ok', action: 'seed event', artifact: null, ref: null, quarantine: false, matches: [],
+    }) + '\n');
+    server = await listen({ root: dir, distDir: null });
+    port = server.address().port;
+  });
+  after(() => { server.close(); rmSync(dir, { recursive: true, force: true }); });
+
+  // One persistent connection covers both the snapshot-on-connect and live-append assertions
+  // (a real dashboard tab does the same — connect once, then observe events over time), rather
+  // than two independent sseConnect()s that would tear down and restart the hub's watch between
+  // them for no reason.
+  it('connect → snapshot, then a ledger append arrives live', async () => {
+    const conn = sseConnect(port, '/api/events/stream');
+    await conn.ready;
+    assert.equal(conn.state.status, 200);
+    const snap = await waitForSse(conn.state, (e) => e.event === 'snapshot');
+    assert.equal(snap.data.contract, 1);
+    assert.equal(snap.data.kind, 'ledger-snapshot');
+    assert.ok(Array.isArray(snap.data.data.events));
+    assert.ok(snap.data.data.events.some((e) => e.topic === 'sse-fixture'));
+
+    appendFileSync(join(dir, 'ledger', 'events.jsonl'), JSON.stringify({
+      ts: '2026-07-26T00:01:00.000Z', actor: 'test', topic: 'sse-live', phase: 'step',
+      status: 'ok', action: 'live append', artifact: null, ref: null, quarantine: false, matches: [],
+    }) + '\n');
+    // ponytail: fs.watch delivery is normally ~tens of ms; the 2s poll (always running
+    // alongside fs.watch as a correctness backstop — see ui-server.mjs startWatch) caps the
+    // worst case. The extra margin here just absorbs scheduling jitter on a saturated CI box.
+    const ev = await waitForSse(conn.state, (e) => e.event === 'event' && e.data.data?.topic === 'sse-live', 8000);
+    assert.equal(ev.data.contract, 1);
+    assert.equal(ev.data.kind, 'ledger-event');
+    assert.equal(ev.data.data.action, 'live append');
+    conn.req.destroy();
+  });
+
+  it('Host: evil.com → 403 (same guard as every other route)', async () => {
+    const r = await request(port, '/api/events/stream', { host: 'evil.com' });
+    assert.equal(r.status, 403);
+  });
+
+  it('POST /api/events/stream → 405', async () => {
+    const r = await request(port, '/api/events/stream', { method: 'POST' });
+    assert.equal(r.status, 405);
+  });
+});
+
+// No dedicated "no leaked handles" test: it's proven by the test *process* — every `after()`
+// above calls server.close(), which (per the ui-server.mjs comment on server.close) ends every
+// open SSE stream and force-drops its socket. If a watcher, heartbeat interval, or connection
+// leaked, `node --test` would hang past this file's last test instead of exiting.
