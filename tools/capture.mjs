@@ -238,7 +238,23 @@ export const ADAPTERS = {
 
 // ---------------------------------------------------------------------------
 // State (idempotency) — .samemind-capture-state.json in the bundle root.
+// Captured keys are stored relative to the user's home directory ('~/...') rather than as
+// absolute host paths, so a state file committed from one machine (or one user account) still
+// recognizes what it already captured on another — same portability concern as any other path
+// this package writes. Session ids (the claude-code adapter's key) aren't paths at all and pass
+// through unchanged.
 // ---------------------------------------------------------------------------
+
+/** Converts an absolute path under the user's home directory to its portable '~/...' form.
+ *  Anything else (a session id, a path outside home) passes through unchanged. */
+export function toPortableKey(key) {
+  const k = String(key ?? '');
+  const home = os.homedir();
+  if (home && (k === home || k.startsWith(home + sep))) {
+    return `~${k.slice(home.length)}`;
+  }
+  return k;
+}
 
 export function loadState(root) {
   const p = join(root, STATE_FILE);
@@ -247,6 +263,12 @@ export function loadState(root) {
     const parsed = JSON.parse(readFileSync(p, 'utf8'));
     if (!parsed || typeof parsed !== 'object') return { engines: {} };
     if (!parsed.engines) parsed.engines = {};
+    // Portability migration: fold any pre-existing absolute-path keys into '~/...' form in
+    // memory on load, so an old state file keeps recognizing already-captured items without a
+    // re-capture. Only rewritten to disk on the next saveState (runCapture's normal write path).
+    for (const eng of Object.values(parsed.engines)) {
+      if (Array.isArray(eng?.captured)) eng.captured = eng.captured.map(toPortableKey);
+    }
     return parsed;
   } catch {
     return { engines: {} };
@@ -365,8 +387,11 @@ export function runCapture({
 
   // Read-only rule: never re-derive from source order — dedupe by key regardless of
   // --since, so a session already captured never resurfaces just because --since widened.
+  // capturedKeys is already in portable '~/...' form (loadState migrates on read); item.key
+  // is compared through the same toPortableKey so an absolute-path key (generic-markdown) and
+  // a portable one always mean the same thing here.
   const candidates = items.filter(item => {
-    if (capturedKeys.has(item.key)) return false;
+    if (capturedKeys.has(toPortableKey(item.key))) return false;
     if (sinceMs !== null) {
       const t = Date.parse(item.date);
       if (!Number.isNaN(t) && t < sinceMs) return false;
@@ -428,7 +453,7 @@ export function runCapture({
     ...state,
     engines: {
       ...state.engines,
-      [engine]: { captured: [...capturedKeys, ...captured.map(c => c.key)].sort() },
+      [engine]: { captured: [...capturedKeys, ...captured.map(c => toPortableKey(c.key))].sort() },
     },
   });
   return result;

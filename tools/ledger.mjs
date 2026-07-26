@@ -64,13 +64,13 @@ export function cmdStatus(a = {}) {
   const { topics, openFailures } = summary;
   if (!topics.length) { console.log('ledger: empty — no events yet.'); return; }
   if (openFailures.length) {
-    console.log('🔥 ОТКРЫТЫЕ СБОИ:');
+    console.log('🔥 OPEN FAILURES:');
     for (const f of openFailures) {
       console.log(`  [${String(f.ts).slice(0, 16).replace('T', ' ')}] ${f.actor} · ${f.topic} — ${f.action}`);
     }
     console.log('');
   }
-  console.log('ТОПИКИ — текущая стадия (свежие сверху):');
+  console.log('TOPICS — current stage (newest first):');
   for (const t of topics) {
     const mark = t.openFail ? '🔥' : (t.last.phase === 'done' ? '✅' : '🔧');
     console.log(`  ${mark} ${String(t.topic).padEnd(20)} ${t.last.phase}/${t.last.status} [${t.last.actor}] ${String(t.last.ts).slice(0, 16).replace('T', ' ')} — ${t.last.action}`);

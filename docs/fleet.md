@@ -18,6 +18,7 @@ below for exactly what carried over and what deliberately didn't.
 npx samemind fleet init [--target <dir>]
 npx samemind fleet status
 npx samemind fleet assign --engine <id> --topic <t> --goal "..." --verify "..." [--boundary "..."]... [--stop <s>]...
+npx samemind fleet set --engine <id> --status active|reserve|dead [--role r] [--heartbeat N] [--zone "..."]
 ```
 
 ## Fleet vs. Ledger vs. Task
@@ -163,6 +164,28 @@ fleet-specific assignment file. `fleet status`'s heartbeat and
 `samemind ledger read --topic <t>` both then see the same event: an
 assignment *is* a ledger event, not a parallel record of one.
 
+## `fleet set` — edit an existing engine in place
+
+```
+samemind fleet set --engine <id> --status active|reserve|dead [--role r] [--heartbeat N] [--zone "..."]
+```
+
+The manual-edit counterpart to `fleet init`'s additive detection: change an
+already-registered engine's `status` (promote it out of `reserve`, retire it
+to `dead`, bring it back to `active`), and optionally `role`/`heartbeatSec`
+(`--heartbeat`)/`zone` in the same call. `--status` is required — every other
+field, if omitted, keeps its current value.
+
+Runs the update through the same `buildEngine` validation `fleet init` uses
+(invalid `role`/`status`/`heartbeatSec` is a hard error, never silently
+coerced) and writes the registry back atomically (`writeRegistry`), same as
+every other command that touches `fleet/registry.json`. Refuses, not
+guesses, on:
+- no registry yet (`fleet init` first), or
+- an engine id not already in the registry (`fleet set` edits, it doesn't
+  add — that's what `fleet init`/a manual edit is for), or
+- an invalid `role`/`status`/`heartbeatSec`.
+
 ## CLI reference
 
 ```sh
@@ -175,6 +198,10 @@ samemind fleet status
 
 samemind fleet assign --engine <id> --topic <t> --goal "..." --verify "..." [--boundary "..."]... [--stop <s>]...
 #   engine, topic, goal, verify all required; logs one `start` event to the ledger
+
+samemind fleet set --engine <id> --status active|reserve|dead [--role r] [--heartbeat N] [--zone "..."]
+#   edits an already-registered engine in place; --status required, same dictionary validation
+#   as fleet init/buildEngine; unknown engine or invalid value → hard error
 ```
 
 `OKF_ROOT` picks the bundle, exactly like every other `samemind` subcommand

@@ -458,6 +458,7 @@ describe('MCP stdio — memory_get', () => {
       await initialized(client);
       const res = await client.request('tools/call', { name: 'memory_get', arguments: { id: '../../../../../../etc/passwd' } });
       assert.equal(res.result.isError, true);
+      assert.match(res.result.content[0].text, /Error \[INVALID_ID\]:/);
       assert.doesNotMatch(res.result.content[0].text, /root:.*:0:0:/);
     } finally {
       await client.close();

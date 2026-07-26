@@ -16,7 +16,7 @@
 //   npx samemind import <dir> [...]      → tools/import.mjs      (accept foreign OKF; default → inbox)
 //   npx samemind capture --engine <id>   → tools/capture.mjs     (read-only capture of a live engine session store → inbox)
 //   npx samemind ledger <cmd> ...        → tools/ledger.mjs      (append-only event ledger: append|status|read)
-//   npx samemind fleet <cmd> ...         → tools/fleet.mjs       (engine registry: init|status|assign)
+//   npx samemind fleet <cmd> ...         → tools/fleet.mjs       (engine registry: init|status|assign|set)
 //   npx samemind serve                   → tools/mcp-server.mjs  (MCP stdio server: memory_* tools)
 //
 // query/recall/gde are routed with OKF_ROOT defaulted to the caller's cwd, so the tools
@@ -72,7 +72,7 @@ function usage() {
   console.log('  import <dir> [...]    accept a foreign OKF-bundle; --into inbox|concepts (default inbox) — see docs/interop.md');
   console.log('  capture --engine <id> [--source <path>] [--since <ts>] [--limit N] [--yes] [--dry-run]   read-only capture of a live engine session store → inbox/<engine>.md; bulk (20+ new items) asks for confirmation first — see docs/session-capture.md');
   console.log('  ledger <cmd> ...      append-only event ledger: append --actor .. --topic .. --phase .. [--status ..] --action ".." | status [--json] | read --topic <t> — see docs/event-ledger.md');
-  console.log('  fleet <cmd> ...       engine registry: init [--target <dir>] | status [--json] | assign --engine <id> --topic <t> --goal ".." --verify ".." — see docs/fleet.md');
+  console.log('  fleet <cmd> ...       engine registry: init [--target <dir>] | status [--json] | assign --engine <id> --topic <t> --goal ".." --verify ".." | set --engine <id> --status active|reserve|dead [--role r] [--heartbeat N] [--zone ".."] — see docs/fleet.md');
   console.log('  ui [...]              local read-only dashboard over the bundle, GET /api/* (--port N default 7787, --root <dir>, --open) — see docs/ui-spec.md');
   console.log('  serve                 MCP stdio server (memory_search/get/list/write_inbox/handoff/health/ledger_append/ledger_status) — connect it as an MCP tool');
   console.log('  proactive "<msg>"     Active Memory prototype: auto top-k recall pack before answer (-k N --json --force --pack)');

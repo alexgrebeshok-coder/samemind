@@ -5,13 +5,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, writeFileSync, mkdirSync, existsSync, readFileSync, utimesSync,
+  mkdtempSync, writeFileSync, mkdirSync, existsSync, readFileSync, utimesSync, rmSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 
 import {
   runCapture, maskSecrets, extractClaudeCodeSession, loadState, ADAPTERS, CAPTURE_GATE_THRESHOLD,
+  toPortableKey,
 } from './capture.mjs';
 
 function tmpDir(prefix) {
@@ -381,5 +382,62 @@ describe('capture bulk-confirmation gate', () => {
     assert.equal(result.plan.count, CAPTURE_GATE_THRESHOLD);
     assert.equal(existsSync(join(bundleRoot, 'inbox', 'claude-code.md')), false);
     assert.equal(existsSync(join(bundleRoot, '.samemind-capture-state.json')), false);
+  });
+});
+
+// Portability: state-file keys are relative to the home directory ('~/...') rather than
+// absolute host paths, so a state file survives a move to another machine/user without
+// forcing a re-capture of everything already captured there.
+describe('capture-state portability (~/... keys)', () => {
+  it('toPortableKey: home-rooted paths become ~/...; session ids and foreign paths pass through', () => {
+    const home = homedir();
+    assert.equal(toPortableKey(join(home, 'diaries', 'note.md')), '~/diaries/note.md');
+    assert.equal(toPortableKey(home), '~');
+    assert.equal(toPortableKey('11111111-2222-3333-4444-555555555555'), '11111111-2222-3333-4444-555555555555');
+    assert.equal(toPortableKey('/some/other/root/note.md'), '/some/other/root/note.md');
+  });
+
+  it('loadState migrates an old absolute-path key to ~/... form in memory', () => {
+    const bundleRoot = tmpDir('samemind-bundle-');
+    const absKey = join(homedir(), 'diaries', 'old-note.md');
+    writeFileSync(join(bundleRoot, '.samemind-capture-state.json'), JSON.stringify({
+      engines: { 'generic-markdown': { captured: [absKey] } },
+    }));
+    const state = loadState(bundleRoot);
+    assert.deepEqual(state.engines['generic-markdown'].captured, ['~/diaries/old-note.md']);
+  });
+
+  it('an old absolute-path state entry still prevents re-capture; a fresh capture saves the ~/... form', () => {
+    const bundleRoot = tmpDir('samemind-bundle-');
+    const realHome = process.env.HOME;
+    const fakeHome = tmpDir('samemind-fakehome-');
+    process.env.HOME = fakeHome;
+    try {
+      const src = join(fakeHome, 'diaries');
+      mkdirSync(src, { recursive: true });
+      writeFileSync(join(src, 'note.md'), '# Note\n\nBody line.\n');
+      const fileAbsPath = join(src, 'note.md'); // same shape extractGenericMarkdown's key uses (resolve(file))
+
+      // Simulate an OLD-format state file (absolute-path key), as if captured before this migration.
+      writeFileSync(join(bundleRoot, '.samemind-capture-state.json'), JSON.stringify({
+        engines: { 'generic-markdown': { captured: [fileAbsPath] } },
+      }));
+
+      const result = runCapture({ engine: 'generic-markdown', source: src, root: bundleRoot });
+      assert.equal(result.ok, true);
+      assert.equal(result.captured.length, 0); // recognized via the migrated old key — no re-capture
+      assert.equal(result.skipped, 1);
+
+      // A second file is genuinely new — capturing it must save the state in ~/... form.
+      writeFileSync(join(src, 'note2.md'), '# Note 2\n\nAnother body line.\n');
+      const second = runCapture({ engine: 'generic-markdown', source: src, root: bundleRoot });
+      assert.equal(second.captured.length, 1);
+      const saved = loadState(bundleRoot).engines['generic-markdown'].captured;
+      assert.ok(saved.every(k => !k.startsWith(fakeHome)), 'no raw absolute-host-path keys after a fresh save');
+      assert.ok(saved.some(k => k.startsWith('~/diaries/note2')));
+    } finally {
+      process.env.HOME = realHome;
+      rmSync(fakeHome, { recursive: true, force: true });
+    }
   });
 });

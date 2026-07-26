@@ -13,6 +13,11 @@
 //                              [--boundary "..."]... [--stop <s>]...
 //                                                  declare an assignment, log it as a ledger
 //                                                  `start` event owned by that engine
+//   npx samemind fleet set --engine <id> --status active|reserve|dead
+//                          [--role r] [--heartbeat N] [--zone "..."]
+//                                                  edit an existing engine in place (same
+//                                                  dictionary validation as `fleet init`'s
+//                                                  buildEngine, atomic write)
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { ROOT } from './lib/okf.mjs';
@@ -28,6 +33,7 @@ function usage() {
   console.log('  samemind fleet init [--target <dir>]');
   console.log('  samemind fleet status [--json]');
   console.log('  samemind fleet assign --engine <id> --topic <t> --goal "..." --verify "..." [--boundary "..."]... [--stop <s>]...');
+  console.log('  samemind fleet set --engine <id> --status active|reserve|dead [--role r] [--heartbeat N] [--zone "..."]');
 }
 
 export function parseArgs(argv) {
@@ -142,6 +148,46 @@ export function cmdAssign(a) {
   console.log(`  logged to ledger: +${rec.phase}/${rec.status} [${rec.actor}] ${rec.topic}`);
 }
 
+export function cmdSet(a) {
+  const registry = readRegistry(ROOT);
+  if (!registry) {
+    console.error('fleet set: no registry — run `samemind fleet init` first');
+    process.exitCode = 2;
+    return;
+  }
+  const existing = findEngine(registry, a.engine);
+  if (!existing) {
+    console.error(`fleet set: engine "${a.engine}" is not in the registry (samemind fleet init / add it first)`);
+    process.exitCode = 2;
+    return;
+  }
+  if (!a.status) {
+    console.error('fleet set: --status is required (active|reserve|dead)');
+    process.exitCode = 2;
+    return;
+  }
+  let updated;
+  try {
+    updated = buildEngine({
+      id: existing.id,
+      role: (a.role !== undefined && a.role !== true) ? a.role : existing.role,
+      chain: existing.chain,
+      heartbeatSec: (a.heartbeat !== undefined && a.heartbeat !== true) ? a.heartbeat : existing.heartbeatSec,
+      status: a.status,
+      zone: (a.zone !== undefined && a.zone !== true) ? a.zone : existing.zone,
+    });
+  } catch (e) {
+    console.error(`fleet set: ${e.message}`);
+    process.exitCode = 2;
+    return;
+  }
+  writeRegistry(ROOT, {
+    ...registry,
+    engines: registry.engines.map((e) => (e.id === updated.id ? updated : e)),
+  });
+  console.log(`fleet: updated ${updated.id} — role=${updated.role} status=${updated.status} heartbeatSec=${updated.heartbeatSec}${updated.zone ? ` zone="${updated.zone}"` : ''}`);
+}
+
 export function main(argv = process.argv.slice(2)) {
   const a = parseArgs(argv);
   const cmd = a._;
@@ -149,6 +195,7 @@ export function main(argv = process.argv.slice(2)) {
     if (cmd === 'init') { cmdInit(a); return process.exitCode || 0; }
     if (cmd === 'status') { cmdStatus(a); return 0; }
     if (cmd === 'assign') { cmdAssign(a); return process.exitCode || 0; }
+    if (cmd === 'set') { cmdSet(a); return process.exitCode || 0; }
     usage();
     return cmd ? 1 : 0;
   } catch (e) {

@@ -83,10 +83,10 @@ instead, so bad input surfaces immediately rather than silently miscategorizing.
    incoming agent sees where each thread of work actually stands.
 
 ```
-🔥 ОТКРЫТЫЕ СБОИ:
+🔥 OPEN FAILURES:
   [2026-07-12 15:36] sonnet · event-ledger — tests failed
 
-ТОПИКИ — текущая стадия (свежие сверху):
+TOPICS — current stage (newest first):
   🔥 event-ledger        fail/fail [sonnet] 2026-07-12 15:36 — tests failed
 ```
 

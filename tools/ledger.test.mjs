@@ -365,18 +365,18 @@ describe('CLI — samemind ledger status', () => {
   it('shows open failures first, then every topic\'s current stage', () => {
     const r = runCli(LEDGER_CLI, ['status'], root);
     assert.equal(r.code, 0, r.out);
-    assert.match(r.out, /ОТКРЫТЫЕ СБОИ/);
+    assert.match(r.out, /OPEN FAILURES/);
     assert.match(r.out, /proj-a — broke/);
     assert.match(r.out, /proj-b/);
     // open-failures block must come before the topics block
-    assert.ok(r.out.indexOf('ОТКРЫТЫЕ СБОИ') < r.out.indexOf('ТОПИКИ'));
+    assert.ok(r.out.indexOf('OPEN FAILURES') < r.out.indexOf('TOPICS'));
   });
 
   it('a done event closes the failure — status no longer lists it as open', () => {
     appendEvent(root, { actor: 'a', topic: 'proj-a', phase: 'done', action: 'fixed', ts: '2026-01-04T00:00:00Z' });
     const r = runCli(LEDGER_CLI, ['status'], root);
     assert.equal(r.code, 0, r.out);
-    assert.doesNotMatch(r.out, /ОТКРЫТЫЕ СБОИ/);
+    assert.doesNotMatch(r.out, /OPEN FAILURES/);
     assert.match(r.out, /proj-a.*done\/ok/);
   });
 

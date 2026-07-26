@@ -413,6 +413,75 @@ describe('CLI — samemind fleet assign', () => {
   });
 });
 
+describe('CLI — samemind fleet set', () => {
+  let root;
+  before(() => {
+    root = tmp('fleet-cli-set');
+    runInit({ targetDir: root });
+    writeRegistry(root, buildRegistry({
+      engines: [
+        { id: 'cursor', role: 'executor', heartbeatSec: 3600 },
+      ],
+    }));
+  });
+  after(() => { rmSync(root, { recursive: true, force: true }); });
+
+  it('changes an engine\'s status, atomically rewriting the registry', () => {
+    const r = runCli(['set', '--engine', 'cursor', '--status', 'reserve'], root);
+    assert.equal(r.code, 0, r.out);
+    const registry = readRegistry(root);
+    const cursor = findEngine(registry, 'cursor');
+    assert.equal(cursor.status, 'reserve');
+    // untouched fields survive the edit
+    assert.equal(cursor.role, 'executor');
+    assert.equal(cursor.heartbeatSec, 3600);
+  });
+
+  it('also updates role/heartbeat/zone when passed', () => {
+    const r = runCli([
+      'set', '--engine', 'cursor', '--status', 'active', '--role', 'director',
+      '--heartbeat', '7200', '--zone', 'planning',
+    ], root);
+    assert.equal(r.code, 0, r.out);
+    const cursor = findEngine(readRegistry(root), 'cursor');
+    assert.equal(cursor.role, 'director');
+    assert.equal(cursor.heartbeatSec, 7200);
+    assert.equal(cursor.zone, 'planning');
+  });
+
+  it('invalid --status is refused, registry left unchanged', () => {
+    const before_ = readRegistry(root);
+    const r = runCli(['set', '--engine', 'cursor', '--status', 'napping'], root);
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /"status" must be one of/);
+    assert.deepEqual(readRegistry(root), before_);
+  });
+
+  it('unknown engine is refused', () => {
+    const r = runCli(['set', '--engine', 'nope', '--status', 'dead'], root);
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /not in the registry/);
+  });
+
+  it('missing --status is refused', () => {
+    const r = runCli(['set', '--engine', 'cursor'], root);
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /--status is required/);
+  });
+
+  it('no registry yet → refused', () => {
+    const noReg = tmp('fleet-cli-set-noreg');
+    try {
+      runInit({ targetDir: noReg });
+      const r = runCli(['set', '--engine', 'cursor', '--status', 'active'], noReg);
+      assert.notEqual(r.code, 0);
+      assert.match(r.out, /no registry/);
+    } finally {
+      rmSync(noReg, { recursive: true, force: true });
+    }
+  });
+});
+
 // ─────────────────────── MCP: memory_fleet_status / memory_fleet_assign ───────────────────────
 // Thin wrappers over tools/lib/fleet.mjs (heartbeat/buildAssignment) — same contract style as
 // memory_ledger_append/memory_ledger_status (tools/ledger.test.mjs "MCP" describe block).
@@ -559,10 +628,31 @@ describe('MCP — memory_fleet_status / memory_fleet_assign', () => {
         },
       });
       assert.equal(res.result.isError, true);
-      assert.match(res.result.content[0].text, /not in the registry/);
+      assert.match(res.result.content[0].text, /Error \[NOT_FOUND\]:.*not in the registry/);
       assert.equal(readEvents(BUNDLE_DIR).length, before_);
     } finally {
       await client.close();
+    }
+  });
+
+  it('memory_fleet_assign: no registry at all → isError [NO_REGISTRY]', async () => {
+    const noRegistryDir = mkdtempSync(join(tmpdir(), 'samemind-fleet-mcp-noreg-'));
+    const result = runInit({ targetDir: noRegistryDir });
+    assert.equal(result.ok, true);
+    const client = startMcpClient({ OKF_ROOT: noRegistryDir });
+    try {
+      await mcpInit(client);
+      const res = await client.request('tools/call', {
+        name: 'memory_fleet_assign',
+        arguments: {
+          engine: 'cursor', topic: 't', goal: 'g', verify: 'v',
+        },
+      });
+      assert.equal(res.result.isError, true);
+      assert.match(res.result.content[0].text, /Error \[NO_REGISTRY\]:.*no fleet registry/);
+    } finally {
+      await client.close();
+      rmSync(noRegistryDir, { recursive: true, force: true });
     }
   });
 
@@ -592,7 +682,7 @@ describe('MCP — memory_fleet_status / memory_fleet_assign', () => {
         },
       });
       assert.equal(res.result.isError, true);
-      assert.match(res.result.content[0].text, /not active/);
+      assert.match(res.result.content[0].text, /Error \[ENGINE_NOT_ACTIVE\]:.*not active/);
     } finally {
       await client.close();
     }

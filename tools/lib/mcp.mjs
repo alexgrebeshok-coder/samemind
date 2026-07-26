@@ -401,10 +401,22 @@ async function memoryFleetAssign({
   engine, topic, goal, verify, boundaries, stopPoints,
 } = {}) {
   const registry = readRegistry(ROOT);
-  if (!registry) throw new Error('memory_fleet_assign: no fleet registry — run `samemind fleet init` first');
+  if (!registry) {
+    const err = new Error('memory_fleet_assign: no fleet registry — run `samemind fleet init` first');
+    err.code = 'NO_REGISTRY';
+    throw err;
+  }
   const eng = findEngine(registry, engine);
-  if (!eng) throw new Error(`memory_fleet_assign: engine "${engine}" is not in the registry`);
-  if (eng.status !== 'active') throw new Error(`memory_fleet_assign: engine "${engine}" is "${eng.status}", not active — not assignable`);
+  if (!eng) {
+    const err = new Error(`memory_fleet_assign: engine "${engine}" is not in the registry`);
+    err.code = 'NOT_FOUND';
+    throw err;
+  }
+  if (eng.status !== 'active') {
+    const err = new Error(`memory_fleet_assign: engine "${engine}" is "${eng.status}", not active — not assignable`);
+    err.code = 'ENGINE_NOT_ACTIVE';
+    throw err;
+  }
   const effectiveStopPoints = Array.isArray(stopPoints) && stopPoints.length ? stopPoints : registry.stopPoints;
   const assignment = buildAssignment({
     engine, topic, goal, verify, boundaries, stopPoints: effectiveStopPoints,
@@ -442,6 +454,28 @@ const HANDLERS = {
   memory_fleet_assign: memoryFleetAssign,
 };
 
+// Machine-readable error codes for `isError: true` responses — an agent consuming the MCP
+// result shouldn't have to string-match `message` to branch on failure kind. Preference order:
+// the code already set on the Error where it was thrown (see assertSafeConceptId in
+// lib/safe-path.mjs, memoryFleetAssign above) — text matching below is only a fallback for
+// throws that don't (yet) set one.
+const ERROR_TEXT_CODES = [
+  [/no fleet registry/i, 'NO_REGISTRY'],
+  [/not active/i, 'ENGINE_NOT_ACTIVE'],
+  [/not found/i, 'NOT_FOUND'],
+  [/traversal|invalid id/i, 'INVALID_ID'],
+  [/injection/i, 'REJECTED_INJECTION'],
+];
+
+function classifyError(e) {
+  if (e && e.code) return e.code;
+  const msg = String(e?.message || '');
+  for (const [re, code] of ERROR_TEXT_CODES) {
+    if (re.test(msg)) return code;
+  }
+  return 'INTERNAL';
+}
+
 /** Выполняет вызов инструмента, никогда не бросает — ошибки → { isError: true }. */
 export async function callTool(name, args) {
   const handler = HANDLERS[name];
@@ -452,6 +486,7 @@ export async function callTool(name, args) {
     const result = await handler(args || {});
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
   } catch (e) {
-    return { content: [{ type: 'text', text: `Error: ${e.message}` }], isError: true };
+    const code = classifyError(e);
+    return { content: [{ type: 'text', text: `Error [${code}]: ${e.message}` }], isError: true };
   }
 }

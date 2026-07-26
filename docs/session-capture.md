@@ -32,8 +32,8 @@ npx samemind capture --engine <id> [--source <path>] [--since <ts>] [--dry-run]
 5. **Append** — new notes (not already captured) are appended to
    `inbox/<engine>.md`, atomically, in the same append-only shape every
    other inbox writer in this package uses.
-6. **Record** — captured keys (session ids for `claude-code`, absolute
-   paths for `generic-markdown`) are written to
+6. **Record** — captured keys (session ids for `claude-code`, portable
+   `~/...`-relative paths for `generic-markdown`) are written to
    `.samemind-capture-state.json` in the bundle root, so a re-run only
    picks up what's actually new.
 
@@ -107,10 +107,17 @@ where hundreds of sessions can otherwise land in `inbox/` unattended).
 {
   "engines": {
     "claude-code": { "captured": ["<session-id>", "…"] },
-    "generic-markdown": { "captured": ["/abs/path/to/note.md", "…"] }
+    "generic-markdown": { "captured": ["~/diaries/note.md", "…"] }
   }
 }
 ```
+
+`generic-markdown` keys are stored relative to the home directory (`~/...`)
+rather than as absolute host paths, so a state file survives a move to
+another machine or user account without forcing a re-capture of everything
+already in it. An older state file with absolute-path keys still works —
+`loadState` recognizes both forms (migrating old keys to `~/...` in memory)
+so nothing already captured resurfaces just because the format changed.
 
 A key present here is never re-captured, regardless of `--since`. This is
 the only state `capture` writes outside `inbox/` — everything else about the
