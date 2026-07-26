@@ -1,0 +1,24 @@
+{
+  "name": "samemind-ui",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Frontend SPA for `samemind ui` — builds to ../dist, served by tools/ui.mjs. All deps are dev-only: the npm package runtime stays zero-dependency.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "node --experimental-strip-types --test src/lib.test.mjs"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.11",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tailwindcss": "^4.1.11",
+    "typescript": "~5.8.3",
+    "vite": "^6.3.5"
+  }
+}
