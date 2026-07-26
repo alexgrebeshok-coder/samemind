@@ -50,7 +50,8 @@
     "LICENSE",
     "!**/.index",
     "!**/.index/**",
-    "!tools/*.test.mjs"
+    "!tools/*.test.mjs",
+    "!**/*.before-*"
   ],
   "optionalDependencies": {
     "sqlite-vec": "^0.1.9"
