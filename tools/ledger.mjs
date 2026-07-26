@@ -45,6 +45,10 @@ export function cmdAppend(a) {
     actor: a.actor, topic: a.topic, phase: a.phase, status: a.status,
     action: a.action, artifact: a.artifact, ref: a.ref,
   });
+  if (rec.deduped) {
+    console.log(`ledger: deduped — ref ${a.ref} already recorded (${rec.event.ts})`);
+    return;
+  }
   const flag = rec.quarantine ? ` ⚠️ quarantine: ${rec.matches.join(', ')}` : '';
   console.log(`ledger: +${rec.phase}/${rec.status} [${rec.actor}] ${rec.topic} — ${rec.action}${flag}`);
 }

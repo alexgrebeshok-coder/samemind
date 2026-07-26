@@ -350,6 +350,18 @@ async function memoryHealth() {
 async function memoryLedgerAppend({ topic, phase, status, action, artifact, ref } = {}) {
   const actor = sanitizeAgentName(process.env.SAMEMIND_AGENT);
   const rec = appendEvent(ROOT, { actor, topic, phase, status, action, artifact, ref });
+  if (rec.deduped) {
+    return {
+      ok: true,
+      deduped: true,
+      actor: rec.event.actor,
+      topic: rec.event.topic,
+      phase: rec.event.phase,
+      status: rec.event.status,
+      quarantine: rec.event.quarantine,
+      matches: rec.event.matches,
+    };
+  }
   return {
     ok: true,
     actor: rec.actor,

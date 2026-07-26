@@ -161,6 +161,29 @@ describe('appendEvent / readEvents — file I/O', () => {
     assert.throws(() => appendEvent(root, { actor: 'x', topic: 't', phase: 'nope', action: 'a' }));
     assert.equal(readEvents(root).length, before_);
   });
+
+  it('dedup: a second append with a ref already in the file is a no-op — returns { deduped: true, event }', () => {
+    const before_ = readEvents(root).length;
+    const first = appendEvent(root, { actor: 'a', topic: 'dedup-t', phase: 'start', action: 'began', ref: 'dedup-1' });
+    assert.equal(readEvents(root).length, before_ + 1);
+    const second = appendEvent(root, { actor: 'a', topic: 'dedup-t', phase: 'start', action: 'began again', ref: 'dedup-1' });
+    assert.deepEqual(second, { deduped: true, event: first });
+    assert.equal(readEvents(root).length, before_ + 1, 'no second line was written');
+  });
+
+  it('without a ref, repeated identical appends are NOT deduped — each writes its own line', () => {
+    const before_ = readEvents(root).length;
+    appendEvent(root, { actor: 'a', topic: 'no-ref-t', phase: 'step', action: 'same action' });
+    appendEvent(root, { actor: 'a', topic: 'no-ref-t', phase: 'step', action: 'same action' });
+    assert.equal(readEvents(root).length, before_ + 2);
+  });
+
+  it('a different ref never dedupes — writes its own line', () => {
+    const before_ = readEvents(root).length;
+    appendEvent(root, { actor: 'a', topic: 'ref-t', phase: 'step', action: 'x', ref: 'ref-a' });
+    appendEvent(root, { actor: 'a', topic: 'ref-t', phase: 'step', action: 'y', ref: 'ref-b' });
+    assert.equal(readEvents(root).length, before_ + 2);
+  });
 });
 
 describe('summarizeLedger — open failures (unit, pure)', () => {
@@ -586,6 +609,32 @@ describe('MCP — memory_ledger_append / memory_ledger_status', () => {
       assert.equal(payload.topic, 'n3-ledger');
       const events = readEvents(BUNDLE_DIR);
       assert.ok(events.some(e => e.actor === 'grok-cli-v2' && e.topic === 'n3-ledger'));
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('memory_ledger_append: a second call with the same `ref` is deduped — no second event written', async () => {
+    const client = startMcpClient({ SAMEMIND_AGENT: 'dedup-mcp' });
+    try {
+      await mcpInit(client);
+      const first = await client.request('tools/call', {
+        name: 'memory_ledger_append',
+        arguments: { topic: 'n3-dedup', phase: 'start', action: 'kicked off', ref: 'mcp-dedup-1' },
+      });
+      const firstPayload = toolPayload(first);
+      assert.equal(firstPayload.ok, true);
+      assert.ok(!firstPayload.deduped);
+
+      const second = await client.request('tools/call', {
+        name: 'memory_ledger_append',
+        arguments: { topic: 'n3-dedup', phase: 'start', action: 'kicked off again', ref: 'mcp-dedup-1' },
+      });
+      const secondPayload = toolPayload(second);
+      assert.equal(secondPayload.deduped, true);
+
+      const events = readEvents(BUNDLE_DIR).filter(e => e.ref === 'mcp-dedup-1');
+      assert.equal(events.length, 1, 'only one event with this ref should exist');
     } finally {
       await client.close();
     }

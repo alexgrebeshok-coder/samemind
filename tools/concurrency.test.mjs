@@ -209,6 +209,24 @@ describe('concurrent ledger append — no lost events, no corruption', () => {
       }
     }
   });
+
+  it('2 processes racing to append the SAME ref land exactly 1 line — dedup is race-safe, not just sequential', async () => {
+    const root = freshRoot();
+    const workerDir = freshRoot();
+    const worker = writeWorker(workerDir, 'dedup-worker.mjs', `
+      const { appendEvent } = await import(${JSON.stringify(LEDGER_LIB)});
+      const [, , actor, root] = process.argv;
+      appendEvent(root, { actor, topic: 'dedup-race', phase: 'step', status: 'ok', action: 'raced', ref: 'shared-ref' });
+    `);
+    await Promise.all([
+      spawnWorker(worker, ['racer-a', root], {}),
+      spawnWorker(worker, ['racer-b', root], {}),
+    ]);
+    const file = join(root, 'ledger', 'events.jsonl');
+    const lines = readFileSync(file, 'utf8').split('\n').filter(l => l.trim());
+    const withSharedRef = lines.filter(l => JSON.parse(l).ref === 'shared-ref');
+    assert.equal(withSharedRef.length, 1, `expected exactly 1 line for the shared ref, got ${withSharedRef.length}`);
+  });
 });
 
 // ─────────────────────────── race: concept/inbox write (memory_write_inbox) ───────────────────────────

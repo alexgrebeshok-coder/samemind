@@ -11,9 +11,8 @@
 // write (temp file + rename — same contract `memory_write_inbox` already uses for its
 // read-modify-write append) and `tools/lib/injection.mjs` for the same prompt-injection
 // heuristic scan every writable tier in this package runs over free-form text.
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { atomicWriteFileSync } from '../../lib/atomic-write.mjs';
 import { withFileLock } from '../../lib/file-lock.mjs';
 import { scanForInjection } from './injection.mjs';
 
@@ -73,24 +72,43 @@ export function buildEvent({ actor, topic, phase, status = 'ok', action, artifac
 }
 
 /**
- * Appends one validated event to <root>/ledger/events.jsonl. Read-modify-write, guarded by
- * `withFileLock` (lib/file-lock.mjs — mkdir-based mutual exclusion + stale-lock takeover) so
- * two agents appending at the same instant can't clobber each other's line, then written
- * through `atomicWriteFileSync` (temp file + rename) so a crash mid-write never corrupts the
- * file. Together: safe against both a concurrent fleet of writers AND partial writes (closes
- * alexgrebeshok-coder/samemind concurrent-write hardening; see docs/event-ledger.md).
+ * Appends one validated event to <root>/ledger/events.jsonl. Guarded by `withFileLock`
+ * (lib/file-lock.mjs — mkdir-based mutual exclusion + stale-lock takeover) so two agents
+ * appending at the same instant can't clobber each other's line. Since the lock already
+ * serializes every writer, the write itself is a single `appendFileSync` of just the new
+ * line (O(1) — no read-modify-write of the whole file; the old read-all+atomicWriteFileSync
+ * path was O(n) per event). `appendFileSync` opens O_APPEND and issues one `write(2)` for a
+ * line this short, so a reader (readEvents, no lock) never observes a torn line — POSIX
+ * guarantees that write atomic under PIPE_BUF, and only one writer is ever inside the lock
+ * at a time anyway.
+ *
+ * If `fields.ref` is set, this also dedupes: read-check-append happens under the SAME lock,
+ * so a second append with a ref already present in the file is a no-op that returns
+ * `{ deduped: true, event: <existing event> }` instead of writing a second line. Without a
+ * ref, no read happens at all — plain O(1) append, same as always. Returns the built event
+ * record on a normal (non-deduped) append, same shape as before this dedup feature existed.
  */
 export function appendEvent(root, fields) {
   const rec = buildEvent(fields);
   const dir = ledgerDir(root);
   mkdirSync(dir, { recursive: true });
   const file = ledgerFile(root);
-  withFileLock(file, () => {
-    const existing = existsSync(file) ? readFileSync(file, 'utf8') : '';
-    const next = existing + JSON.stringify(rec) + '\n';
-    atomicWriteFileSync(file, next);
+  return withFileLock(file, () => {
+    // ponytail: dedup scan is a full read of the file — O(n) per ref'd append, not O(1). Fine
+    // for this project's write volume; upgrade to an in-memory/on-disk ref index if a bundle's
+    // ledger grows large enough for this to matter.
+    if (rec.ref) {
+      const existing = existsSync(file) ? readFileSync(file, 'utf8') : '';
+      for (const line of existing.split('\n')) {
+        if (!line.trim()) continue;
+        let parsed;
+        try { parsed = JSON.parse(line); } catch { continue; }
+        if (parsed.ref === rec.ref) return { deduped: true, event: parsed };
+      }
+    }
+    appendFileSync(file, JSON.stringify(rec) + '\n');
+    return rec;
   });
-  return rec;
 }
 
 /** Reads every event from <root>/ledger/events.jsonl. Missing file → []. Corrupt lines skipped, never throw. */
