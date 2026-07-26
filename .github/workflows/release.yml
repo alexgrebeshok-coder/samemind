@@ -5,7 +5,10 @@
 # `node --test` run — then verifies the tag matches package.json's `version` before publishing
 # (a mismatched tag is almost always a forgotten version bump, not something to publish silently
 # under the wrong number).
-# Zero npm deps (see ci.yml) — no `npm ci` step needed, nothing to install before testing.
+# Runtime stays zero npm deps (see ci.yml). The optional ui/ SPA (Vite+React, its own
+# devDependencies) builds to dist/ when present — the smoke and publish jobs each check it out
+# fresh and build it themselves before packing, so the tarball they pack/publish carries a
+# fresh dist/ (package.json's `files` includes it).
 name: release
 
 on:
@@ -41,6 +44,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+      - name: Build UI (if present)
+        run: |
+          if [ -d ui ]; then
+            cd ui && npm ci --no-audit --no-fund && npm run build
+          fi
       - name: Pack + install + run the published tarball
         run: bash scripts/smoke-tarball.sh
 
@@ -66,6 +74,12 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
       - name: Upgrade npm for OIDC trusted publishing (needs >= 11.5.1)
         run: npm install -g npm@latest
+
+      - name: Build UI (if present)
+        run: |
+          if [ -d ui ]; then
+            cd ui && npm ci --no-audit --no-fund && npm run build
+          fi
 
       - name: Verify tag matches package.json version
         run: |

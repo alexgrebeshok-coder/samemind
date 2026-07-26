@@ -1,5 +1,6 @@
 # CI — unit tests on Node 20 LTS + 22 current.
-# Zero npm deps: `node --test tools/*.test.mjs` only.
+# Runtime stays zero npm deps: `node --test tools/*.test.mjs` only. The optional ui/ SPA
+# (Vite+React, its own devDependencies) builds to dist/ when present — see "Build UI" step.
 name: ci
 
 on:
@@ -21,5 +22,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+      - name: Build UI (if present)
+        run: |
+          if [ -d ui ]; then
+            cd ui && npm ci --no-audit --no-fund && npm run build
+          fi
       - name: Run unit tests
         run: node --test tools/*.test.mjs

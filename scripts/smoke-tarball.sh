@@ -24,6 +24,20 @@ TARBALL_NAME="$(npm pack --silent --pack-destination "$WORK")"
 TARBALL="$WORK/$TARBALL_NAME"
 echo "packed: $TARBALL"
 
+step "check dist/ (optional ui/ SPA build output) packed correctly, if applicable"
+TARBALL_LIST="$(tar -tzf "$TARBALL")"
+if [ -d "$REPO_ROOT/ui" ]; then
+  echo "$TARBALL_LIST" | grep -q '^package/dist/index\.html$' \
+    || { echo "ui/ exists but tarball has no dist/index.html — UI build step didn't run before packing" >&2; exit 1; }
+  echo "dist/index.html present in tarball — ok"
+elif echo "$TARBALL_LIST" | grep -q '^package/dist/'; then
+  echo "$TARBALL_LIST" | grep -q '^package/dist/index\.html$' \
+    || { echo "tarball has a dist/ with no index.html — broken build output shipped" >&2; exit 1; }
+  echo "dist/index.html present in tarball — ok"
+else
+  echo "no ui/ and no dist/ in tarball — nothing to check, ok"
+fi
+
 step "install the TARBALL into a fresh project (not the source tree)"
 INSTALL_DIR="$WORK/install"
 mkdir -p "$INSTALL_DIR"

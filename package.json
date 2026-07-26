@@ -21,7 +21,8 @@
   "scripts": {
     "test": "node --test tools/*.test.mjs",
     "validate": "node tools/okf-query.mjs validate",
-    "validate:demo": "OKF_ROOT=demo node tools/okf-query.mjs validate"
+    "validate:demo": "OKF_ROOT=demo node tools/okf-query.mjs validate",
+    "build:ui": "cd ui && npm install && npm run build"
   },
   "keywords": [
     "memory",
@@ -42,6 +43,7 @@
     "bin/",
     "lib/",
     "tools/",
+    "dist/",
     "demo/",
     "docs/",
     "README.md",
