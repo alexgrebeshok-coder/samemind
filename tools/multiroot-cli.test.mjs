@@ -33,11 +33,16 @@ function run(script, args, env) {
   return { stdout: r.stdout, stderr: r.stderr, status: r.status };
 }
 
-let projectRoot, globalRoot;
+let projectRoot, globalRoot, emptyHome;
 
 before(() => {
   projectRoot = mkdtempSync(join(tmpdir(), 'samemind-cli-proj-'));
   globalRoot = mkdtempSync(join(tmpdir(), 'samemind-cli-glob-'));
+  // isolates the "OKF_GLOBAL_ROOT unset entirely" runs below from whatever real global bundle
+  // ($HOME/.samemind/bundle) happens to exist on the host running the suite — resolveGlobalRoot
+  // falls back to homedir() when the env var is absent, so that fallback must land on an empty
+  // homedir here, not the developer's real one.
+  emptyHome = mkdtempSync(join(tmpdir(), 'samemind-cli-emptyhome-'));
   writeConcept(projectRoot, 'entities/alpha.md', { type: 'Concept', title: 'Alpha Project Note' },
     'Project-local note about widgets and gears.\n');
   writeConcept(projectRoot, 'entities/shared.md', { type: 'Concept', title: 'Shared PROJECT version' },
@@ -51,11 +56,12 @@ before(() => {
 after(() => {
   rmSync(projectRoot, { recursive: true, force: true });
   rmSync(globalRoot, { recursive: true, force: true });
+  rmSync(emptyHome, { recursive: true, force: true });
 });
 
 describe('okf-recall.mjs CLI — multi-root', () => {
   it('no OKF_GLOBAL_ROOT set at all == --no-global with a real global bundle present (byte-identical)', () => {
-    const noEnvAtAll = run(OKF_RECALL, ['widgets', '-k', '5', '--mode', 'bm25'], { OKF_ROOT: projectRoot, OKF_GLOBAL_ROOT: undefined });
+    const noEnvAtAll = run(OKF_RECALL, ['widgets', '-k', '5', '--mode', 'bm25'], { OKF_ROOT: projectRoot, OKF_GLOBAL_ROOT: undefined, HOME: emptyHome });
     const withNoGlobalFlag = run(OKF_RECALL, ['widgets', '-k', '5', '--mode', 'bm25', '--no-global'], { OKF_ROOT: projectRoot, OKF_GLOBAL_ROOT: globalRoot });
     assert.equal(withNoGlobalFlag.status, 0);
     assert.equal(noEnvAtAll.stdout, withNoGlobalFlag.stdout, 'stdout must be byte-identical');
@@ -80,7 +86,7 @@ describe('okf-recall.mjs CLI — multi-root', () => {
 
 describe('gde.mjs CLI — multi-root', () => {
   it('no OKF_GLOBAL_ROOT set at all == --no-global with a real global bundle present (byte-identical)', () => {
-    const noEnvAtAll = run(GDE, ['widgets', '-k', '5'], { OKF_ROOT: projectRoot, OKF_GLOBAL_ROOT: undefined });
+    const noEnvAtAll = run(GDE, ['widgets', '-k', '5'], { OKF_ROOT: projectRoot, OKF_GLOBAL_ROOT: undefined, HOME: emptyHome });
     const withNoGlobalFlag = run(GDE, ['widgets', '-k', '5', '--no-global'], { OKF_ROOT: projectRoot, OKF_GLOBAL_ROOT: globalRoot });
     assert.equal(noEnvAtAll.stdout, withNoGlobalFlag.stdout);
   });

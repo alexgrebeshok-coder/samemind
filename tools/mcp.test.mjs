@@ -242,7 +242,10 @@ describe('MCP stdio — memory_list', () => {
 
 describe('MCP stdio — memory_search', () => {
   it('finds projects/lumen for a matching query (BM25, no embed endpoint in test env)', async () => {
-    const client = startClient({ OKF_EMBED_URL: '' });
+    // OKF_GLOBAL_ROOT: '' — explicit off-switch (see compose-roots.mjs resolveGlobalRoot):
+    // this is a plain project-only baseline test, not a global-bundle test, so it must not
+    // pick up whatever real $HOME/.samemind/bundle happens to exist on the host running the suite.
+    const client = startClient({ OKF_EMBED_URL: '', OKF_GLOBAL_ROOT: '' });
     try {
       await initialized(client);
       const res = await client.request('tools/call', { name: 'memory_search', arguments: { query: 'lumen notes', k: 5 } });
@@ -388,7 +391,12 @@ Global personal note about lumen notes and rockets.
   });
 
   it('no OKF_GLOBAL_ROOT set at all == no_global: true output (byte-identical JSON)', async () => {
-    const withGlobalOff = startClient({ OKF_EMBED_URL: '' });
+    // This test exercises the homedir-fallback branch of resolveGlobalRoot (OKF_GLOBAL_ROOT
+    // unset entirely) — must land on an empty homedir here, not whatever real global bundle
+    // ($HOME/.samemind/bundle) happens to exist on the host running the suite, so give the
+    // "off" client its own throwaway HOME.
+    const emptyHome = mkdtempSync(join(tmpdir(), 'samemind-mcp-emptyhome-'));
+    const withGlobalOff = startClient({ OKF_EMBED_URL: '', HOME: emptyHome });
     const withNoGlobalFlag = startClient({ OKF_EMBED_URL: '', OKF_GLOBAL_ROOT: GLOBAL_DIR });
     try {
       await initialized(withGlobalOff);
@@ -399,6 +407,7 @@ Global personal note about lumen notes and rockets.
     } finally {
       await withGlobalOff.close();
       await withNoGlobalFlag.close();
+      rmSync(emptyHome, { recursive: true, force: true });
     }
   });
 
