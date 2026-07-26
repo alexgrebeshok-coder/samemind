@@ -143,6 +143,17 @@ test('cardView survives the malformed cards that blanked the SPA', () => {
   assert.equal(noTitle.age, 'never');
 });
 
+test('board counts are read from the model, never recounted from the capped arrays', () => {
+  // guards the release-blocker: "In progress 8" on a bundle with 93 in-flight topics
+  const overview = readFileSync(join(SRC, 'screens', 'Overview.tsx'), 'utf8');
+  assert.match(overview, /columnTotals\?\.inprog \?\? b\.inprog\.length/, 'KPI prefers the model total');
+  assert.match(overview, /columnTotals\?\.blocked \?\? b\.blocked\.length/, 'so does the blocked annotation');
+  assert.doesNotMatch(overview, /value=\{b\.inprog\.length\}/, 'no bare capped-array count in a KPI tile');
+  assert.doesNotMatch(overview, /\.filter\([^)]*source/, 'never filters derived cards out client-side');
+  const shared = readFileSync(join(SRC, 'shared.tsx'), 'utf8');
+  assert.match(shared, /totals\?\.\[c\.key\] \?\? docs\.length/, 'column heading prefers the model total');
+});
+
 test('type badge palette is per spec §4 and falls back to slate', () => {
   assert.match(typeBadgeClass('Task'), /sky/);
   assert.match(typeBadgeClass('plan'), /violet/);

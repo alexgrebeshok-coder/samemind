@@ -72,16 +72,20 @@ export function Kanban({
   columns,
   now,
   overflow,
+  totals,
 }: {
   columns: Record<ColumnKey, BoardCard[]>;
   now: number;
   overflow?: Partial<Record<ColumnKey, number>>;
+  /** True column sizes before the cap; falls back to the rendered count when absent. */
+  totals?: Partial<Record<ColumnKey, number>>;
 }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       {COLUMNS.map((c) => {
         const docs = columns[c.key] || [];
         const more = overflow?.[c.key] || 0;
+        const total = totals?.[c.key] ?? docs.length;
         return (
           <Card
             key={c.key}
@@ -91,7 +95,9 @@ export function Kanban({
           >
             <div className="flex items-baseline justify-between border-b border-line px-3 py-2">
               <h3 className="text-sm font-semibold">{c.label}</h3>
-              <span className="tnum text-xs text-muted">{docs.length}</span>
+              <span className="tnum text-xs text-muted" title={total === docs.length ? undefined : `${docs.length} shown of ${total}`}>
+                {total}
+              </span>
             </div>
             {docs.length === 0 ? (
               <p className="px-3 py-6 text-center text-xs text-muted">no cards</p>

@@ -201,9 +201,11 @@ export function renderOverdueEngine(r) {
 }
 
 /** Append a `## heading (n)` section with items; `_(empty)_` when empty. `extraLines` (e.g. a
- *  ledger-overflow note) are appended after the items, before the trailing blank line. */
-function section(L, heading, items, render, nowMs, extraLines = []) {
-  L.push(`## ${heading} (${items.length})`, '');
+ *  ledger-overflow note) are appended after the items, before the trailing blank line.
+ *  `total` defaults to the shown count, so a capped column can report its true size in the
+ *  heading while still rendering only what fits. */
+function section(L, heading, items, render, nowMs, extraLines = [], total = items.length) {
+  L.push(`## ${heading} (${total})`, '');
   if (!items.length) { L.push('_(empty)_'); }
   else { for (const it of items) L.push(render(it, nowMs)); }
   for (const line of extraLines) L.push(line);
@@ -344,6 +346,18 @@ export function buildBoardModel(docs, {
 
   const sessions = cs.filter(d => typeOf(d) === 'session').sort(byTsDesc).slice(0, SESSION_SUMMARY_LIMIT);
 
+  // Honest per-column totals, before the display caps. The shown arrays stay capped
+  // (LEDGER_DERIVED_CAP per column), so a heading or KPI that quotes a count must quote these —
+  // "In progress 8" on a bundle with 93 in-flight topics is a lie the reader cannot detect.
+  // `done` deliberately counts only its "last N" window: that heading already says `last ${doneLimit}`,
+  // so its total is the window, which also keeps totals == length for every ledger-free bundle.
+  const columnTotals = {
+    backlog: backlog.length,
+    inprog: inprog.length + ledgerDerived.overflow.inprog,
+    blocked: blocked.length + ledgerDerived.overflow.blocked,
+    done: done.length + ledgerDerived.overflow.done,
+  };
+
   return {
     nowMs, doneLimit, recentDays, project,
     backlog, inprog, blocked, done, plans,
@@ -352,6 +366,7 @@ export function buildBoardModel(docs, {
     openFailuresShown, openFailuresTotal,
     overdueEnginesShown, overdueEnginesTotal,
     ledgerOverflow: ledgerDerived.overflow,
+    columnTotals,
   };
 }
 
@@ -367,7 +382,7 @@ export function buildBoard(docs, opts = {}) {
     ideaAdopted, ideasVisible, byId, recent, sessions,
     openFailuresShown, openFailuresTotal,
     overdueEnginesShown, overdueEnginesTotal,
-    ledgerOverflow,
+    ledgerOverflow, columnTotals,
   } = m;
 
   const L = [];
@@ -404,9 +419,9 @@ export function buildBoard(docs, opts = {}) {
   }
 
   section(L, '🆕 Backlog', backlog, renderTask, nowMs);
-  section(L, '🔧 In progress', inprog, renderTask, nowMs, ledgerOverflowNote(ledgerOverflow.inprog));
-  section(L, '🔴 Blocked', blocked, renderTask, nowMs, ledgerOverflowNote(ledgerOverflow.blocked));
-  section(L, `✅ Done · last ${doneLimit}`, done, renderTask, nowMs, ledgerOverflowNote(ledgerOverflow.done));
+  section(L, '🔧 In progress', inprog, renderTask, nowMs, ledgerOverflowNote(ledgerOverflow.inprog), columnTotals.inprog);
+  section(L, '🔴 Blocked', blocked, renderTask, nowMs, ledgerOverflowNote(ledgerOverflow.blocked), columnTotals.blocked);
+  section(L, `✅ Done · last ${doneLimit}`, done, renderTask, nowMs, ledgerOverflowNote(ledgerOverflow.done), columnTotals.done);
   section(L, '📋 Plans', plans, renderPlan);
 
   L.push(`## 💡 Ideas (${ideasVisible.length})`, '');

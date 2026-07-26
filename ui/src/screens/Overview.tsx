@@ -21,12 +21,17 @@ export function Overview() {
 
   const failures = b.openFailuresShown || [];
   const overdue = b.overdueEnginesShown || [];
+  // Counts come from the model's own totals (uncapped), with the array length as the contract-1
+  // fallback. Never recounted here: the columns are capped, so counting them would understate
+  // the board — 8 shown against 93 in flight.
+  const inprogTotal = b.columnTotals?.inprog ?? b.inprog.length;
+  const blockedTotal = b.columnTotals?.blocked ?? b.blocked.length;
 
   return (
     <div className="flex flex-col gap-5">
       <section aria-label="Key numbers" className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <StatTile label="Concepts" value={health.data?.concepts ?? b.backlog.length + b.inprog.length} />
-        <StatTile label="In progress" value={b.inprog.length} note={`${b.blocked.length} blocked`} />
+        <StatTile label="In progress" value={inprogTotal} note={`${blockedTotal} blocked`} />
         <StatTile label="Open failures" value={b.openFailuresTotal} alert={b.openFailuresTotal > 0} />
         <StatTile label="Overdue engines" value={b.overdueEnginesTotal} alert={b.overdueEnginesTotal > 0} />
       </section>
@@ -37,6 +42,7 @@ export function Overview() {
           columns={{ backlog: b.backlog, inprog: b.inprog, blocked: b.blocked, done: b.done }}
           now={now}
           overflow={b.ledgerOverflow}
+          totals={b.columnTotals}
         />
       </section>
 

@@ -488,8 +488,67 @@ describe('derived-канбан (г) — caps at 8 per column, freshest first, "N
     assert.equal(model.inprog[LEDGER_DERIVED_CAP - 1].id, 'ledger:topic-2', '8th-newest is the last one shown');
 
     const md = buildBoard([], { now: NOW, ledgerTopics: topics });
-    assert.match(md, /## 🔧 In progress \(8\)/);
+    assert.match(md, /## 🔧 In progress \(10\)/, 'heading quotes the true total, not the 8 shown');
     assert.match(md, /_…and 2 more from the ledger — `samemind ledger status`_/);
+  });
+});
+
+describe('columnTotals — the honest count behind a capped column', () => {
+  it('12 ledger topics + 2 Task docs → totals count all 14, arrays still cap at 8 + docs', () => {
+    const docs = [
+      task('projects/t-a', 'in-progress', { title: 'DocA' }),
+      task('projects/t-b', 'in-progress', { title: 'DocB' }),
+    ];
+    const topics = Array.from({ length: 12 }, (_, i) => ({
+      topic: `topic-${i}`, count: 1, openFail: null,
+      last: { ts: daysAgo(12 - i), actor: 'grok', phase: 'step', status: 'ok', action: `step ${i}` },
+    }));
+    const model = buildBoardModel(docs, { now: NOW, ledgerTopics: topics });
+
+    assert.equal(model.columnTotals.inprog, 2 + 12, 'doc cards + every derived candidate');
+    assert.equal(model.inprog.length, 2 + LEDGER_DERIVED_CAP, 'shown array stays capped');
+    assert.equal(model.ledgerOverflow.inprog, 12 - LEDGER_DERIVED_CAP);
+    // the three numbers must always reconcile, or the overflow note contradicts the heading
+    assert.equal(model.columnTotals.inprog, model.inprog.length + model.ledgerOverflow.inprog);
+
+    const md = buildBoard(docs, { now: NOW, ledgerTopics: topics });
+    assert.match(md, /## 🔧 In progress \(14\)/);
+    assert.match(md, /_…and 4 more from the ledger/);
+  });
+
+  it('blocked and done carry their own totals; backlog has no ledger analogue', () => {
+    const mk = (n, phase, prefix) => Array.from({ length: n }, (_, i) => ({
+      topic: `${prefix}-${i}`, count: 1, openFail: null,
+      last: { ts: daysAgo(1), actor: 'grok', phase, status: phase === 'fail' ? 'fail' : 'ok', action: 'x' },
+    }));
+    const model = buildBoardModel([], {
+      now: NOW, ledgerTopics: [...mk(11, 'fail', 'f'), ...mk(9, 'done', 'd')],
+    });
+    assert.equal(model.columnTotals.blocked, 11);
+    assert.equal(model.columnTotals.done, 9);
+    assert.equal(model.columnTotals.backlog, 0, 'backlog is never synthesized from the ledger');
+    assert.equal(model.blocked.length, LEDGER_DERIVED_CAP);
+    assert.equal(model.done.length, LEDGER_DERIVED_CAP);
+  });
+
+  it('no ledger → totals equal the shown lengths, so every heading stays byte-identical', () => {
+    const docs = [
+      task('projects/t-1', 'backlog', { title: 'B1' }),
+      task('projects/t-2', 'in-progress', { title: 'P1' }),
+      task('projects/t-3', 'blocked', { title: 'K1', blocked_reason: 'why' }),
+      task('projects/t-4', 'done', { title: 'D1' }),
+    ];
+    const model = buildBoardModel(docs, { now: NOW });
+    for (const col of ['backlog', 'inprog', 'blocked', 'done']) {
+      assert.equal(model.columnTotals[col], model[col].length, `${col}: total == shown`);
+    }
+  });
+
+  it('done stays a "last N" window: its total never exceeds doneLimit', () => {
+    const docs = Array.from({ length: 14 }, (_, i) => task(`projects/d-${i}`, 'done', { title: `D${i}` }));
+    const model = buildBoardModel(docs, { now: NOW, doneLimit: 10 });
+    assert.equal(model.done.length, 10);
+    assert.equal(model.columnTotals.done, 10, 'the heading already says "last 10" — it is a window, not a claim');
   });
 });
 

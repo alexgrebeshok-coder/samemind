@@ -305,13 +305,15 @@ export function renderBoardHtml(model) {
     openFailuresShown, openFailuresTotal,
     overdueEnginesShown, overdueEnginesTotal,
     ledgerOverflow = { inprog: 0, blocked: 0, done: 0 },
+    // contract 1 models predate columnTotals: fall back to the shown lengths
+    columnTotals = null,
   } = model;
 
   const kanbanSvg = svgKanbanBars([
-    { label: 'Backlog', value: backlog.length, cls: 'backlog' },
-    { label: 'In progress', value: inprog.length, cls: 'inprogress' },
-    { label: 'Blocked', value: blocked.length, cls: 'blocked' },
-    { label: `Done · last ${doneLimit}`, value: done.length, cls: 'done' },
+    { label: 'Backlog', value: columnTotals?.backlog ?? backlog.length, cls: 'backlog' },
+    { label: 'In progress', value: columnTotals?.inprog ?? inprog.length, cls: 'inprogress' },
+    { label: 'Blocked', value: columnTotals?.blocked ?? blocked.length, cls: 'blocked' },
+    { label: `Done · last ${doneLimit}`, value: columnTotals?.done ?? done.length, cls: 'done' },
   ]);
 
   const ideasSvg = svgIdeasStrip([
@@ -345,10 +347,10 @@ export function renderBoardHtml(model) {
 
   const ledgerNote = n => n > 0 ? `<p class="muted">…and ${n} more from the ledger — <code>samemind ledger status</code></p>` : '';
 
-  body += `<h2>🆕 Backlog <span class="count">(${backlog.length})</span></h2>${cardsOrEmpty(backlog, d => taskCard(d, nowMs, 'backlog', 'backlog'))}`;
-  body += `<h2>🔧 In progress <span class="count">(${inprog.length})</span></h2>${cardsOrEmpty(inprog, d => taskCard(d, nowMs, 'inprogress', 'in progress'))}${ledgerNote(ledgerOverflow.inprog)}`;
-  body += `<h2>🔴 Blocked <span class="count">(${blocked.length})</span></h2>${cardsOrEmpty(blocked, d => taskCard(d, nowMs, 'blocked', 'blocked'))}${ledgerNote(ledgerOverflow.blocked)}`;
-  body += `<h2>✅ Done · last ${doneLimit} <span class="count">(${done.length})</span></h2>${cardsOrEmpty(done, d => taskCard(d, nowMs, 'done', 'done'))}${ledgerNote(ledgerOverflow.done)}`;
+  body += `<h2>🆕 Backlog <span class="count">(${columnTotals?.backlog ?? backlog.length})</span></h2>${cardsOrEmpty(backlog, d => taskCard(d, nowMs, 'backlog', 'backlog'))}`;
+  body += `<h2>🔧 In progress <span class="count">(${columnTotals?.inprog ?? inprog.length})</span></h2>${cardsOrEmpty(inprog, d => taskCard(d, nowMs, 'inprogress', 'in progress'))}${ledgerNote(ledgerOverflow.inprog)}`;
+  body += `<h2>🔴 Blocked <span class="count">(${columnTotals?.blocked ?? blocked.length})</span></h2>${cardsOrEmpty(blocked, d => taskCard(d, nowMs, 'blocked', 'blocked'))}${ledgerNote(ledgerOverflow.blocked)}`;
+  body += `<h2>✅ Done · last ${doneLimit} <span class="count">(${columnTotals?.done ?? done.length})</span></h2>${cardsOrEmpty(done, d => taskCard(d, nowMs, 'done', 'done'))}${ledgerNote(ledgerOverflow.done)}`;
   body += `<h2>📋 Plans <span class="count">(${plans.length})</span></h2>${cardsOrEmpty(plans, planCard)}`;
 
   body += `<h2>💡 Ideas <span class="count">(${ideasVisible.length})</span></h2>`;

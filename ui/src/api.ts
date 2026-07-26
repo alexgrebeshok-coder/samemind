@@ -98,6 +98,11 @@ export type Board = {
   overdueEnginesTotal: number;
   /** Per-column count of ledger topics beyond the ones synthesized into cards. */
   ledgerOverflow?: Partial<Record<'backlog' | 'inprog' | 'blocked' | 'done', number>>;
+  /**
+   * True per-column size before the display caps — what a heading or KPI must quote.
+   * Optional: contract-1 servers predate it, so every reader falls back to the array length.
+   */
+  columnTotals?: Partial<Record<'backlog' | 'inprog' | 'blocked' | 'done', number>>;
 };
 
 export type Fleet = { engines: Engine[]; stopPoints: string[] };
