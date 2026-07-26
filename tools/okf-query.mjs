@@ -39,8 +39,14 @@ function formatRow(d) {
  * `mdEdges`/`relCount`/`supersedeCount`/`totalEdges` are attempt counts (resolved + broken) per
  * category — kept alongside `edges`/`broken` so `renderLinksText` can reproduce the exact
  * summary line without re-walking the bundle.
+ *
+ * `root` (2nd param, default ROOT): the bundle root every path/link resolve below is relative
+ * to. Needed because `docs` (from lib/okf.mjs `load()`) can come from an arbitrary `--root`, not
+ * just the OKF_ROOT-derived module ROOT — see tools/lib/ui-server.mjs `apiGraph`, which passes
+ * its server's own root here so `/api/graph` resolves against the bundle it was started on
+ * instead of always ROOT. Byte-identical when root === ROOT (the untouched default the CLI uses).
  */
-export function buildLinksModel(docs) {
+export function buildLinksModel(docs, { root = ROOT } = {}) {
   const cs = (docs || []).filter(d => !d.reserved);
   const nodes = cs.map(d => ({ id: d.id, title: d.fm.title || '', type: d.fm.type || '' }));
 
@@ -51,17 +57,17 @@ export function buildLinksModel(docs) {
   let mdEdges = 0;
   for (const d of (docs || [])) for (const l of d.links) {
     mdEdges++;
-    const tgt = resolveLink(d.file, l);
+    const tgt = resolveLink(d.file, l, root);
     if (!tgt) { broken.push(`${d.id} → ${l} (outside bundle)`); continue; }
     if (!existsSync(tgt)) { broken.push(`${d.id} → ${l} (broken)`); continue; }
-    const tid = relative(ROOT, tgt).replace(/\.md$/, '');
+    const tid = relative(root, tgt).replace(/\.md$/, '');
     edges.push({ from: d.id, to: tid, kind: 'link' });
     inbound.set(tid, (inbound.get(tid) || 0) + 1);
   }
 
   // typed relations count as edges too
   let relCount = 0;
-  for (const e of collectRelationEdges(cs)) {
+  for (const e of collectRelationEdges(cs, root)) {
     relCount++;
     if (!e.resolved) { broken.push(`${e.fromId} [${e.type}] → ${e.toPath} (outside bundle)`); continue; }
     if (!e.exists) { broken.push(`${e.fromId} [${e.type}] → ${e.toPath} (broken)`); continue; }
@@ -71,7 +77,7 @@ export function buildLinksModel(docs) {
 
   // supersedes edges too — an old, superseded concept is still connected to the graph, not an orphan
   let supersedeCount = 0;
-  for (const e of collectSupersedeEdges(cs)) {
+  for (const e of collectSupersedeEdges(cs, root)) {
     supersedeCount++;
     if (!e.resolved) { broken.push(`${e.fromId} [supersedes] → ${e.toPath} (outside bundle)`); continue; }
     if (!e.exists) { broken.push(`${e.fromId} [supersedes] → ${e.toPath} (broken)`); continue; }

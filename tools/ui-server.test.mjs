@@ -85,6 +85,15 @@ describe('createUiServer — demo bundle endpoints', () => {
     assert.ok(typeof data.version === 'string' && data.version.length > 0);
   });
 
+  it('GET /api/graph resolves edges against the server\'s own root, not OKF_ROOT (regression: ' +
+     'buildLinksModel used to resolve links/relations against the module-level ROOT in okf.mjs, ' +
+     'so a bundle passed only via --root/{root} came back with 0 edges and every link "broken")', async () => {
+    const r = await request(port, '/api/graph');
+    const { data } = JSON.parse(r.body);
+    assert.ok(data.edges.length > 0, `expected resolved edges against DEMO root, got 0 (broken: ${JSON.stringify(data.broken)})`);
+    assert.equal(data.broken.length, 0, `expected no broken edges, got: ${JSON.stringify(data.broken)}`);
+  });
+
   it('GET /api/board carries the demo fixture\'s non-empty failures/overdue (docs/ui-spec.md)', async () => {
     const r = await request(port, '/api/board');
     const { data } = JSON.parse(r.body);

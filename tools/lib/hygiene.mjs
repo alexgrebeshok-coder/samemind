@@ -7,7 +7,7 @@
 // so it stays unit-testable on synthetic fixtures. Only collectSupersedeEdges() touches disk
 // (existsSync) — it's used by `okf-query validate`/`links`, which always run on a real bundle.
 import { existsSync } from 'node:fs';
-import { displayType, pathToId, resolveRelationPath } from './okf.mjs';
+import { ROOT, displayType, pathToId, resolveRelationPath } from './okf.mjs';
 
 export const SUPERSEDED_PENALTY = 0.35;      // superseded/deprecated docs rank at 35% of a clean doc
 export const DEFAULT_IMPORTANCE = 3;         // neutral — importanceMultiplier = 1.0
@@ -170,12 +170,15 @@ export function detectSupersedeCycles(docs) {
  * All `supersedes` edges with resolution info — for `okf-query validate`/`links` (dangling
  * target detection, edge tally). Touches the filesystem (existsSync); only meaningful on docs
  * loaded from a real bundle via okf.mjs `load()`.
+ * `root` (2nd param, default ROOT): threaded through to resolveRelationPath, same rationale as
+ * collectRelationEdges in okf.mjs — buildLinksModel needs supersedes edges to resolve against a
+ * `--root`-given bundle instead of the OKF_ROOT-derived module ROOT.
  */
-export function collectSupersedeEdges(docs) {
+export function collectSupersedeEdges(docs, root = ROOT) {
   const edges = [];
   for (const d of docs) {
     for (const toPath of d.supersedes || []) {
-      const resolved = resolveRelationPath(toPath);
+      const resolved = resolveRelationPath(toPath, root);
       edges.push({
         fromId: d.id,
         toPath,

@@ -306,38 +306,45 @@ export function load(opts = {}, root = ROOT) {
 // mirror-узлы используют [[wiki-links]] (формат памяти Claude Code), не OKF-ссылки —
 // validate/links над ними не имеют смысла, поэтому okf-query ходит без mirror по умолчанию.
 
-export function resolveLink(fromFile, target) {
+// `root` (3rd param, default ROOT): which bundle root a leading-`/` link resolves against and
+// the containment check is relative to — see buildLinksModel (tools/okf-query.mjs), which needs
+// this to resolve against a `--root`-given bundle instead of the OKF_ROOT-derived module ROOT.
+// Byte-identical when root === ROOT (the untouched default every existing caller uses).
+export function resolveLink(fromFile, target, root = ROOT) {
   const resolved = target.startsWith('/')
-    ? resolve(ROOT, '.' + target)
+    ? resolve(root, '.' + target)
     : resolve(dirname(fromFile), target);
-  const root = resolve(ROOT) + sep;
-  if (!resolved.startsWith(root)) return null;
+  const rootPrefix = resolve(root) + sep;
+  if (!resolved.startsWith(rootPrefix)) return null;
   return resolved;
 }
 
-/** Resolve a relation target path (bundle-absolute preferred; relative to ROOT also ok). */
-export function resolveRelationPath(target) {
+/** Resolve a relation target path (bundle-absolute preferred; relative to root also ok).
+ *  `root` (2nd param, default ROOT): same rationale as resolveLink above — threaded through by
+ *  collectRelationEdges so a `--root`-given bundle resolves relations against itself, not ROOT. */
+export function resolveRelationPath(target, root = ROOT) {
   if (!target) return null;
   const t = String(target).trim();
   const resolved = t.startsWith('/')
-    ? resolve(ROOT, '.' + t)
-    : resolve(ROOT, t);
-  const root = resolve(ROOT) + sep;
-  if (!resolved.startsWith(root) && resolved !== resolve(ROOT)) return null;
+    ? resolve(root, '.' + t)
+    : resolve(root, t);
+  const rootPrefix = resolve(root) + sep;
+  if (!resolved.startsWith(rootPrefix) && resolved !== resolve(root)) return null;
   return resolved;
 }
 
 /**
  * Collect all typed relation edges from a document list.
+ * `root` (2nd param, default ROOT): threaded through to resolveRelationPath — see its comment.
  * Returns { fromId, type, toPath, toId, resolved, exists }[].
  */
-export function collectRelationEdges(docs) {
+export function collectRelationEdges(docs, root = ROOT) {
   const edges = [];
   for (const d of docs) {
     const rel = d.relations || normalizeRelations(d.fm?.relations);
     for (const [type, paths] of Object.entries(rel)) {
       for (const toPath of paths) {
-        const resolved = resolveRelationPath(toPath);
+        const resolved = resolveRelationPath(toPath, root);
         const toId = pathToId(toPath);
         edges.push({
           fromId: d.id,

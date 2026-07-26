@@ -144,7 +144,7 @@ function apiConcepts(root, query) {
 
 function apiGraph(root) {
   const docs = load({ includeSecret: false }, root);
-  return wrap('links', buildLinksModel(docs));
+  return wrap('links', buildLinksModel(docs, { root }));
 }
 
 const API_ROUTES = {
