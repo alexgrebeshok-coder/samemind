@@ -1,6 +1,6 @@
 // lib.ts — pure display helpers + the graph layout. No React, no fetch: everything here runs
 // under plain node and is covered by src/lib.test.mjs.
-import type { BoardCard, Frontmatter, Graph, LedgerCard } from './api';
+import type { BoardCard, Frontmatter, Graph, LedgerCard, LedgerEvent } from './api';
 
 /** "12s ago" / "4m ago" / "3d ago" — coarse on purpose, this is a freshness stamp not a clock. */
 export function ago(fromIso: string | null | undefined, now: number = Date.now()): string {
@@ -15,6 +15,13 @@ export function agoSec(sec: number): string {
   if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
   if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
   return `${Math.floor(sec / 86400)}d ago`;
+}
+
+/** Clock time for the live feed — over a few minutes a wall clock reads better than "3s ago". */
+export function hhmmss(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
 }
 
 /** Compact duration for silence bars / heartbeat limits: "45m", "7h", "2d". */
@@ -188,11 +195,58 @@ export function phaseGlyph(phase: string): string {
   }
 }
 
+export function isSubTopic(topic: string): boolean {
+  return String(topic || '').startsWith('sub:'); // subagent naryads — shown, never filtered out
+}
+
 export function phaseColor(ev: { phase: string; status: string }): string {
   if (ev.phase === 'fail' || ev.status === 'fail') return 'var(--sm-danger)';
   if (ev.phase === 'done') return 'var(--sm-ok)';
   if (ev.phase === 'block') return '#f59e0b';
   return 'var(--sm-accent)';
+}
+
+// --- live event feed: buffer + refresh scheduling ---------------------------------------------
+// Pure so the SSE wiring in api.ts stays a thin shell around tested arithmetic.
+
+/** How many events the feed keeps in the DOM. Older ones are gone — /api/ledger holds history. */
+export const FEED_LIMIT = 60;
+
+/** A ledger line has no id, so identity is its content — enough to drop snapshot/stream dupes. */
+export function eventKey(ev: LedgerEvent): string {
+  return `${ev.ts}|${ev.actor}|${ev.topic}|${ev.phase}|${ev.action}`;
+}
+
+/**
+ * Folds newly arrived events (oldest-first, as both the snapshot and the append order deliver
+ * them) into the newest-first feed buffer: deduped by content and capped at `limit`.
+ * A reconnect re-sends a 50-event snapshot that overlaps what the buffer already holds, which is
+ * exactly the case the dedupe exists for.
+ */
+export function mergeEvents(buf: LedgerEvent[], incoming: LedgerEvent[], limit = FEED_LIMIT): LedgerEvent[] {
+  const seen = new Set<string>();
+  return [...incoming]
+    .reverse()
+    .concat(buf)
+    .filter((e) => {
+      const k = eventKey(e);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    })
+    .sort((a, b) => (Date.parse(b.ts) || 0) - (Date.parse(a.ts) || 0)) // stable: ties keep arrival order
+    .slice(0, limit);
+}
+
+export const REFRESH_DEBOUNCE_MS = 2_000;
+export const REFRESH_MIN_GAP_MS = 5_000;
+
+/**
+ * How long a queued refresh should wait: 2s so a burst of appends collapses into one round of
+ * GETs, stretched so two refreshes never land closer than 5s apart.
+ */
+export function nextRefreshDelay(now: number, lastRefreshAt: number): number {
+  return Math.max(REFRESH_DEBOUNCE_MS, REFRESH_MIN_GAP_MS - (now - lastRefreshAt));
 }
 
 // --- concentric graph layout (spec §3.2.4) ---------------------------------------------------

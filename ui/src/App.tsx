@@ -175,6 +175,29 @@ function OfflineBanner() {
   );
 }
 
+/** Live-stream state next to the freshness stamp: green pulse = SSE attached, grey = 30s poll. */
+function LiveDot() {
+  const { live } = useApiStatus();
+  return (
+    <span
+      className="flex items-center gap-1.5 text-xs"
+      title={
+        live
+          ? 'live — streaming ledger events over /api/events/stream'
+          : 'stream down — falling back to the 30s poll, reconnecting'
+      }
+    >
+      <span
+        aria-hidden="true"
+        className={`inline-block size-2 rounded-full ${
+          live ? 'animate-pulse bg-ok motion-reduce:animate-none' : 'bg-muted'
+        }`}
+      />
+      <span className={live ? 'text-ok' : 'text-muted'}>{live ? 'live' : 'polling'}</span>
+    </span>
+  );
+}
+
 function ScreenHeader({ title }: { title: string }) {
   const { generatedAt, now, offline } = useApiStatus();
   return (
@@ -184,6 +207,7 @@ function ScreenHeader({ title }: { title: string }) {
         <span className={`tnum text-xs ${offline ? 'text-danger' : 'text-muted'}`}>
           updated {ago(generatedAt, now)}
         </span>
+        <LiveDot />
         <button
           type="button"
           onClick={refreshAll}

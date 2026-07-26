@@ -24,6 +24,14 @@ import {
   SILENCE_COLOR,
   cardView,
   isLedgerCard,
+  hhmmss,
+  isSubTopic,
+  eventKey,
+  mergeEvents,
+  nextRefreshDelay,
+  FEED_LIMIT,
+  REFRESH_DEBOUNCE_MS,
+  REFRESH_MIN_GAP_MS,
 } from './lib.ts';
 
 import {
@@ -384,6 +392,73 @@ test('graph layout: most-connected in the centre, 300-node budget, no NaN coordi
 
   const empty = layout({ nodes: [], edges: [], orphans: [], broken: [] });
   assert.deepEqual(empty.placed, []);
+});
+
+/** A ledger event as the stream delivers it — only the fields the feed reads. */
+function ev(ts, over = {}) {
+  return {
+    ts,
+    actor: 'cursor',
+    topic: 'atlas-retrieval',
+    phase: 'step',
+    status: 'wip',
+    action: `work at ${ts}`,
+    artifact: null,
+    ref: null,
+    quarantine: false,
+    ...over,
+  };
+}
+
+test('live feed buffer: newest first, deduped, capped', () => {
+  // snapshot arrives oldest-first, the way the file (and the append order) has it
+  const snapshot = [ev('2026-07-26T10:00:00Z'), ev('2026-07-26T10:00:05Z'), ev('2026-07-26T10:00:09Z')];
+  const buf = mergeEvents([], snapshot);
+  assert.deepEqual(
+    buf.map((e) => e.ts),
+    ['2026-07-26T10:00:09Z', '2026-07-26T10:00:05Z', '2026-07-26T10:00:00Z'],
+    'newest on top',
+  );
+
+  const withNew = mergeEvents(buf, [ev('2026-07-26T10:00:20Z')]);
+  assert.equal(withNew[0].ts, '2026-07-26T10:00:20Z', 'a live event lands on top');
+  assert.equal(withNew.length, 4);
+
+  // a reconnect replays a snapshot that overlaps the buffer: nothing may double up
+  const afterReconnect = mergeEvents(withNew, [...snapshot, ev('2026-07-26T10:00:20Z')]);
+  assert.equal(afterReconnect.length, 4, 'overlapping snapshot adds nothing');
+  assert.equal(new Set(afterReconnect.map(eventKey)).size, 4);
+
+  // same timestamp, different action → two distinct rows, not one
+  const twins = mergeEvents([], [ev('2026-07-26T10:00:00Z', { action: 'a' }), ev('2026-07-26T10:00:00Z', { action: 'b' })]);
+  assert.equal(twins.length, 2);
+
+  const flood = mergeEvents(
+    [],
+    Array.from({ length: FEED_LIMIT + 25 }, (_, i) => ev(new Date(Date.UTC(2026, 6, 26, 10, 0, i)).toISOString())),
+  );
+  assert.equal(flood.length, FEED_LIMIT, 'DOM budget holds');
+  assert.equal(flood[0].ts, `2026-07-26T10:01:24.000Z`, 'the cap drops the oldest, not the newest');
+
+  assert.deepEqual(mergeEvents([], []), []);
+});
+
+test('refresh scheduling: 2s debounce floor, never closer than 5s apart', () => {
+  const now = 1_000_000;
+  assert.equal(nextRefreshDelay(now, 0), REFRESH_DEBOUNCE_MS, 'no refresh yet → plain debounce');
+  assert.equal(nextRefreshDelay(now, now - 9_000), REFRESH_DEBOUNCE_MS, 'long quiet → plain debounce');
+  assert.equal(nextRefreshDelay(now, now - 1_000), REFRESH_MIN_GAP_MS - 1_000, 'fresh refresh → stretched to the gap');
+  assert.equal(nextRefreshDelay(now, now), REFRESH_MIN_GAP_MS, 'back-to-back burst waits the whole gap');
+  assert.ok(nextRefreshDelay(now, now - 3_000) >= REFRESH_DEBOUNCE_MS, 'the debounce is a floor, not a target');
+});
+
+test('feed row bits: clock time and the sub badge', () => {
+  const local = new Date(2026, 6, 26, 9, 5, 3); // built local → the assertion is TZ-independent
+  assert.equal(hhmmss(local.toISOString()), '09:05:03');
+  assert.equal(hhmmss('not-a-date'), '—');
+  assert.equal(isSubTopic('sub:atlas-retrieval'), true);
+  assert.equal(isSubTopic('atlas-retrieval'), false);
+  assert.equal(isSubTopic(''), false);
 });
 
 test('source carries no HTML-injection sinks and no external hosts (spec §0)', () => {

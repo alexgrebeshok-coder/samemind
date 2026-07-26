@@ -1,6 +1,13 @@
 // Fleet (spec §3.3): engine roster, naryad timeline, full open failures, stop points.
-import { useApi, useApiStatus, type Fleet as FleetData, type Ledger, type LedgerTopic } from '../api';
-import { ago, dur, phaseColor, phaseGlyph } from '../lib';
+import {
+  useApi,
+  useApiStatus,
+  type Fleet as FleetData,
+  type Ledger,
+  type LedgerEvent,
+  type LedgerTopic,
+} from '../api';
+import { FEED_LIMIT, ago, dur, eventKey, hhmmss, isSubTopic, phaseColor, phaseGlyph } from '../lib';
 import { FailureList } from '../shared';
 import { Card, Chip, Empty, Panel, SilenceBar, Spinner } from '../ui';
 
@@ -70,6 +77,61 @@ function Roster({ engines, now }: { engines: FleetData['engines']; now: number }
   );
 }
 
+/**
+ * Live feed: every ledger line as it lands, newest on top. Same phase glyphs as the timeline
+ * below it, so one vocabulary covers both views. No entrance animation — a row that slides in is
+ * a row you can't read, and it would need a reduced-motion escape hatch for nothing.
+ */
+function LiveFeed({ events }: { events: LedgerEvent[] }) {
+  if (events.length === 0) {
+    return <Empty text="No events streamed yet — this fills as the ledger grows." cmd="samemind ledger append …" />;
+  }
+  return (
+    // capped and scrollable: a full 60-event buffer would otherwise push the timeline and the
+    // failures list off the screen
+    <ol className="max-h-[26rem] divide-y divide-line overflow-y-auto">
+      {events.map((e) => {
+        const failed = e.phase === 'fail' || e.status === 'fail';
+        return (
+          <li
+            key={eventKey(e)}
+            className={`grid grid-cols-[4.5rem_1fr] items-baseline gap-x-3 gap-y-0.5 px-2 py-1.5 sm:grid-cols-[4.5rem_7rem_1fr] ${
+              failed ? 'bg-danger-soft/60' : ''
+            }`}
+          >
+            <span className="tnum text-[11px] text-muted" title={e.ts}>
+              {hhmmss(e.ts)}
+            </span>
+            <span className="truncate font-mono text-[11px] text-muted" title={e.actor}>
+              {e.actor}
+            </span>
+            <span className="col-span-2 flex min-w-0 items-baseline gap-1.5 sm:col-span-1">
+              <span
+                aria-hidden="true"
+                className="shrink-0 text-xs"
+                style={{ color: phaseColor(e) }}
+                title={`${e.phase}/${e.status}`}
+              >
+                {phaseGlyph(e.phase)}
+              </span>
+              <span
+                className={`shrink-0 font-mono text-xs font-semibold ${failed ? 'text-danger' : ''}`}
+                title={e.topic}
+              >
+                {e.topic}
+              </span>
+              {isSubTopic(e.topic) ? <Chip title="a subagent's naryad">sub</Chip> : null}
+              <span className="truncate text-xs text-muted" title={e.action}>
+                {e.action}
+              </span>
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 /** Horizontal lanes, one per topic, dots positioned by timestamp across a shared time axis. */
 function Timeline({ topics, now }: { topics: LedgerTopic[]; now: number }) {
   if (topics.length === 0) {
@@ -136,7 +198,7 @@ function Timeline({ topics, now }: { topics: LedgerTopic[]; now: number }) {
 export function Fleet() {
   const fleet = useApi<FleetData>('/api/fleet');
   const ledger = useApi<Ledger>('/api/ledger');
-  const { now } = useApiStatus();
+  const { now, events, live } = useApiStatus();
 
   if (!fleet.data && fleet.loading) return <Spinner label="reading the fleet registry" />;
 
@@ -151,6 +213,14 @@ export function Fleet() {
         hint={`${engines.length} registered · ${overdueCount} overdue`}
       >
         <Roster engines={engines} now={now} />
+      </Panel>
+
+      <Panel
+        title="Live feed"
+        hint={`ledger events as they land, newest first (${FEED_LIMIT} max)`}
+        right={<Chip tone={live ? 'ok' : 'neutral'}>{live ? '● live' : '○ polling'}</Chip>}
+      >
+        <LiveFeed events={events} />
       </Panel>
 
       <Panel title="Naryad timeline" hint="ledger topics, newest on top (15 max)">

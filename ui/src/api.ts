@@ -1,6 +1,7 @@
 // api.ts — same-origin `/api/*` access. Types mirror the actual payloads served by
 // tools/lib/ui-server.mjs (fetched and read off the wire, not copied from the spec table).
 import { useEffect, useState, useSyncExternalStore } from 'react';
+import { mergeEvents, nextRefreshDelay } from './lib';
 
 export type Envelope<T> = { contract: number; kind: string; generatedAt: string; data: T };
 
@@ -145,8 +146,17 @@ export type Graph = {
 
 const REFRESH_MS = 30_000;
 
-type Store = { tick: number; generatedAt: string | null; offline: boolean; now: number };
-let store: Store = { tick: 0, generatedAt: null, offline: false, now: Date.now() };
+type Store = {
+  tick: number;
+  generatedAt: string | null;
+  offline: boolean;
+  now: number;
+  /** SSE connected: the header dot goes green and data refreshes on events, not just on the clock. */
+  live: boolean;
+  /** Newest-first live feed (spec §3.3 Fleet), capped by FEED_LIMIT. */
+  events: LedgerEvent[];
+};
+let store: Store = { tick: 0, generatedAt: null, offline: false, now: Date.now(), live: false, events: [] };
 const subs = new Set<() => void>();
 
 function set(patch: Partial<Store>) {
@@ -172,8 +182,68 @@ let clockStarted = false;
 export function startClock() {
   if (clockStarted) return;
   clockStarted = true;
-  setInterval(refreshAll, REFRESH_MS);
+  setInterval(refreshAll, REFRESH_MS); // stays on as the fallback when the stream is down
   setInterval(() => set({ now: Date.now() }), 1000); // keeps "updated 12s ago" ticking
+  connectLive();
+}
+
+// --- live ledger stream (GET /api/events/stream) ----------------------------------------------
+// One connection per app, opened once by startClock() and held for the page's lifetime — screens
+// mount and unmount, the stream doesn't. Reconnection is ours rather than the browser's: an
+// EventSource only auto-retries a clean close, so a server that dies mid-stream leaves the object
+// in CLOSED and silently never comes back.
+
+const BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
+
+let es: EventSource | null = null;
+let retry = 0;
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+let lastRefreshAt = 0;
+
+/**
+ * A ledger event invalidates board/fleet/ledger — served by re-fetching, never by patching the
+ * models client-side. Throttled with a trailing edge: the first event of a burst queues one
+ * refresh and every event behind it rides along, so a noisy ledger can't starve the queue the way
+ * a reset-on-every-event debounce would.
+ */
+function scheduleRefresh() {
+  if (refreshTimer) return;
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    lastRefreshAt = Date.now();
+    refreshAll();
+  }, nextRefreshDelay(Date.now(), lastRefreshAt));
+}
+
+function onPayload(e: Event, snapshot: boolean) {
+  let env: Envelope<unknown> | null = null;
+  try {
+    env = JSON.parse((e as MessageEvent).data) as Envelope<unknown>;
+  } catch {
+    return; // a mangled frame is not worth tearing the stream down for
+  }
+  const incoming = snapshot
+    ? (env?.data as { events?: LedgerEvent[] })?.events || []
+    : [env?.data as LedgerEvent];
+  const events = incoming.filter((ev): ev is LedgerEvent => !!ev && typeof ev.ts === 'string');
+  if (events.length) set({ live: true, events: mergeEvents(store.events, events) });
+  if (!snapshot) scheduleRefresh(); // the snapshot only mirrors what the initial GETs already have
+}
+
+function connectLive() {
+  es = new EventSource('/api/events/stream');
+  es.addEventListener('open', () => {
+    retry = 0;
+    set({ live: true });
+  });
+  es.addEventListener('snapshot', (e) => onPayload(e, true));
+  es.addEventListener('event', (e) => onPayload(e, false));
+  es.addEventListener('error', () => {
+    es?.close();
+    es = null;
+    set({ live: false });
+    setTimeout(connectLive, BACKOFF_MS[Math.min(retry++, BACKOFF_MS.length - 1)]);
+  });
 }
 
 export class ApiError extends Error {}
