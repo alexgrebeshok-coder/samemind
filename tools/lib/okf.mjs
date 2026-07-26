@@ -287,7 +287,19 @@ function cachedParse(file, root) {
 // ever under ONE root in practice (project files under the project root, global files under the
 // global root), so keying the parse cache by absolute file path alone (unchanged) stays correct.
 // Byte-identical when root === ROOT (the untouched default every existing caller uses).
-export function load(opts = {}, root = ROOT) { return walk(root, opts).map(f => cachedParse(f, root)); }
+//
+// Frontmatter-level secret filter (N7 gap): walk()'s `top === 'secret'` check only excludes the
+// secret/ *directory* — a concept dropped anywhere else (concepts/, entities/, …) with its own
+// `visibility: secret` frontmatter walked straight through un-filtered, so every load({includeSecret:
+// false}) caller (memory_list, board, handoff, brief, …) leaked it. Enforce the same opt-in-only
+// visibility here, centrally, so a `visibility: secret` doc behaves identically no matter which
+// folder it lives in. Callers that already pass includeSecret: true (export, reconcile, consolidate,
+// reflect, forget --include-secret, okf-query/okf-recall/gde --include-secret|--secret) are unaffected.
+export function load(opts = {}, root = ROOT) {
+  const docs = walk(root, opts).map(f => cachedParse(f, root));
+  if (opts.includeSecret) return docs;
+  return docs.filter(d => d.fm?.visibility !== 'secret');
+}
 
 // mirror-узлы используют [[wiki-links]] (формат памяти Claude Code), не OKF-ссылки —
 // validate/links над ними не имеют смысла, поэтому okf-query ходит без mirror по умолчанию.

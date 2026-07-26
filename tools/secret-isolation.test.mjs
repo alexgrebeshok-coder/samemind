@@ -15,6 +15,9 @@ import { tmpdir } from 'node:os';
 
 import { runInit } from './init.mjs';
 import { DEFAULT_PROTOCOL_VERSION } from './lib/mcp.mjs';
+import { load } from './lib/okf.mjs';
+import { buildBoardModel } from './board.mjs';
+import { buildHandoffModel } from './handoff.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = join(HERE, '..');
@@ -26,6 +29,19 @@ const SECRET_ID = 'secret/isolation-vault';
 const SECRET_TITLE = 'Isolation Vault Secret';
 /** Distinctive title fragment used as BM25/gde query bait. */
 const SECRET_QUERY = 'Isolation Vault Secret TOP-SECRET isolation vault';
+
+/**
+ * A second canary — same `visibility: secret`, but dropped under `concepts/` instead of the
+ * `secret/` directory. Regression for the gap load() used to have: walk()'s `top === 'secret'`
+ * check only ever excluded the *folder*; a doc anywhere else with its own `visibility: secret`
+ * frontmatter sailed through un-filtered into every load({includeSecret:false}) caller
+ * (memory_list, board, handoff, …). `type: Task, status: in-progress` so it would show up in
+ * both buildBoardModel's `inprog` column and buildHandoffModel's `active` list if the filter
+ * did not hold.
+ */
+const CONCEPTS_SECRET_MARKER = 'N7-SECRET-CONCEPTS-DIR-MARKER-DO-NOT-LEAK-9d2f1b';
+const CONCEPTS_SECRET_ID = 'concepts/isolation-vault-task';
+const CONCEPTS_SECRET_TITLE = 'Isolation Vault Task Secret';
 
 let BUNDLE_DIR;
 
@@ -157,6 +173,22 @@ ${SECRET_MARKER}
 
 Body of a secret concept used only by secret-isolation.test.mjs.
 `, 'utf8');
+  writeFileSync(join(BUNDLE_DIR, 'concepts', 'isolation-vault-task.md'), `---
+type: Task
+title: ${CONCEPTS_SECRET_TITLE}
+status: in-progress
+description: isolation perimeter canary in concepts/ (not secret/) — must never leak
+visibility: secret
+tags: [isolation, canary, vault]
+---
+
+# ${CONCEPTS_SECRET_TITLE}
+
+${CONCEPTS_SECRET_MARKER}
+
+Body of a visibility:secret concept placed under concepts/ — must behave exactly like a
+concept dropped in secret/, per tools/lib/okf.mjs \`load()\`.
+`, 'utf8');
 });
 
 after(() => {
@@ -205,6 +237,12 @@ describe('secret isolation perimeter (N7)', () => {
       assert.ok(Array.isArray(listPayload.items));
       assert.ok(!listPayload.items.some(i => String(i.id || '').startsWith('secret/')));
       assertNoSecretLeak('MCP memory_list', JSON.stringify(listRes));
+      // (a) visibility:secret concept living under concepts/ (not secret/) — same gate, no folder shortcut
+      assert.ok(
+        !listPayload.items.some(i => i.id === CONCEPTS_SECRET_ID),
+        'MCP memory_list: leaked concepts/-dir secret-visibility concept',
+      );
+      assert.ok(!JSON.stringify(listRes).includes(CONCEPTS_SECRET_MARKER));
 
       const searchRes = await client.request('tools/call', {
         name: 'memory_search',
@@ -234,5 +272,37 @@ describe('secret isolation perimeter (N7)', () => {
     } finally {
       await client.close();
     }
+  });
+
+  it('visibility:secret concept in concepts/ (not secret/) is invisible in load() and board/handoff models', () => {
+    // (d) load() without includeSecret — the central gate this naryad adds
+    const docsDefault = load({ includeSecret: false }, BUNDLE_DIR);
+    assert.ok(
+      !docsDefault.some(d => d.id === CONCEPTS_SECRET_ID),
+      'load({includeSecret:false}) leaked a visibility:secret concept from concepts/',
+    );
+
+    // (e) load({includeSecret:true}) — parity: callers that opt in still see it (export,
+    // reconcile, consolidate, forget --include-secret, okf-query/okf-recall --include-secret)
+    const docsWithSecret = load({ includeSecret: true }, BUNDLE_DIR);
+    const secretDoc = docsWithSecret.find(d => d.id === CONCEPTS_SECRET_ID);
+    assert.ok(secretDoc, 'load({includeSecret:true}) must still surface concepts/-dir secret concepts');
+    assert.equal(secretDoc.fm.visibility, 'secret');
+
+    // (b) buildBoardModel: docsDefault fed in — the secret Task (status: in-progress) must not
+    // land in the `inprog` column or the byId map (used e.g. for hygiene cross-refs).
+    const board = buildBoardModel(docsDefault);
+    assert.ok(
+      !board.inprog.some(d => d.id === CONCEPTS_SECRET_ID),
+      'buildBoardModel leaked a visibility:secret Task into inprog',
+    );
+    assert.ok(!board.byId.has(CONCEPTS_SECRET_ID), 'buildBoardModel byId leaked a visibility:secret Task');
+
+    // (c) buildHandoffModel: same Task (status: in-progress) must not land in `active`.
+    const handoff = buildHandoffModel(docsDefault);
+    assert.ok(
+      !handoff.active.some(d => d.id === CONCEPTS_SECRET_ID),
+      'buildHandoffModel leaked a visibility:secret Task into active',
+    );
   });
 });
