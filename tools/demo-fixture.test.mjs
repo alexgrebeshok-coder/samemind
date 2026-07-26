@@ -9,7 +9,7 @@
 //      this stays green regardless of when the suite actually runs — see docs/fleet.md.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, existsSync, rmSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -104,5 +104,21 @@ describe('demo — board renders both 🔥 sections non-empty', () => {
     const model = buildBoardModel(docs, { now: NOW, openFailures, overdueEngines });
     assert.equal(model.openFailuresTotal, 1);
     assert.equal(model.overdueEnginesTotal, 1);
+  });
+});
+
+describe('fleet/ is a reserved tier, never walked as graph concepts', () => {
+  it('an .md file dropped inside fleet/ does not leak into load()', () => {
+    const root = mkdtempSync(join(tmpdir(), 'samemind-fleet-walk-'));
+    try {
+      runInit({ targetDir: root });
+      writeFileSync(join(root, 'fleet', 'stray-note.md'),
+        '---\ntype: Concept\ntitle: Stray fleet note\n---\nShould never become a graph node.\n');
+      const ids = load({}, root).map(d => d.id);
+      assert.ok(!ids.some(id => id.includes('stray-note')),
+        `fleet/*.md leaked into the graph: ${ids.filter(id => id.includes('stray'))}`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

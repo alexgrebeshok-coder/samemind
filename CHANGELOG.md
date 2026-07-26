@@ -49,7 +49,7 @@ and who has gone quiet**. All additive; bundles and callers from 0.7.x behave ex
 - **Heartbeat / overdue detection** (`tools/lib/fleet.mjs`) — an engine declares the cadence it is
   expected to report at; anything silent past that cadence is *overdue*. Pure functions with `now`
   injected, exactly like the board's aging — so tests never need a real clock or a real ledger.
-- **Board section `🕰 Overdue engines`** — rendered above `🔴 Blocked`, same shape and cap as
+- **Board section `🔥 Overdue engines`** — rendered above all columns, right after Open failures, same shape and cap as
   `🔥 Open failures`, carried into the `--html` projection. An engine that stopped reporting is a
   sharper signal than a task sitting at `blocked`, so it reads first.
 - **MCP tools `memory_fleet_status` / `memory_fleet_assign`** — same contract as

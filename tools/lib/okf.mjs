@@ -36,8 +36,10 @@ export function walk(dir = ROOT, { includeSecret = false, includeMirror = false,
     // equivalent, there is nothing here to promote into the canon).
     // bench/ (see bench/longmemeval/README.md) holds third-party benchmark harness adapters —
     // package prose + result JSON, same category as docs/, not OKF nodes.
+    // fleet/ (docs/fleet.md) is the declared engine registry — registry.json, not OKF concepts —
+    // same unconditional category as ledger/ (docs already promised this; the check was missing).
     if (name.startsWith('.') || name.startsWith('_') || name === 'node_modules' || name === 'tools'
-      || name === 'demo' || name === 'docs' || name === 'ledger' || name === 'bench') continue;
+      || name === 'demo' || name === 'docs' || name === 'ledger' || name === 'fleet' || name === 'bench') continue;
     const full = join(dir, name);
     let st;
     try { st = lstatSync(full); } catch { continue; }
