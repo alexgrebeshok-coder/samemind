@@ -95,6 +95,31 @@ export function typeColor(type: string | undefined): string {
   return TYPE_HEX[String(type || '').toLowerCase()] || '#64748b';
 }
 
+/**
+ * Silence bar tone: how much of an engine's heartbeat budget its silence has eaten.
+ * `bad` stays reserved for what the API itself flags — overdue, or never seen at all — so the
+ * bar never contradicts the roster's own verdict. An engine past its budget that the registry
+ * still tolerates (a reserve engine) reads amber, not red.
+ */
+export type SilenceTone = 'ok' | 'warn' | 'bad';
+
+export function silenceTone(
+  silentSec: number | null | undefined,
+  heartbeatSec: number,
+  overdue: boolean,
+): { tone: SilenceTone; pct: number } {
+  if (silentSec == null) return { tone: 'bad', pct: 100 }; // never seen → full red bar
+  const pct = Math.min(100, Math.round((silentSec / Math.max(1, heartbeatSec)) * 100));
+  if (overdue) return { tone: 'bad', pct: 100 };
+  return { tone: pct >= 50 ? 'warn' : 'ok', pct };
+}
+
+export const SILENCE_COLOR: Record<SilenceTone, string> = {
+  ok: 'var(--sm-ok)',
+  warn: 'var(--sm-accent)',
+  bad: 'var(--sm-danger)',
+};
+
 /** Ledger phase → glyph (spec §3.3.2). */
 export function phaseGlyph(phase: string): string {
   switch (phase) {

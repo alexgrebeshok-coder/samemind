@@ -20,6 +20,8 @@ import {
   typeBadgeClass,
   phaseGlyph,
   layout,
+  silenceTone,
+  SILENCE_COLOR,
 } from './lib.ts';
 
 const SRC = dirname(fileURLToPath(import.meta.url));
@@ -83,6 +85,33 @@ test('phase glyphs match the timeline legend', () => {
     ['start', 'step', 'done', 'fail', 'block'].map(phaseGlyph),
     ['▶', '·', '✓', '✕', '⏸'],
   );
+});
+
+test('silenceTone: green inside budget, amber past half, red only when the API says so', () => {
+  assert.deepEqual(silenceTone(600, 3600, false), { tone: 'ok', pct: 17 });
+  assert.deepEqual(silenceTone(1700, 3600, false), { tone: 'ok', pct: 47 });
+  assert.equal(silenceTone(1800, 3600, false).tone, 'warn', 'half the budget is a warning');
+  // the threshold is on the rounded percentage, so 49.97% displays as 50 and reads as a warning
+  assert.deepEqual(silenceTone(1799, 3600, false), { tone: 'warn', pct: 50 });
+  assert.equal(silenceTone(3500, 3600, false).tone, 'warn');
+  // grok in the demo bundle: way past budget but the registry does not flag it — amber, not red,
+  // so the bar never contradicts the roster's own "overdue" verdict
+  assert.deepEqual(silenceTone(181989, 3600, false), { tone: 'warn', pct: 100 });
+  assert.deepEqual(silenceTone(113589, 3600, true), { tone: 'bad', pct: 100 }, 'overdue → full red');
+  assert.deepEqual(silenceTone(null, 1800, false), { tone: 'bad', pct: 100 }, 'never seen → full red');
+  assert.equal(silenceTone(0, 3600, false).pct, 0);
+  assert.equal(silenceTone(600, 0, false).pct, 100, 'zero budget must not divide by zero');
+  // every tone maps to a theme token, so both themes follow without a second palette
+  assert.deepEqual(Object.keys(SILENCE_COLOR).sort(), ['bad', 'ok', 'warn']);
+  assert.ok(Object.values(SILENCE_COLOR).every((v) => v.startsWith('var(--sm-')));
+});
+
+test('kanban columns carry one colour edge each, all from theme tokens', async () => {
+  const src = readFileSync(join(SRC, 'shared.tsx'), 'utf8');
+  const edges = [...src.matchAll(/edge: '(var\(--sm-[a-z]+\))'/g)].map((m) => m[1]);
+  assert.equal(edges.length, 4, 'one edge colour per column');
+  assert.deepEqual(edges, ['var(--sm-muted)', 'var(--sm-accent)', 'var(--sm-danger)', 'var(--sm-ok)']);
+  assert.equal(new Set(edges).size, 4, 'columns are distinguishable');
 });
 
 test('graph layout: most-connected in the centre, 300-node budget, no NaN coordinates', () => {

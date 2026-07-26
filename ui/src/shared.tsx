@@ -5,11 +5,14 @@ import type { Doc, LedgerEvent } from './api';
 import { ageLabel, ago, docDate, idTail, projectOf } from './lib';
 import { AllQuiet, Card, Empty, TypeBadge } from './ui';
 
+// `edge` is the 3px colour strip on top of each column. Existing theme tokens only, so both
+// themes follow automatically; applied as an inline style because a `border-t-*` utility would
+// have to out-order Card's own `border-color` at equal specificity.
 export const COLUMNS = [
-  { key: 'backlog', label: 'Backlog' },
-  { key: 'inprog', label: 'In progress' },
-  { key: 'blocked', label: 'Blocked' },
-  { key: 'done', label: 'Done' },
+  { key: 'backlog', label: 'Backlog', edge: 'var(--sm-muted)' },
+  { key: 'inprog', label: 'In progress', edge: 'var(--sm-accent)' },
+  { key: 'blocked', label: 'Blocked', edge: 'var(--sm-danger)' },
+  { key: 'done', label: 'Done', edge: 'var(--sm-ok)' },
 ] as const;
 
 export type ColumnKey = (typeof COLUMNS)[number]['key'];
@@ -59,7 +62,12 @@ export function Kanban({ columns, now }: { columns: Record<ColumnKey, Doc[]>; no
       {COLUMNS.map((c) => {
         const docs = columns[c.key] || [];
         return (
-          <Card key={c.key} tone="muted" className="flex flex-col">
+          <Card
+            key={c.key}
+            tone="muted"
+            className="flex flex-col"
+            style={{ borderTopWidth: 3, borderTopColor: c.edge }}
+          >
             <div className="flex items-baseline justify-between border-b border-line px-3 py-2">
               <h3 className="text-sm font-semibold">{c.label}</h3>
               <span className="tnum text-xs text-muted">{docs.length}</span>

@@ -3,7 +3,7 @@
 import { useApi, useApiStatus, type Board, type Health } from '../api';
 import { dur, typeColor } from '../lib';
 import { FailureList, Kanban, RecentList } from '../shared';
-import { AllQuiet, Card, Empty, Panel, SegmentedBar, Spinner, StatTile } from '../ui';
+import { AllQuiet, Card, Empty, Panel, SegmentedBar, SilenceBar, Spinner, StatTile } from '../ui';
 
 export function Overview() {
   const board = useApi<Board>('/api/board');
@@ -47,17 +47,24 @@ export function Overview() {
           ) : (
             <ul className="flex flex-col gap-2">
               {overdue.map((e) => (
-                <li
-                  key={e.id}
-                  className="flex flex-wrap items-baseline justify-between gap-2 rounded-[12px] border border-danger/40 bg-danger-soft/40 p-3"
-                >
-                  <div>
-                    <span className="font-mono text-sm font-semibold">{e.id}</span>
-                    <span className="ml-2 text-[11px] text-muted">{e.role}</span>
+                <li key={e.id} className="rounded-[12px] border border-danger/40 bg-danger-soft/40 p-3">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <div>
+                      <span className="font-mono text-sm font-semibold">{e.id}</span>
+                      <span className="ml-2 text-[11px] text-muted">{e.role}</span>
+                    </div>
+                    <span className="tnum text-xs text-danger">
+                      silent {dur(e.silentSec)} · limit {dur(e.heartbeatSec)}
+                    </span>
                   </div>
-                  <span className="tnum text-xs text-danger">
-                    silent {dur(e.silentSec)} · limit {dur(e.heartbeatSec)}
-                  </span>
+                  <div className="mt-2">
+                    <SilenceBar
+                      silentSec={e.silentSec}
+                      heartbeatSec={e.heartbeatSec}
+                      overdue={e.overdue}
+                      showLabel={false}
+                    />
+                  </div>
                 </li>
               ))}
             </ul>

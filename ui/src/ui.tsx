@@ -1,7 +1,7 @@
 // ui.tsx — the whole component vocabulary: cards, badges, chips, stat tiles, empty states.
 // Hand-rolled on purpose (spec §0: no component library).
-import type { ReactNode } from 'react';
-import { dur, typeBadgeClass } from './lib';
+import type { CSSProperties, ReactNode } from 'react';
+import { SILENCE_COLOR, dur, silenceTone, typeBadgeClass } from './lib';
 
 // Surface tones live here as whole border+background pairs rather than being patched in through
 // `className`: two competing `border-*`/`bg-*` utilities have equal specificity, so which one
@@ -16,12 +16,18 @@ export function Card({
   children,
   className = '',
   tone = 'surface',
+  style,
 }: {
   children: ReactNode;
   className?: string;
   tone?: keyof typeof TONES;
+  style?: CSSProperties;
 }) {
-  return <div className={`rounded-[12px] border ${TONES[tone]} ${className}`}>{children}</div>;
+  return (
+    <div className={`rounded-[12px] border ${TONES[tone]} ${className}`} style={style}>
+      {children}
+    </div>
+  );
 }
 
 export function Panel({
@@ -125,34 +131,32 @@ export function AllQuiet({ what }: { what: string }) {
   );
 }
 
-/** Silence bar: silentSec against heartbeatSec, red once overdue (spec §3.3.1). */
+/**
+ * Silence bar: silentSec against heartbeatSec — green well inside the budget, amber past half,
+ * red once the registry calls the engine overdue or has never seen it (spec §3.3.1).
+ * Used by the Fleet roster and by the overdue cards on Overview.
+ */
 export function SilenceBar({
   silentSec,
   heartbeatSec,
   overdue,
+  showLabel = true,
 }: {
   silentSec: number | null;
   heartbeatSec: number;
   overdue: boolean;
+  showLabel?: boolean;
 }) {
-  const never = silentSec == null;
-  const pct = never ? 100 : Math.min(100, Math.round((silentSec / Math.max(1, heartbeatSec)) * 100));
-  const bad = never || overdue;
-  const label = never ? 'never seen' : `${dur(silentSec)} of ${dur(heartbeatSec)} budget`;
+  const { tone, pct } = silenceTone(silentSec, heartbeatSec, overdue);
+  const label = silentSec == null ? 'never seen' : `${dur(silentSec)} of ${dur(heartbeatSec)} budget`;
   return (
-    <div
-      className="min-w-[7rem]"
-      role="img"
-      aria-label={label}
-      title={label}
-    >
+    <div className="min-w-[7rem]" role="img" aria-label={label} title={label}>
       <div className="h-2 w-full overflow-hidden rounded-full bg-surface-2">
-        <div
-          className="h-full rounded-full"
-          style={{ width: `${pct}%`, background: bad ? 'var(--sm-danger)' : 'var(--sm-accent)' }}
-        />
+        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: SILENCE_COLOR[tone] }} />
       </div>
-      <div className={`tnum mt-1 text-[11px] ${bad ? 'text-danger' : 'text-muted'}`}>{label}</div>
+      {showLabel ? (
+        <div className={`tnum mt-1 text-[11px] ${tone === 'bad' ? 'text-danger' : 'text-muted'}`}>{label}</div>
+      ) : null}
     </div>
   );
 }
