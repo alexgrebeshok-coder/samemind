@@ -15,6 +15,11 @@
 // global bundle on disk and no OKF_GLOBAL_ROOT set → output is byte-identical to project-only
 // search (see tools/lib/compose-roots.mjs).
 // Endpoint/model/key: OKF_EMBED_URL / OKF_EMBED_MODEL / OKF_EMBED_KEY (Bearer).
+// G2 — 1-hop graph expand: `--expand` (or `--expand-hops 1`) pulls in docs connected to a top-k
+// hit via a `relations` edge or a REVERSE wikilink (who cites the hit), budget-capped
+// (`--expand-budget N`, default 5), printed after the primary hits as `+hop  ... (+1 hop from
+// <id>)`. Off by default — with no flag, output is byte-identical to before G2. See
+// lib/recall.mjs `expandHits`.
 //
 // Ф4 — index backend: sqlite-vec (tools/.index/index.db, binary Float32 vectors, KNN in C) is
 // tried first; a clean fallback to the flat-JSON index (tools/.index/embeddings.json, linear
@@ -29,6 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { ROOT, load } from './lib/okf.mjs';
 import {
   DEFAULT_EMBED_URL, DEFAULT_MODEL, fetchEmbedding, syncIndex, indexKey, recallSearch,
+  expandHits, DEFAULT_EXPAND_BUDGET,
 } from './lib/recall.mjs';
 import {
   openVecStore, closeVecStore, syncVecStore, searchVecStore, vecStoreCount, migrateJsonIndex,
@@ -104,14 +110,30 @@ export function parseArgs(argv = process.argv.slice(2)) {
   const ai = argv.indexOf('--as-of');
   const asOf = ai >= 0 ? argv[ai + 1] : null;
   if (ai >= 0 && !asOf) throw new Error('--as-of requires an ISO date (e.g. 2025-06-01)');
+  // G2 — 1-hop graph expand: `--expand` turns it on; `--expand-hops N` is the same switch spelled
+  // with a hop count (N=0 is off, N>=1 is on) — only 1 hop is implemented today, so any N>1 is
+  // capped to 1 with a one-line stderr note (ponytail: see expandHits() for the ceiling).
+  const ehi = argv.indexOf('--expand-hops');
+  const expandHopsArg = ehi >= 0 ? parseInt(argv[ehi + 1], 10) : null;
+  if (ehi >= 0 && !Number.isFinite(expandHopsArg)) {
+    throw new Error('--expand-hops requires a number (e.g. --expand-hops 1)');
+  }
+  const expand = argv.includes('--expand') || (expandHopsArg != null && expandHopsArg > 0);
+  if (expand && expandHopsArg > 1) {
+    console.error(`--expand-hops ${expandHopsArg} > 1 not supported yet — using 1 hop`);
+  }
+  const ebi = argv.indexOf('--expand-budget');
+  const expandBudget = ebi >= 0 ? (parseInt(argv[ebi + 1], 10) || DEFAULT_EXPAND_BUDGET) : DEFAULT_EXPAND_BUDGET;
   const positional = argv.filter((a, i) => !a.startsWith('-')
     && !(ki >= 0 && i === ki + 1)
     && !(mi >= 0 && i === mi + 1)
     && !(ei >= 0 && i === ei + 1)
-    && !(ai >= 0 && i === ai + 1));
+    && !(ai >= 0 && i === ai + 1)
+    && !(ehi >= 0 && i === ehi + 1)
+    && !(ebi >= 0 && i === ebi + 1));
   return {
     positional, k, includeSecret, includeMirror, includeInbox, mode, excludeSource, noGlobal,
-    includeSuperseded, asOf,
+    includeSuperseded, asOf, expand, expandBudget,
   };
 }
 
@@ -136,7 +158,7 @@ async function buildIndex(includeSecret, includeMirror, includeInbox) {
 }
 
 async function query(q, k, includeSecret, includeMirror, includeInbox, mode, excludeSource, noGlobal, {
-  includeSuperseded = false, asOf = null,
+  includeSuperseded = false, asOf = null, expand = false, expandBudget = DEFAULT_EXPAND_BUDGET,
 } = {}) {
   // BM25 ranks over concept bodies, so we load the bundle in every mode.
   const docs = load({ includeSecret, includeMirror, includeInbox }).filter(d => !d.reserved);
@@ -175,22 +197,34 @@ async function query(q, k, includeSecret, includeMirror, includeInbox, mode, exc
     console.log(`${r.score.toFixed(3)}  ${(r.type || '').padEnd(10)} ${idOut} — ${r.title || ''}${r.label ? '  ' + r.label : ''}`);
   }
   if (!hits.length) console.log('(nothing found)');
+
+  // G2 — 1-hop graph expand (opt-in via --expand/--expand-hops): walked over the project docs ∪
+  // the (already project-deduped) global docs, so a global-root neighbor never shadows a
+  // same-id project doc — see expandHits() doc comment. Printed after the primary hits, never
+  // folded into their sort/score.
+  if (expand) {
+    const pool = globalHalf?.docs?.length ? [...docs, ...globalHalf.docs] : docs;
+    const extra = expandHits(hits, pool, { budget: expandBudget, asOf });
+    for (const e of extra) {
+      console.log(`  +hop  ${(e.type || '').padEnd(10)} ${e.id} — ${e.title || ''}  ${e.label}`);
+    }
+  }
 }
 
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
   const {
     positional, k, includeSecret, includeMirror, includeInbox, mode, excludeSource, noGlobal,
-    includeSuperseded, asOf,
+    includeSuperseded, asOf, expand, expandBudget,
   } = parseArgs();
   try {
     if (positional[0] === 'index') await buildIndex(includeSecret, includeMirror, includeInbox);
     else if (positional.length) {
       await query(positional.join(' '), k, includeSecret, includeMirror, includeInbox, mode, excludeSource, noGlobal, {
-        includeSuperseded, asOf,
+        includeSuperseded, asOf, expand, expandBudget,
       });
     } else {
-      console.log('Usage: okf-recall.mjs index | "<query>" [-k N] [--mode bm25|semantic|hybrid|auto] [--include-mirror] [--include-secret] [--include-inbox] [--include-superseded] [--as-of <ISO>] [--exclude-source <id>] [--no-global]');
+      console.log('Usage: okf-recall.mjs index | "<query>" [-k N] [--mode bm25|semantic|hybrid|auto] [--include-mirror] [--include-secret] [--include-inbox] [--include-superseded] [--as-of <ISO>] [--exclude-source <id>] [--no-global] [--expand] [--expand-hops 1] [--expand-budget N]');
     }
   } catch (e) {
     console.error('Error:', e.message);
