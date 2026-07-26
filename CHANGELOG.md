@@ -3,6 +3,40 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.10.0] — 2026-07-26
+
+The memory gets a face: `samemind ui` — a local, read-only web dashboard over the bundle —
+plus the versioned JSON contract it stands on. Runtime stays zero-dependency; the SPA ships
+prebuilt in `dist/` and is served from 127.0.0.1 only.
+
+### Added
+
+- **`samemind ui [--port] [--root] [--open]`** — local dashboard: 4 screens (Overview with
+  kanban and alert tiles, Memory with concept browser / BM25 search / link graph, Fleet with
+  engine heartbeat bars and naryad timeline, Projects), light+dark themes, hash-routed
+  deep links, virtualized lists. Server: `node:http` with an exact-match Host guard
+  (DNS-rebinding defense) and hand-parsed paths so traversal never hides behind URL
+  normalization. Secret isolation inherited from `load()`.
+- **Versioned JSON contract** — `--json` on `board`, `handoff`, `fleet status`,
+  `ledger status`, `query links` (`{ contract: 1, kind, generatedAt, data }`), and the same
+  shapes on `/api/board|handoff|fleet|ledger|concepts|concept/<id>|graph|health`.
+- **`fleet set --engine <id> --status|--role|--heartbeat|--zone`** — edit the registry
+  without hand-editing JSON.
+- **`init` scaffolds `ledger/` + `fleet/`**; the demo bundle ships a live fleet fixture
+  (non-empty Open failures and Overdue engines out of the box).
+
+### Fixed
+
+- **Ledger append is O(1) and idempotent by `ref`** — no more whole-file rewrite per event;
+  a repeated `ref` returns `deduped` instead of writing a duplicate (the safety the
+  journal→ledger bridge needs).
+- **Graph edges under `--root`** — all three edge resolvers (markdown links, typed
+  relations, supersedes) now thread the bundle root explicitly; previously every edge was
+  reported broken when the root came from `--root` instead of `OKF_ROOT`.
+- **`fleet/` excluded from the graph walk unconditionally**, as the docs already promised.
+- `ledger status` speaks English; MCP errors carry a machine-readable code
+  (`Error [NOT_FOUND]: …`); capture-state keys are `~`-portable across machines.
+
 ## [0.9.0] — 2026-07-26
 
 Graph-aware recall and a human gate on bulk capture — plus the suite now stays green on a
