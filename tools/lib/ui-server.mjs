@@ -90,10 +90,10 @@ function apiHealth(root) {
 function apiBoard(root) {
   const docs = load({ includeSecret: false }, root);
   const events = readEvents(root);
-  const { openFailures } = summarizeLedger(events);
+  const { openFailures, topics } = summarizeLedger(events);
   const registry = readRegistry(root);
   const overdueEngines = registry ? heartbeat(registry.engines, events, Date.now()).filter(e => e.overdue) : [];
-  const model = buildBoardModel(docs, { now: Date.now(), openFailures, overdueEngines });
+  const model = buildBoardModel(docs, { now: Date.now(), openFailures, overdueEngines, ledgerTopics: topics });
   return wrap('board', model);
 }
 

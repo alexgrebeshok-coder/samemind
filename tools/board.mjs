@@ -39,6 +39,7 @@ const SESSION_SUMMARY_LIMIT = 3;
 export const AGING_THRESHOLD_DAYS = 7;     // blocked older than this is flagged "aging"
 export const OPEN_FAILURES_LIMIT = 5;      // event-ledger 🔥 Open failures: shown cap (see docs/event-ledger.md)
 export const OVERDUE_ENGINES_LIMIT = 5;    // fleet 🔥 Overdue engines: shown cap (see docs/fleet.md)
+export const LEDGER_DERIVED_CAP = 8;       // derived-kanban: shown cap per column (see docs/ui-spec.md §3.1)
 const DESC_MAX = 140;
 
 // Plans shown on the board: active planning states. `done` and `superseded` are history
@@ -121,7 +122,14 @@ function taskProjectMatches(d, filter) {
   });
 }
 
+/** One line for a derived-kanban card (synthesized from a ledger topic, no matching Task doc). */
+function renderLedgerTask(d) {
+  const when = String(d.ts || '').slice(0, 16).replace('T', ' ');
+  return `- **${d.title}** — ${d.action} _(${d.actor}, ${when})_ _(ledger)_`;
+}
+
 function renderTask(d, nowMs) {
+  if (d.source === 'ledger') return renderLedgerTask(d);
   const lines = [`- **[${titleOf(d)}](${linkOf(d)})** — ${oneline(d)}`];
   if (statusOf(d) === 'blocked') {
     const reason = String(d.fm?.blocked_reason || '').trim();
@@ -192,12 +200,69 @@ export function renderOverdueEngine(r) {
   return `- **${r.id}** — ${r.role}, silent ${silent} (limit ${r.heartbeatSec}s) _(last seen ${seen})_`;
 }
 
-/** Append a `## heading (n)` section with items; `_(empty)_` when empty. */
-function section(L, heading, items, render, nowMs) {
+/** Append a `## heading (n)` section with items; `_(empty)_` when empty. `extraLines` (e.g. a
+ *  ledger-overflow note) are appended after the items, before the trailing blank line. */
+function section(L, heading, items, render, nowMs, extraLines = []) {
   L.push(`## ${heading} (${items.length})`, '');
   if (!items.length) { L.push('_(empty)_'); }
   else { for (const it of items) L.push(render(it, nowMs)); }
+  for (const line of extraLines) L.push(line);
   L.push('');
+}
+
+/** `_…and N more from the ledger — samemind ledger status_` note, or `[]` when nothing overflowed. */
+function ledgerOverflowNote(n) {
+  return n > 0 ? [`_…and ${n} more from the ledger — \`samemind ledger status\`_`] : [];
+}
+
+/** Truncates ledger `action` text for a derived card (docs/ui-spec.md §3.1). */
+function truncateAction(s) {
+  const t = String(s ?? '').trim();
+  return t.length > 120 ? t.slice(0, 119) + '…' : t;
+}
+
+/**
+ * Synthesizes kanban cards from ledger topics (tools/lib/ledger.mjs `summarizeLedger`) for
+ * bundles whose work lives in the event ledger, not in Task docs — the motivating case: a bundle
+ * with hundreds of ledger topics and zero Task docs (docs/ui-spec.md §3.1). Pure function of
+ * `ledgerTopics` (the `topics` array `summarizeLedger` returns) + `canonIds` (every Task doc's
+ * id/title, exact-string set — a matching canon doc always wins, no fuzzy matching) + the same
+ * `nowMs`/`recentDays` window buildBoardModel already uses for the Recent section.
+ *
+ * Mapping: last.phase start|step|note → inprog; done → done, but ONLY if last.ts falls inside
+ * the recentDays window (else a stale "done" topic would flood Done with history, same reasoning
+ * as Recent's own cutoff); fail|block → blocked. Backlog has no ledger analogue, so it is never
+ * synthesized. Returns `{ inprog, blocked, done, overflow: { inprog, blocked, done } }`: each
+ * column capped at LEDGER_DERIVED_CAP cards (freshest first); `overflow` counts what didn't fit.
+ */
+function deriveLedgerCards(ledgerTopics, canonIds, nowMs, recentDays) {
+  const byCol = { inprog: [], blocked: [], done: [] };
+  for (const t of ledgerTopics || []) {
+    const topic = String(t?.topic || '').trim();
+    const last = t?.last;
+    if (!topic || !last) continue;
+    if (canonIds.has(topic)) continue; // canon Task doc wins — no derived card (contract rule 4)
+    const phase = String(last.phase || '');
+    let col;
+    if (phase === 'start' || phase === 'step' || phase === 'note') col = 'inprog';
+    else if (phase === 'fail' || phase === 'block') col = 'blocked';
+    else if (phase === 'done') {
+      const ts = Date.parse(last.ts);
+      if (!Number.isFinite(ts) || ts < nowMs - recentDays * DAY_MS) continue; // stale done: dropped entirely
+      col = 'done';
+    } else continue; // unknown/missing phase — skip rather than guess a column
+    byCol[col].push({
+      id: `ledger:${topic}`, title: topic, type: 'Task', source: 'ledger',
+      ts: last.ts, actor: last.actor, action: truncateAction(last.action),
+    });
+  }
+  const overflow = {};
+  for (const col of Object.keys(byCol)) {
+    byCol[col].sort((a, b) => String(b.ts).localeCompare(String(a.ts))); // freshest first
+    overflow[col] = Math.max(0, byCol[col].length - LEDGER_DERIVED_CAP);
+    byCol[col] = byCol[col].slice(0, LEDGER_DERIVED_CAP);
+  }
+  return { ...byCol, overflow };
 }
 
 /**
@@ -215,6 +280,7 @@ export function buildBoardModel(docs, {
   project = null,
   openFailures = [],
   overdueEngines = [],
+  ledgerTopics = [],
 } = {}) {
   const nowMs = now instanceof Date ? now.getTime() : Number(now) || Date.now();
   const cs = (docs || []).filter(d => !d.reserved);
@@ -240,10 +306,22 @@ export function buildBoardModel(docs, {
   const inProject = d => taskProjectMatches(d, project);
 
   const backlog = tasks.filter(d => statusOf(d) === 'backlog' && inProject(d)).sort(byTsDesc);
-  const inprog = tasks.filter(d => statusOf(d) === 'in-progress' && inProject(d)).sort(byTsDesc);
-  const blocked = tasks.filter(d => statusOf(d) === 'blocked' && inProject(d)).sort(byTsAsc);
-  const done = tasks.filter(d => statusOf(d) === 'done' && inProject(d))
+  const inprogDocs = tasks.filter(d => statusOf(d) === 'in-progress' && inProject(d)).sort(byTsDesc);
+  const blockedDocs = tasks.filter(d => statusOf(d) === 'blocked' && inProject(d)).sort(byTsAsc);
+  const doneDocs = tasks.filter(d => statusOf(d) === 'done' && inProject(d))
     .sort(byTsDesc).slice(0, doneLimit);
+
+  // Derived kanban (docs/ui-spec.md §3.1): synthesize cards from ledger topics that have no
+  // matching Task doc. Canon always wins — an exact id/title match suppresses the derived card
+  // entirely. Not project-scoped: ledger topics carry no relations.project to filter by, so
+  // derived cards show regardless of `--project`.
+  const canonIds = new Set();
+  for (const t of tasks) { canonIds.add(t.id); const ti = titleOf(t); if (ti) canonIds.add(ti); }
+  const ledgerDerived = deriveLedgerCards(ledgerTopics, canonIds, nowMs, recentDays);
+
+  const inprog = [...inprogDocs, ...ledgerDerived.inprog];
+  const blocked = [...blockedDocs, ...ledgerDerived.blocked];
+  const done = [...doneDocs, ...ledgerDerived.done];
 
   const plans = cs.filter(d => typeOf(d) === 'plan' && ACTIVE_PLAN_STATUS.has(statusOf(d)))
     .sort(byTsDesc);
@@ -273,6 +351,7 @@ export function buildBoardModel(docs, {
     recent, sessions,
     openFailuresShown, openFailuresTotal,
     overdueEnginesShown, overdueEnginesTotal,
+    ledgerOverflow: ledgerDerived.overflow,
   };
 }
 
@@ -288,6 +367,7 @@ export function buildBoard(docs, opts = {}) {
     ideaAdopted, ideasVisible, byId, recent, sessions,
     openFailuresShown, openFailuresTotal,
     overdueEnginesShown, overdueEnginesTotal,
+    ledgerOverflow,
   } = m;
 
   const L = [];
@@ -324,9 +404,9 @@ export function buildBoard(docs, opts = {}) {
   }
 
   section(L, '🆕 Backlog', backlog, renderTask, nowMs);
-  section(L, '🔧 In progress', inprog, renderTask, nowMs);
-  section(L, '🔴 Blocked', blocked, renderTask, nowMs);
-  section(L, `✅ Done · last ${doneLimit}`, done, renderTask, nowMs);
+  section(L, '🔧 In progress', inprog, renderTask, nowMs, ledgerOverflowNote(ledgerOverflow.inprog));
+  section(L, '🔴 Blocked', blocked, renderTask, nowMs, ledgerOverflowNote(ledgerOverflow.blocked));
+  section(L, `✅ Done · last ${doneLimit}`, done, renderTask, nowMs, ledgerOverflowNote(ledgerOverflow.done));
   section(L, '📋 Plans', plans, renderPlan);
 
   L.push(`## 💡 Ideas (${ideasVisible.length})`, '');
@@ -387,7 +467,9 @@ export async function main(argv = process.argv.slice(2)) {
   // and summarize to open failures here, in the I/O layer, so buildBoardModel/buildBoard stay
   // pure functions of their arguments (same reasoning as `now` being injectable).
   const events = readEvents(ROOT);
-  const { openFailures } = summarizeLedger(events);
+  // topics (per-topic latest event, docs/event-ledger.md) also feed the derived kanban
+  // (docs/ui-spec.md §3.1) — a bundle can have hundreds of ledger topics and zero Task docs.
+  const { openFailures, topics: ledgerTopics } = summarizeLedger(events);
   // Fleet registry (docs/fleet.md) is likewise not an OKF concept — read it here, in the I/O
   // layer, and reduce to the overdue subset via the same `heartbeat()` the CLI/MCP use, so
   // buildBoardModel/buildBoard never touch the filesystem themselves. No registry → [].
@@ -398,7 +480,7 @@ export async function main(argv = process.argv.slice(2)) {
     // --json: versioned wrapper over the same buildBoardModel the markdown/--html projections
     // consume — a foundation for a future UI, not a new model (see contract note in module header).
     const now = Date.now();
-    const model = buildBoardModel(docs, { now, project, openFailures, overdueEngines });
+    const model = buildBoardModel(docs, { now, project, openFailures, overdueEngines, ledgerTopics });
     console.log(JSON.stringify({
       contract: 1, kind: 'board', generatedAt: new Date(now).toISOString(), data: model,
     }));
@@ -410,7 +492,7 @@ export async function main(argv = process.argv.slice(2)) {
     // markdown, this is a generated face, never storage. See gbrain idea-html-projections.
     const { renderBoardHtml } = await import('./lib/html-render.mjs');
     const model = buildBoardModel(docs, {
-      now: Date.now(), project, openFailures, overdueEngines,
+      now: Date.now(), project, openFailures, overdueEngines, ledgerTopics,
     });
     const page = renderBoardHtml(model);
     if (out) {
@@ -423,7 +505,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   const md = buildBoard(docs, {
-    now: Date.now(), project, openFailures, overdueEngines,
+    now: Date.now(), project, openFailures, overdueEngines, ledgerTopics,
   });
 
   if (write) {

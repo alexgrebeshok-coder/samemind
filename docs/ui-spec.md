@@ -60,7 +60,9 @@ Checklist — ALL required:
 1. **KPI strip** (4 stat tiles): concepts total, tasks in progress, open failures, overdue
    engines. Failures/overdue tiles turn red-accented when > 0.
 2. **Kanban** — 4 columns Backlog / In progress / Blocked / Done from `/api/board`; card =
-   title, project chip, age. Blocked cards show `blocked_reason` on hover/expand.
+   title, project chip, age. Blocked cards show `blocked_reason` on hover/expand. Cards with
+   no matching Task doc are synthesized from ledger topics (`source: 'ledger'`) and carry a
+   small grey "ledger" chip instead of a project chip.
 3. **🔥 Open failures** panel — list with topic, age, last action; empty state per §5.
 4. **🔥 Overdue engines** panel — engine id, role, silence duration vs heartbeat limit.
 5. **Ideas strip** — spark / incubating / adopted counts with a compact segmented bar.

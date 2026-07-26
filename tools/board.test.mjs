@@ -11,10 +11,12 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildBoard, buildBoardModel, OVERDUE_ENGINES_LIMIT } from './board.mjs';
+import http from 'node:http';
+import { buildBoard, buildBoardModel, OVERDUE_ENGINES_LIMIT, LEDGER_DERIVED_CAP } from './board.mjs';
 import { runInit } from './init.mjs';
 import { buildRegistry, writeRegistry } from './lib/fleet.mjs';
 import { appendEvent } from './lib/ledger.mjs';
+import { createUiServer } from './lib/ui-server.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BOARD = join(HERE, 'board.mjs');
@@ -402,7 +404,10 @@ describe('demo — non-empty board', () => {
     assert.ok(out.length > 200, 'board is non-trivial');
     assert.ok(out.includes('Wire retrieval strategy over the Atlas corpus'), 'blocked demo task shown');
     assert.ok(out.includes('Lumen multi-device sync'), 'agreed plan shown');
-    assert.match(out, /## 🔴 Blocked \(1\)/);
+    // Blocked holds the real Task doc PLUS a derived ledger card (atlas-retrieval's last event
+    // is a fail — neither its id nor title matches the Task doc's, so both show, see
+    // "derived-канбан: demo fixture" below).
+    assert.match(out, /## 🔴 Blocked \(2\)/);
   });
 
   it('--json renders the same demo state as valid, parseable JSON', () => {
@@ -413,5 +418,149 @@ describe('demo — non-empty board', () => {
     assert.equal(payload.contract, 1);
     assert.equal(payload.kind, 'board');
     assert.ok(payload.data.blocked.some(d => d.fm.title?.includes('Wire retrieval strategy')));
+  });
+});
+
+// ─────────────────── derived-канбан: synthesize cards from ledger topics ───────────────────
+// A bundle can have hundreds of ledger topics (tools/lib/ledger.mjs) and zero Task docs — the
+// board should not sit empty just because nobody wrote Task frontmatter. See docs/ui-spec.md §3.1.
+
+describe('derived-канбан (a) — no ledgerTopics: byte-identical to the pre-feature board', () => {
+  const docs = [
+    task('projects/t-prog', 'in-progress', { title: 'ProgTask' }),
+    task('projects/t-block', 'blocked', { title: 'BlockTask', blocked_reason: 'why' }),
+    task('projects/t-done', 'done', { title: 'DoneTask' }),
+  ];
+
+  it('omitting ledgerTopics behaves exactly like passing [] — no ledger markers anywhere', () => {
+    const withoutOpt = buildBoard(docs, { now: NOW });
+    const withEmpty = buildBoard(docs, { now: NOW, ledgerTopics: [] });
+    assert.equal(withoutOpt, withEmpty, 'omitted vs empty-array ledgerTopics produce identical bytes');
+    assert.ok(!withoutOpt.includes('(ledger)'), 'no derived-card marker');
+    assert.ok(!withoutOpt.includes('from the ledger'), 'no overflow note');
+    assert.match(withoutOpt, /## 🔧 In progress \(1\)/);
+    assert.match(withoutOpt, /## 🔴 Blocked \(1\)/);
+    assert.match(withoutOpt, /## ✅ Done · last 10 \(1\)/);
+  });
+
+  it('model exposes ledgerOverflow all-zero when there is nothing to derive', () => {
+    const model = buildBoardModel(docs, { now: NOW });
+    assert.deepEqual(model.ledgerOverflow, { inprog: 0, blocked: 0, done: 0 });
+  });
+});
+
+describe('derived-канбан (в) — a stale "done" topic (older than recentDays) is dropped entirely', () => {
+  it('produces no card in any column, not even counted toward overflow', () => {
+    const staleTopic = {
+      topic: 'ghost-topic', count: 2, openFail: null,
+      last: { ts: daysAgo(30), actor: 'grok', phase: 'done', status: 'ok', action: 'long since done' },
+    };
+    const model = buildBoardModel([], { now: NOW, recentDays: 7, ledgerTopics: [staleTopic] });
+    assert.equal(model.done.length, 0, 'stale done is not shown in Done');
+    assert.equal(model.inprog.length, 0);
+    assert.equal(model.blocked.length, 0);
+    assert.equal(model.ledgerOverflow.done, 0, 'dropped, not capped — never counted as overflow');
+  });
+
+  it('a "done" topic inside the recentDays window DOES show, in the Done column', () => {
+    const freshTopic = {
+      topic: 'fresh-topic', count: 1, openFail: null,
+      last: { ts: daysAgo(2), actor: 'grok', phase: 'done', status: 'ok', action: 'shipped it' },
+    };
+    const model = buildBoardModel([], { now: NOW, recentDays: 7, ledgerTopics: [freshTopic] });
+    assert.equal(model.done.length, 1);
+    assert.equal(model.done[0].id, 'ledger:fresh-topic');
+    assert.equal(model.done[0].source, 'ledger');
+  });
+});
+
+describe('derived-канбан (г) — caps at 8 per column, freshest first, "N more" overflow note', () => {
+  it('10 in-progress-phase topics → 8 shown newest-first, overflow note names the remaining 2', () => {
+    // topic-9 freshest (daysAgo(1)) … topic-0 oldest (daysAgo(10))
+    const topics = Array.from({ length: 10 }, (_, i) => ({
+      topic: `topic-${i}`, count: 1, openFail: null,
+      last: { ts: daysAgo(10 - i), actor: 'grok', phase: 'step', status: 'ok', action: `working on ${i}` },
+    }));
+    const model = buildBoardModel([], { now: NOW, ledgerTopics: topics });
+    assert.equal(model.inprog.length, LEDGER_DERIVED_CAP);
+    assert.equal(model.ledgerOverflow.inprog, 2);
+    assert.equal(model.inprog[0].id, 'ledger:topic-9', 'freshest shown first');
+    assert.equal(model.inprog[LEDGER_DERIVED_CAP - 1].id, 'ledger:topic-2', '8th-newest is the last one shown');
+
+    const md = buildBoard([], { now: NOW, ledgerTopics: topics });
+    assert.match(md, /## 🔧 In progress \(8\)/);
+    assert.match(md, /_…and 2 more from the ledger — `samemind ledger status`_/);
+  });
+});
+
+describe('derived-канбан (д) — a canon Task doc (exact id or title match) suppresses the derived card', () => {
+  it('a Task whose TITLE equals the ledger topic wins — no derived duplicate', () => {
+    const docs = [task('projects/t-canon', 'blocked', { title: 'atlas-retrieval' })];
+    const topics = [{
+      topic: 'atlas-retrieval', count: 3, openFail: null,
+      last: { ts: daysAgo(1), actor: 'cursor', phase: 'fail', status: 'fail', action: 'broke' },
+    }];
+    const model = buildBoardModel(docs, { now: NOW, ledgerTopics: topics });
+    assert.equal(model.blocked.length, 1, 'only the real Task card, no derived duplicate');
+    assert.ok(!model.blocked.some(c => c.source === 'ledger'));
+  });
+
+  it('a Task whose ID equals the ledger topic also wins', () => {
+    const docs = [task('atlas-retrieval', 'blocked', { title: 'Something else entirely' })];
+    const topics = [{
+      topic: 'atlas-retrieval', count: 1, openFail: null,
+      last: { ts: daysAgo(1), actor: 'cursor', phase: 'fail', status: 'fail', action: 'broke' },
+    }];
+    const model = buildBoardModel(docs, { now: NOW, ledgerTopics: topics });
+    assert.equal(model.blocked.length, 1);
+    assert.ok(!model.blocked.some(c => c.source === 'ledger'));
+  });
+
+  it('a near-miss (not an exact string match) is NOT suppressed — no fuzzy matching', () => {
+    const docs = [task('projects/t-near', 'blocked', { title: 'Atlas Retrieval (fix it)' })];
+    const topics = [{
+      topic: 'atlas-retrieval', count: 1, openFail: null,
+      last: { ts: daysAgo(1), actor: 'cursor', phase: 'fail', status: 'fail', action: 'broke' },
+    }];
+    const model = buildBoardModel(docs, { now: NOW, ledgerTopics: topics });
+    assert.equal(model.blocked.length, 2, 'real task + derived card both present — near-miss title does not suppress');
+    assert.ok(model.blocked.some(c => c.source === 'ledger' && c.id === 'ledger:atlas-retrieval'));
+  });
+});
+
+describe("derived-канбан (е) — GET /api/board serves source:'ledger' cards (demo bundle, via ui-server)", () => {
+  it("lumen-sync (last event: note → inprog) and atlas-retrieval (last event: fail → blocked) are source:'ledger'", async () => {
+    const server = createUiServer({ root: DEMO });
+    await new Promise((resolvePromise, reject) => {
+      server.on('error', reject);
+      server.listen(0, '127.0.0.1', resolvePromise);
+    });
+    try {
+      const port = server.address().port;
+      const body = await new Promise((resolvePromise, reject) => {
+        const req = http.request(
+          { hostname: '127.0.0.1', port, path: '/api/board', method: 'GET' },
+          (res) => {
+            let data = '';
+            res.setEncoding('utf8');
+            res.on('data', (c) => { data += c; });
+            res.on('end', () => resolvePromise(data));
+          },
+        );
+        req.on('error', reject);
+        req.end();
+      });
+      const { data } = JSON.parse(body);
+      assert.ok(
+        data.inprog.some((c) => c.source === 'ledger' && c.id === 'ledger:lumen-sync'),
+        "lumen-sync (last event phase 'note') shows as an in-progress derived card",
+      );
+      assert.ok(
+        data.blocked.some((c) => c.source === 'ledger' && c.id === 'ledger:atlas-retrieval'),
+        "atlas-retrieval (last event phase 'fail') shows as a blocked derived card",
+      );
+    } finally {
+      server.close();
+    }
   });
 });

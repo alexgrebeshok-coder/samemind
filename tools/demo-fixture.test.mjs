@@ -107,6 +107,47 @@ describe('demo — board renders both 🔥 sections non-empty', () => {
   });
 });
 
+describe('demo — derived-канбан: ledger topics synthesize kanban cards (docs/ui-spec.md §3.1)', () => {
+  it('lumen-sync/iris-ux-review/atlas-retrieval land in inprog/done/blocked as source:\'ledger\' cards', () => {
+    const docs = load({}, DEMO);
+    const events = readEvents(DEMO);
+    const { topics } = summarizeLedger(events);
+    const model = buildBoardModel(docs, { now: NOW, ledgerTopics: topics });
+
+    // lumen-sync's LAST event (chronologically) is a "note" (07-26, "confirmed stable in prod"),
+    // not "done" — a note after done still reads as live per the contract's mapping
+    // (start|step|note → inprog), so it shows in In progress, not Done.
+    const lumenCard = model.inprog.find(c => c.id === 'ledger:lumen-sync');
+    assert.ok(lumenCard, 'lumen-sync derived card present in In progress');
+    assert.equal(lumenCard.source, 'ledger');
+    assert.equal(lumenCard.actor, 'claude-code');
+
+    // iris-ux-review's last event is "done" (07-22), within the 7-day recentDays window of NOW
+    // (07-26) — shows in Done.
+    const irisCard = model.done.find(c => c.id === 'ledger:iris-ux-review');
+    assert.ok(irisCard, 'iris-ux-review derived card present in Done');
+    assert.equal(irisCard.source, 'ledger');
+
+    // atlas-retrieval's last event is "fail" (07-25) — shows in Blocked.
+    const atlasCard = model.blocked.find(c => c.id === 'ledger:atlas-retrieval');
+    assert.ok(atlasCard, 'atlas-retrieval derived card present in Blocked');
+    assert.equal(atlasCard.source, 'ledger');
+
+    // Each column also still holds its real Task doc (demo/projects/task-*.md) — none of their
+    // ids/titles literally match the ledger topic strings, so canon does not suppress here;
+    // counts include both the doc card and the derived card (contract point 6).
+    assert.equal(model.inprog.length, 2, 'Ship Lumen backlink editor (doc) + lumen-sync (ledger)');
+    assert.equal(model.done.length, 2, 'Iris UX review (doc) + iris-ux-review (ledger)');
+    assert.equal(model.blocked.length, 2, 'Wire retrieval strategy (doc) + atlas-retrieval (ledger)');
+
+    const md = buildBoard(docs, { now: NOW, ledgerTopics: topics });
+    assert.match(md, /## 🔧 In progress \(2\)/);
+    assert.match(md, /## 🔴 Blocked \(2\)/);
+    assert.match(md, /## ✅ Done · last 10 \(2\)/);
+    assert.ok(md.includes('_(ledger)_'), 'markdown marks derived cards');
+  });
+});
+
 describe('fleet/ is a reserved tier, never walked as graph concepts', () => {
   it('an .md file dropped inside fleet/ does not leak into load()', () => {
     const root = mkdtempSync(join(tmpdir(), 'samemind-fleet-walk-'));

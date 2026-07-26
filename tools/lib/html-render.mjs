@@ -85,6 +85,7 @@ code, .cite{
 .badge-blocked{background:var(--c-blocked);}
 .badge-done{background:var(--c-done);}
 .badge-plan{background:var(--c-plan);}
+.badge-ledger{background:var(--muted); margin-left:4px;}
 .empty{color:var(--muted); font-style:italic; font-size:0.92em;}
 .viz-block{margin:10px 0 18px;}
 .chart-svg{width:100%; height:auto; display:block;}
@@ -215,7 +216,14 @@ export function svgDecisionTimeline(points) {
 
 // ───────────────────────────────────── board → HTML ─────────────────────────────────────
 
+/** Derived-kanban card (synthesized from a ledger topic, no matching Task doc — docs/ui-spec.md §3.1). */
+function ledgerTaskCard(d, badgeCls, badgeLabel) {
+  const when = esc(String(d.ts || '').slice(0, 16).replace('T', ' '));
+  return `<div class="card"><div class="card-head"><span class="badge badge-${badgeCls}">${esc(badgeLabel)}</span><span class="card-title">${esc(d.title)}</span><span class="badge badge-ledger">ledger</span></div><div class="desc">${esc(d.action)}</div><div class="muted">${esc(d.actor)}, ${when}</div></div>`;
+}
+
 function taskCard(d, nowMs, badgeCls, badgeLabel) {
+  if (d.source === 'ledger') return ledgerTaskCard(d, badgeCls, badgeLabel);
   const parts = [`<div class="card-head"><span class="badge badge-${badgeCls}">${esc(badgeLabel)}</span><span class="card-title">${esc(titleOf(d))}</span><span class="cite">${esc(linkOf(d))}</span></div>`];
   const desc = oneline(d);
   if (desc) parts.push(`<div class="desc">${esc(desc)}</div>`);
@@ -296,6 +304,7 @@ export function renderBoardHtml(model) {
     recent, sessions,
     openFailuresShown, openFailuresTotal,
     overdueEnginesShown, overdueEnginesTotal,
+    ledgerOverflow = { inprog: 0, blocked: 0, done: 0 },
   } = model;
 
   const kanbanSvg = svgKanbanBars([
@@ -334,10 +343,12 @@ export function renderBoardHtml(model) {
     body += `<h2>🔥 Overdue engines <span class="count">(${overdueEnginesTotal})</span></h2>${cardsOrEmpty(overdueEnginesShown || [], overdueEngineCard)}${overdueNote}`;
   }
 
+  const ledgerNote = n => n > 0 ? `<p class="muted">…and ${n} more from the ledger — <code>samemind ledger status</code></p>` : '';
+
   body += `<h2>🆕 Backlog <span class="count">(${backlog.length})</span></h2>${cardsOrEmpty(backlog, d => taskCard(d, nowMs, 'backlog', 'backlog'))}`;
-  body += `<h2>🔧 In progress <span class="count">(${inprog.length})</span></h2>${cardsOrEmpty(inprog, d => taskCard(d, nowMs, 'inprogress', 'in progress'))}`;
-  body += `<h2>🔴 Blocked <span class="count">(${blocked.length})</span></h2>${cardsOrEmpty(blocked, d => taskCard(d, nowMs, 'blocked', 'blocked'))}`;
-  body += `<h2>✅ Done · last ${doneLimit} <span class="count">(${done.length})</span></h2>${cardsOrEmpty(done, d => taskCard(d, nowMs, 'done', 'done'))}`;
+  body += `<h2>🔧 In progress <span class="count">(${inprog.length})</span></h2>${cardsOrEmpty(inprog, d => taskCard(d, nowMs, 'inprogress', 'in progress'))}${ledgerNote(ledgerOverflow.inprog)}`;
+  body += `<h2>🔴 Blocked <span class="count">(${blocked.length})</span></h2>${cardsOrEmpty(blocked, d => taskCard(d, nowMs, 'blocked', 'blocked'))}${ledgerNote(ledgerOverflow.blocked)}`;
+  body += `<h2>✅ Done · last ${doneLimit} <span class="count">(${done.length})</span></h2>${cardsOrEmpty(done, d => taskCard(d, nowMs, 'done', 'done'))}${ledgerNote(ledgerOverflow.done)}`;
   body += `<h2>📋 Plans <span class="count">(${plans.length})</span></h2>${cardsOrEmpty(plans, planCard)}`;
 
   body += `<h2>💡 Ideas <span class="count">(${ideasVisible.length})</span></h2>`;
