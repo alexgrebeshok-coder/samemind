@@ -3,6 +3,29 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.0] — 2026-07-26
+
+The board fills itself: when a bundle has a ledger but no Task docs (the common case for
+multi-engine fleets — the work-truth lives in the event log), the kanban now synthesizes
+cards from ledger topics. Pure projection; the canon is never written.
+
+### Added
+
+- **Derived kanban** — a ledger topic with no matching Task doc becomes a card: last
+  `start/step/note` → In progress, `done` (inside the recent window) → Done, `fail/block` →
+  Blocked. A real Task doc with the topic's name always wins. Cards carry `source: 'ledger'`
+  in JSON, a ` _(ledger)_` suffix in markdown, and a grey `ledger` chip in the dashboard.
+  Capped at 8 per column with an honest `…and N more from the ledger` overflow line.
+- **Honest column totals** — `columnTotals` in the board model: KPI tiles and column
+  headings report the true count (e.g. `In progress (93)`) while rendering the capped 8;
+  hover says `8 shown of 93`. Ledger-free bundles: totals equal lengths, output
+  byte-identical to 0.10.0.
+
+### Fixed
+
+- The SPA no longer assumes every kanban card is a document — a card without frontmatter
+  used to blank the whole page (TypeError during render).
+
 ## [0.10.0] — 2026-07-26
 
 The memory gets a face: `samemind ui` — a local, read-only web dashboard over the bundle —
