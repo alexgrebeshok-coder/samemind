@@ -55,11 +55,11 @@ function KanbanCard({ doc, now }: { doc: Doc; now: number }) {
 
 export function Kanban({ columns, now }: { columns: Record<ColumnKey, Doc[]>; now: number }) {
   return (
-    <div className="grid gap-3 md:grid-cols-2 min-[1200px]:grid-cols-4">
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       {COLUMNS.map((c) => {
         const docs = columns[c.key] || [];
         return (
-          <Card key={c.key} className="flex flex-col bg-surface-2/60">
+          <Card key={c.key} tone="muted" className="flex flex-col">
             <div className="flex items-baseline justify-between border-b border-line px-3 py-2">
               <h3 className="text-sm font-semibold">{c.label}</h3>
               <span className="tnum text-xs text-muted">{docs.length}</span>

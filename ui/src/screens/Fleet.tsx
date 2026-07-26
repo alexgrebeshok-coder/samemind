@@ -101,13 +101,13 @@ function Timeline({ topics, now }: { topics: LedgerTopic[]; now: number }) {
               </div>
             </div>
             <div className="relative h-9 rounded-[12px] bg-surface-2">
-              <div className="absolute inset-x-2 top-1/2 h-px -translate-y-1/2 bg-line" />
+              <div className="absolute inset-x-3 top-1/2 h-px -translate-y-1/2 bg-line" />
               {l.evs.map((e, i) => (
                 <button
                   key={`${e.ts}-${i}`}
                   type="button"
                   className="absolute top-1/2 flex size-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-line bg-surface text-[10px] leading-none hover:scale-125"
-                  style={{ left: `calc(8px + (100% - 16px) * ${pos(e.ts) / 100})`, color: phaseColor(e) }}
+                  style={{ left: `calc(12px + (100% - 24px) * ${pos(e.ts) / 100})`, color: phaseColor(e) }}
                   title={`${e.ts} · ${e.actor} · ${e.phase}/${e.status}\n${e.action}`}
                   aria-label={`${l.topic}, ${e.phase}, ${e.actor}, ${e.ts}: ${e.action}`}
                 >

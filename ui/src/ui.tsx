@@ -3,10 +3,25 @@
 import type { ReactNode } from 'react';
 import { dur, typeBadgeClass } from './lib';
 
-export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return (
-    <div className={`rounded-[12px] border border-line bg-surface ${className}`}>{children}</div>
-  );
+// Surface tones live here as whole border+background pairs rather than being patched in through
+// `className`: two competing `border-*`/`bg-*` utilities have equal specificity, so which one
+// won would depend on Tailwind's output order — the alert tile silently kept the neutral border.
+const TONES = {
+  surface: 'border-line bg-surface',
+  muted: 'border-line bg-surface-2/60',
+  danger: 'border-danger/70 bg-danger-soft/50',
+} as const;
+
+export function Card({
+  children,
+  className = '',
+  tone = 'surface',
+}: {
+  children: ReactNode;
+  className?: string;
+  tone?: keyof typeof TONES;
+}) {
+  return <div className={`rounded-[12px] border ${TONES[tone]} ${className}`}>{children}</div>;
 }
 
 export function Panel({
@@ -46,9 +61,7 @@ export function StatTile({
   note?: string;
 }) {
   return (
-    <Card
-      className={`p-4 ${alert ? 'border-danger/60 bg-danger-soft/40' : ''}`}
-    >
+    <Card tone={alert ? 'danger' : 'surface'} className="p-4">
       <div className="text-xs font-medium uppercase tracking-wider text-muted">{label}</div>
       <div className={`tnum mt-1 text-3xl font-bold ${alert ? 'text-danger' : ''}`}>{value}</div>
       {note ? <div className="mt-1 text-xs text-muted">{note}</div> : null}

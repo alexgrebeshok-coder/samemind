@@ -24,7 +24,7 @@ export function Overview() {
 
   return (
     <div className="flex flex-col gap-5">
-      <section aria-label="Key numbers" className="grid grid-cols-2 gap-3 min-[1200px]:grid-cols-4">
+      <section aria-label="Key numbers" className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <StatTile label="Concepts" value={health.data?.concepts ?? b.backlog.length + b.inprog.length} />
         <StatTile label="In progress" value={b.inprog.length} note={`${b.blocked.length} blocked`} />
         <StatTile label="Open failures" value={b.openFailuresTotal} alert={b.openFailuresTotal > 0} />
@@ -36,7 +36,7 @@ export function Overview() {
         <Kanban columns={{ backlog: b.backlog, inprog: b.inprog, blocked: b.blocked, done: b.done }} now={now} />
       </section>
 
-      <div className="grid gap-5 min-[1200px]:grid-cols-2">
+      <div className="grid gap-5 xl:grid-cols-2">
         <Panel title="🔥 Open failures" hint={`${b.openFailuresTotal} open in the ledger`}>
           <FailureList failures={failures} now={now} />
         </Panel>
@@ -65,7 +65,7 @@ export function Overview() {
         </Panel>
       </div>
 
-      <div className="grid gap-5 min-[1200px]:grid-cols-2">
+      <div className="grid gap-5 xl:grid-cols-2">
         <Panel title="Ideas" hint="spark → incubating → adopted">
           {b.ideaSpark.length + b.ideaIncubating.length + b.ideaAdopted.length === 0 ? (
             <Empty text="No ideas captured yet." cmd="samemind idea add …" />

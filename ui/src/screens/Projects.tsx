@@ -61,7 +61,7 @@ export function Projects({ id }: { id: string | null }) {
   }
 
   return (
-    <div className="grid gap-4 md:grid-cols-2 min-[1400px]:grid-cols-3">
+    <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
       {cards.map(({ p, cols, total, last }) => (
         <Card key={p.id} className="flex flex-col p-4">
           <div className="flex items-baseline justify-between gap-2">

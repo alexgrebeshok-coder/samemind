@@ -140,7 +140,7 @@ function Detail({ id, graph, onOpen }: { id: string; graph: Graph | null; onOpen
     ['status', fm.status || '—'],
     ['visibility', fm.visibility || '—'],
     ['tags', fm.tags?.length ? fm.tags.map((t) => `#${t}`).join(' ') : '—'],
-    ['date', String(fm.date || fm.agreed_on || fm.timestamp || '—')],
+    ['date', String(fm.date || fm.agreed_on || fm.timestamp || '—').slice(0, 10)],
     ['source', String(fm.source || '—')],
     ['relations', <Relations relations={fm.relations || {}} onOpen={onOpen} />],
   ];
@@ -223,6 +223,9 @@ export function Memory({ id }: { id: string | null }) {
   }, [all.data]);
 
   const open = (nextId: string) => navigate(`/memory/${nextId}`);
+  // A concept in the route always wins over the graph tab — otherwise clicking a graph node
+  // changed the hash while the graph stayed on screen and the concept never opened (spec §3.2.4).
+  const shown = id ? 'list' : view;
   const rows = list.data || [];
   const filtered = !!(q || type || tag);
   const clearFilters = () => {
@@ -242,10 +245,13 @@ export function Memory({ id }: { id: string | null }) {
             <button
               key={v}
               role="tab"
-              aria-selected={view === v}
-              onClick={() => setView(v)}
+              aria-selected={shown === v}
+              onClick={() => {
+                setView(v);
+                if (v === 'graph' && id) navigate('/memory'); // leave the open concept behind
+              }}
               className={`rounded-[10px] px-3 py-1.5 text-xs ${
-                view === v ? 'bg-accent-soft font-semibold text-accent' : 'text-muted hover:text-ink'
+                shown === v ? 'bg-accent-soft font-semibold text-accent' : 'text-muted hover:text-ink'
               }`}
             >
               {v === 'list' ? 'Concepts' : 'Graph'}
@@ -292,7 +298,7 @@ export function Memory({ id }: { id: string | null }) {
         ) : null}
       </div>
 
-      {view === 'graph' ? (
+      {shown === 'graph' ? (
         !graph.data ? (
           graph.loading ? (
             <Spinner label="building the graph" />

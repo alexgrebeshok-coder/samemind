@@ -91,8 +91,8 @@ export function GraphView({ graph, onOpen }: { graph: Graph; onOpen: (id: string
       <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
         <span>{placed.length} nodes</span>
         <span>·</span>
-        <span>
-          {edges.length} edges ({graph.relCount} relations, {graph.mdEdges} markdown)
+        <span title="edges whose both ends are concepts in this bundle; the model also counts links from index.md">
+          {edges.length} of {graph.totalEdges} edges drawn ({graph.relCount} relations, {graph.mdEdges} markdown)
         </span>
         {clipped > 0 ? <Chip tone="accent">{clipped} less-connected nodes hidden (300-node budget)</Chip> : null}
         {edges.length === 0 && graph.broken.length > 0 ? (
