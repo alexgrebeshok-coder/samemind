@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // capture.mjs — samemind capture: read-only import of a live engine's own session store
 // into inbox/<engine>.md.
-//   npx samemind capture --engine <id> [--source <path>] [--since <ts>] [--dry-run]
+//   npx samemind capture --engine <id> [--source <path>] [--since <ts>] [--limit N] [--yes] [--dry-run]
 //
 // Closes the last custom bridge in dogfooding (gbrain adapters/import-*.mjs bespoke per
 // engine): a small adapter registry (ADAPTERS) reads an engine's native transcript/diary
@@ -25,6 +25,7 @@ import {
   join, resolve, dirname, sep, basename,
 } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createInterface } from 'node:readline/promises';
 import os from 'node:os';
 
 import { ROOT, parseFrontmatter } from './lib/okf.mjs';
@@ -34,6 +35,12 @@ import { withFileLock } from '../lib/file-lock.mjs';
 
 const STATE_FILE = '.samemind-capture-state.json';
 const MAX_DISTILL_CHARS = 1500;
+// Human gate (agentic-KG construction pattern — intent/file-list approval before extract,
+// research 20260725): a capture that would land this many-or-more *new* items unattended
+// stops and asks first. --yes is the informed opt-in (cron/scripts); --limit N narrows the
+// set instead of forcing all-or-nothing. --dry-run always previews regardless of size.
+// ponytail: fixed threshold, not configurable — revisit if real bulk sizes don't fit 20.
+export const CAPTURE_GATE_THRESHOLD = 20;
 
 // ---------------------------------------------------------------------------
 // Secret hygiene — we are reading live transcripts; mask obvious secret shapes
@@ -273,6 +280,32 @@ function appendInbox(root, engine, blocks) {
   return target;
 }
 
+/** Summarizes what a capture run would land: count, date span, destination, rough size —
+ *  the plan shown before a bulk capture writes anything. */
+function summarizePlan(captured, { engine, root, approxBytes }) {
+  const dates = captured.map(c => Date.parse(c.date)).filter(n => !Number.isNaN(n));
+  return {
+    engine,
+    count: captured.length,
+    oldest: dates.length ? new Date(Math.min(...dates)).toISOString() : null,
+    newest: dates.length ? new Date(Math.max(...dates)).toISOString() : null,
+    approxBytes,
+    inboxFile: join(root, 'inbox', `${engine}.md`),
+  };
+}
+
+export function formatPlan(plan) {
+  const period = plan.oldest && plan.newest
+    ? (plan.oldest === plan.newest ? ` (${plan.oldest})` : ` (${plan.oldest} … ${plan.newest})`)
+    : '';
+  const kb = plan.approxBytes ? ` — ~${Math.max(1, Math.round(plan.approxBytes / 1024))} KB` : '';
+  return [
+    `PLAN — capture --engine ${plan.engine}`,
+    `  ${plan.count} item(s)${period}`,
+    `  → ${plan.inboxFile}${kb}`,
+  ].join('\n');
+}
+
 function formatBlock({ heading, date, body }, quarantine) {
   const header = `## ${date} — ${heading}`;
   if (!quarantine.flagged) {
@@ -296,7 +329,8 @@ function formatBlock({ heading, date, body }, quarantine) {
 /**
  * @returns {{
  *   ok: boolean, reason?: string, engine?: string, source?: string|null, sinceIso?: string|null,
- *   dryRun?: boolean, captured?: Array<{key,date,heading,masked,quarantined}>, skipped?: number,
+ *   dryRun?: boolean, needsConfirmation?: boolean, plan?: object,
+ *   captured?: Array<{key,date,heading,masked,quarantined}>, skipped?: number, limitedOut?: number,
  *   masked?: number, quarantined?: number, inboxFile?: string|null,
  * }}
  */
@@ -305,6 +339,8 @@ export function runCapture({
   source = null,
   since = null,
   dryRun = false,
+  yes = false,
+  limit = null,
   root = ROOT,
 } = {}) {
   const adapter = ADAPTERS[engine];
@@ -338,21 +374,32 @@ export function runCapture({
     return true;
   });
 
+  // --limit narrows the candidate set itself (not just the report) — a sized way to sculpt
+  // "all or nothing" bulk capture, e.g. when --since can't cleanly draw the line wanted.
+  const limited = (Number.isInteger(limit) && limit > 0) ? candidates.slice(0, limit) : candidates;
+
   const captured = [];
   const blocks = [];
   let maskedTotal = 0;
   let quarantinedTotal = 0;
+  let previewBytes = 0;
 
-  for (const item of candidates) {
+  for (const item of limited) {
     const { text: maskedBody, masked, count } = maskSecrets(item.body);
     if (masked) maskedTotal += count;
     const quarantine = scanForInjection(maskedBody);
     if (quarantine.flagged) quarantinedTotal++;
-    blocks.push(formatBlock({ heading: item.heading, date: item.date, body: maskedBody }, quarantine));
+    const block = formatBlock({ heading: item.heading, date: item.date, body: maskedBody }, quarantine);
+    blocks.push(block);
+    previewBytes += Buffer.byteLength(block, 'utf8');
     captured.push({
       key: item.key, date: item.date, heading: item.heading, masked, quarantined: quarantine.flagged,
     });
   }
+
+  // Bulk-capture human gate: dry-run always previews; otherwise anything at/above the
+  // threshold stops here (nothing written) unless --yes opted in already.
+  const needsConfirmation = !dryRun && !yes && limited.length >= CAPTURE_GATE_THRESHOLD;
 
   const result = {
     ok: true,
@@ -360,14 +407,21 @@ export function runCapture({
     source: source || null,
     sinceIso: since || null,
     dryRun,
+    needsConfirmation,
     captured,
     skipped: items.length - candidates.length,
+    limitedOut: candidates.length - limited.length,
     masked: maskedTotal,
     quarantined: quarantinedTotal,
     inboxFile: null,
   };
 
-  if (dryRun || captured.length === 0) return result;
+  if (dryRun || needsConfirmation) {
+    result.plan = summarizePlan(captured, { engine, root, approxBytes: previewBytes });
+    return result;
+  }
+
+  if (captured.length === 0) return result;
 
   result.inboxFile = appendInbox(root, engine, blocks);
   saveState(root, {
@@ -383,6 +437,12 @@ export function runCapture({
 export function formatCaptureReport(result) {
   if (!result.ok) return `✗ ${result.reason}`;
   const lines = [];
+  if (result.plan) lines.push(formatPlan(result.plan), '');
+  if (result.needsConfirmation) {
+    lines.push(`Above the confirmation gate (${CAPTURE_GATE_THRESHOLD}+ new items) — nothing written.`);
+    lines.push('Re-run with --yes to skip this prompt, or --limit N to narrow the set.');
+    return lines.join('\n');
+  }
   const flags = [
     result.source ? `--source ${result.source}` : null,
     result.sinceIso ? `--since ${result.sinceIso}` : null,
@@ -394,6 +454,7 @@ export function formatCaptureReport(result) {
     lines.push(`  + ${c.key} (${c.date})${tags.length ? ` [${tags.join(', ')}]` : ''}`);
   }
   lines.push(`skipped (already captured / before --since): ${result.skipped}`);
+  if (result.limitedOut) lines.push(`narrowed by --limit: ${result.limitedOut} more available`);
   if (result.masked) lines.push(`secrets masked: ${result.masked}`);
   if (result.quarantined) lines.push(`quarantined (injection-like): ${result.quarantined}`);
   if (result.inboxFile) lines.push(`inbox file: ${result.inboxFile}`);
@@ -403,7 +464,7 @@ export function formatCaptureReport(result) {
 
 export function parseArgs(argv = process.argv.slice(2)) {
   const out = {
-    engine: null, source: null, since: null, dryRun: false,
+    engine: null, source: null, since: null, dryRun: false, yes: false, limit: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -414,21 +475,49 @@ export function parseArgs(argv = process.argv.slice(2)) {
     else if (a === '--since') out.since = argv[++i] || null;
     else if (a.startsWith('--since=')) out.since = a.slice('--since='.length);
     else if (a === '--dry-run') out.dryRun = true;
+    else if (a === '--yes') out.yes = true;
+    else if (a === '--limit') { const n = Number(argv[++i]); out.limit = Number.isFinite(n) ? n : null; }
+    else if (a.startsWith('--limit=')) { const n = Number(a.slice('--limit='.length)); out.limit = Number.isFinite(n) ? n : null; }
   }
   return out;
+}
+
+/** Interactive y/N prompt on stdin/stdout — same shape as setup.mjs's confirm gate. */
+async function confirmPrompt(question) {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const a = (await rl.question(question)).trim().toLowerCase();
+    return a === 'y' || a === 'yes';
+  } finally {
+    rl.close();
+  }
 }
 
 export async function main(argv = process.argv.slice(2)) {
   const opts = parseArgs(argv);
   if (!opts.engine) {
-    console.log('Usage: samemind capture --engine <id> [--source <path>] [--since <ts>] [--dry-run]');
+    console.log('Usage: samemind capture --engine <id> [--source <path>] [--since <ts>] [--limit N] [--yes] [--dry-run]');
     console.log('');
     console.log(`  Known engines: ${Object.keys(ADAPTERS).join(', ')}`);
     console.log('  Read-only import of a live engine session store into inbox/<engine>.md.');
+    console.log(`  Bulk capture (${CAPTURE_GATE_THRESHOLD}+ new items) shows a plan and asks first —`);
+    console.log('  --yes skips the prompt (cron/scripts), --limit N narrows the set instead.');
     console.log('  See docs/session-capture.md.');
     return 0;
   }
-  const result = runCapture(opts);
+
+  let result = runCapture(opts);
+
+  if (result.ok && result.needsConfirmation) {
+    console.log(formatCaptureReport(result));
+    const proceed = await confirmPrompt('Proceed with capture? [y/N] ');
+    if (!proceed) {
+      console.log('Aborted — nothing captured.');
+      return 0;
+    }
+    result = runCapture({ ...opts, yes: true });
+  }
+
   console.log(formatCaptureReport(result));
   return result.ok ? 0 : 1;
 }

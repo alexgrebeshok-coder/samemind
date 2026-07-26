@@ -65,10 +65,39 @@ Adding a third engine is one more entry in the `ADAPTERS` registry in
   filter — an item already captured never resurfaces just because `--since`
   widened, and widening `--since` on a later run does not re-capture
   something already recorded in the state file.
-- `--dry-run` — runs locate/extract/mask/quarantine and reports what
-  *would* be captured, but writes nothing: no `inbox/<engine>.md` change, no
-  state-file change. A real run afterwards still captures everything the
-  dry-run listed.
+- `--dry-run` — runs locate/extract/mask/quarantine and prints the plan
+  (below) but writes nothing: no `inbox/<engine>.md` change, no state-file
+  change. A real run afterwards still captures everything the dry-run listed.
+- `--limit <n>` — caps the candidate set to the first `n` new items, before
+  masking/quarantine/write. A sized way to narrow a bulk capture instead of
+  "all or nothing" — combine with `--since` to also draw a date line.
+- `--yes` — skip the confirmation gate below (the informed opt-in for
+  cron/scripts).
+
+## Bulk-capture confirmation gate
+
+A capture landing **20 or more new items** in one run stops before writing
+anything and prints a plan instead — count, oldest/newest date, destination
+inbox file, rough size:
+
+```sh
+npx samemind capture --engine claude-code
+# PLAN — capture --engine claude-code
+#   34 item(s) (2026-06-01T09:12:00.000Z … 2026-07-24T18:03:00.000Z)
+#   → inbox/claude-code.md — ~9 KB
+#
+# Above the confirmation gate (20+ new items) — nothing written.
+# Re-run with --yes to skip this prompt, or --limit N to narrow the set.
+# Proceed with capture? [y/N]
+```
+
+Answering `y` re-runs the same capture with the gate cleared; anything else
+aborts with nothing written. `--yes` skips the prompt outright (unattended
+runs); `--limit N` narrows the candidate set below the gate instead. A
+capture under the threshold, or one already narrowed by `--since`/`--limit`
+below it, writes straight through as before — the gate only interrupts
+genuine bulk imports (the read-only-transcript case this tool exists for,
+where hundreds of sessions can otherwise land in `inbox/` unattended).
 
 ## Idempotency
 
@@ -111,6 +140,10 @@ run is read-only.
 
 ```sh
 npx samemind capture --engine claude-code --dry-run
+# PLAN — capture --engine claude-code
+#   3 item(s) (2026-07-11T22:03:00.000Z … 2026-07-12T09:41:00.000Z)
+#   → inbox/claude-code.md — ~2 KB
+#
 # [dry-run] CAPTURE --engine claude-code
 # new: 3
 #   + <session-id> (2026-07-12T09:41:00.000Z)
