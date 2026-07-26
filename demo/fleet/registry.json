@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "stopPoints": ["prod-deploy", "money", "publish", "external-signature", "delete", "push-or-merge"],
+  "engines": [
+    {
+      "id": "claude-code",
+      "role": "director",
+      "chain": false,
+      "heartbeatSec": 86400,
+      "status": "active",
+      "zone": "planning, acceptance, risk"
+    },
+    {
+      "id": "cursor",
+      "role": "executor",
+      "chain": true,
+      "heartbeatSec": 3600,
+      "status": "active",
+      "zone": "code by assignment"
+    },
+    {
+      "id": "grok",
+      "role": "executor",
+      "chain": true,
+      "heartbeatSec": 3600,
+      "status": "reserve",
+      "zone": "research, backup executor"
+    }
+  ]
+}

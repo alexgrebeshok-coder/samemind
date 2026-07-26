@@ -106,7 +106,7 @@ No. It's git-native markdown with no daemon and no required database. BM25 searc
 The **fleet layer**: `samemind fleet init | status | assign`. A memory bundle shared by several
 engines answers "what do we know" — it cannot answer "is everyone still working, and did anyone stop
 telling us". The registry declares each engine's reporting cadence, `status` shows who is overdue,
-the board renders a `🕰 Overdue engines` section above blocked tasks, and MCP exposes
+the board renders a `🔥 Overdue engines` section above all columns, right after Open failures, and MCP exposes
 `memory_fleet_status` / `memory_fleet_assign`. See [docs/fleet.md](docs/fleet.md).
 
 ### What's new in v0.7.0?

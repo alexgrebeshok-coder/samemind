@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const PACKAGE_ROOT = resolve(HERE, '..');
 
-const FOLDERS = ['concepts', 'entities', 'projects', 'inbox', 'secret'];
+const FOLDERS = ['concepts', 'entities', 'projects', 'inbox', 'secret', 'ledger', 'fleet'];
 
 const CONCEPTS_TEMPLATE = `---
 type: Concept
@@ -487,6 +487,21 @@ source:
 Sensitive body.
 `;
 
+// ledger/ and fleet/ are reserved tiers (never walked as OKF concepts — see tools/lib/okf.mjs
+// `walk()` and docs/event-ledger.md / docs/fleet.md), so their placeholder is a plain `.gitkeep`
+// (dot-prefixed → excluded from walk() unconditionally, same as any other dotfile) rather than
+// an `index.md`/`_template.md` like the graph-facing folders above — nothing here is ever meant
+// to be copied into a concept.
+const LEDGER_GITKEEP = `# ledger/ — append-only event log (events.jsonl), written by \`samemind ledger append\`
+# and \`samemind fleet assign\`, read by \`samemind ledger status|read\` and the board's
+# 🔥 Open failures section. See docs/event-ledger.md.
+`;
+
+const FLEET_GITKEEP = `# fleet/ — registry of the agent engines working on this bundle (registry.json), written by
+# \`samemind fleet init\`, read by \`samemind fleet status|assign\` and the board's
+# 🔥 Overdue engines section. See docs/fleet.md.
+`;
+
 const GITIGNORE = `# local-only tiers — never commit real content
 # keep folder templates so the bundle is usable out of the box
 /secret/**
@@ -537,6 +552,8 @@ plain markdown, path = identity, links \`[title](/path.md)\`, frontmatter classi
 - \`inbox/\` — raw notes pending curation → promote into the canon above
 - \`secret/\` — sensitive entries (gitignored; included only with \`--include-secret\`)
 - \`mirror/\` — live-memory mirrors from each engine (gitignored; \`--include-mirror\`)
+- \`ledger/\` — append-only event log (\`events.jsonl\`); never a graph concept — docs/event-ledger.md
+- \`fleet/\` — registry of the agent engines working on this bundle (\`registry.json\`); never a graph concept — docs/fleet.md
 
 Validate your bundle:
 
@@ -670,6 +687,8 @@ export function runInit({ targetDir = '.', demo = false, packageRoot = PACKAGE_R
   write(join(dir, 'projects', 'index.md'), PROJECTS_INDEX);
   write(join(dir, 'inbox', 'index.md'), INBOX_INDEX);
   write(join(dir, 'secret', '_template.md'), SECRET_TEMPLATE);
+  write(join(dir, 'ledger', '.gitkeep'), LEDGER_GITKEEP);
+  write(join(dir, 'fleet', '.gitkeep'), FLEET_GITKEEP);
 
   const demoCopied = demo ? copyDemoContent(dir, packageRoot) : 0;
   const git = allowNonEmpty
