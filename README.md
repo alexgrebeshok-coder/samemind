@@ -6,6 +6,8 @@ samemind is a git-native markdown memory bundle for AI coding agents — identit
 
 [![ci](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml/badge.svg)](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml)
 
+[![OKF BundleDex](https://bundledex.net/static-badge.svg)](https://bundledex.net)
+
 **Your personal universal memory for every AI agent. Switch engines. Same mind.**
 
 Git-native markdown bundle (no daemon, no required DB): identity, search, handoff, an append-only work ledger, and a kanban board in one place. Wire-compatible with [Google OKF v0.1](docs/interop.md). Optional embeddings; **BM25 always works offline**.
