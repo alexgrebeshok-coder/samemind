@@ -33,7 +33,11 @@ export function Overview() {
 
       <section aria-label="Kanban">
         <h2 className="mb-2 text-sm font-semibold tracking-wide">Board</h2>
-        <Kanban columns={{ backlog: b.backlog, inprog: b.inprog, blocked: b.blocked, done: b.done }} now={now} />
+        <Kanban
+          columns={{ backlog: b.backlog, inprog: b.inprog, blocked: b.blocked, done: b.done }}
+          now={now}
+          overflow={b.ledgerOverflow}
+        />
       </section>
 
       <div className="grid gap-5 xl:grid-cols-2">

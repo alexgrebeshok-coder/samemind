@@ -36,6 +36,24 @@ export type Doc = {
   supersededBy: string[];
 };
 
+/**
+ * A kanban card the board synthesized from a ledger topic because no Task doc matched it.
+ * Deliberately flat — it has no `fm`, no `links`, no `relations` — so every card reader must go
+ * through `cardView()` in lib.ts rather than touching `.fm` directly.
+ */
+export type LedgerCard = {
+  id: string; // "ledger:<topic>"
+  title: string; // the topic
+  type: string;
+  source: 'ledger';
+  ts: string;
+  actor: string;
+  action: string;
+};
+
+/** What a board column actually holds: real Task docs and ledger-derived cards, mixed. */
+export type BoardCard = Doc | LedgerCard;
+
 export type LedgerEvent = {
   ts: string;
   actor: string;
@@ -63,10 +81,10 @@ export type Board = {
   doneLimit: number;
   recentDays: number;
   project: string | null;
-  backlog: Doc[];
-  inprog: Doc[];
-  blocked: Doc[];
-  done: Doc[];
+  backlog: BoardCard[];
+  inprog: BoardCard[];
+  blocked: BoardCard[];
+  done: BoardCard[];
   plans: Doc[];
   ideaSpark: Doc[];
   ideaIncubating: Doc[];
@@ -78,6 +96,8 @@ export type Board = {
   openFailuresTotal: number;
   overdueEnginesShown: Engine[];
   overdueEnginesTotal: number;
+  /** Per-column count of ledger topics beyond the ones synthesized into cards. */
+  ledgerOverflow?: Partial<Record<'backlog' | 'inprog' | 'blocked' | 'done', number>>;
 };
 
 export type Fleet = { engines: Engine[]; stopPoints: string[] };

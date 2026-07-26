@@ -1,6 +1,6 @@
 // lib.ts — pure display helpers + the graph layout. No React, no fetch: everything here runs
 // under plain node and is covered by src/lib.test.mjs.
-import type { Doc, Frontmatter, Graph } from './api';
+import type { BoardCard, Frontmatter, Graph, LedgerCard } from './api';
 
 /** "12s ago" / "4m ago" / "3d ago" — coarse on purpose, this is a freshness stamp not a clock. */
 export function ago(fromIso: string | null | undefined, now: number = Date.now()): string {
@@ -26,13 +26,13 @@ export function dur(sec: number | null | undefined): string {
   return `${Math.round(sec / 86400)}d`;
 }
 
-/** Card age from the best date the doc has. */
-export function docDate(fm: Frontmatter): string | null {
-  const v = fm.agreed_on || fm.date || fm.timestamp;
+/** Card age from the best date the doc has. `fm` is optional: ledger-derived cards have none. */
+export function docDate(fm?: Frontmatter): string | null {
+  const v = fm?.agreed_on || fm?.date || fm?.timestamp;
   return typeof v === 'string' && v ? v : null;
 }
 
-export function ageLabel(fm: Frontmatter, now: number = Date.now()): string {
+export function ageLabel(fm?: Frontmatter, now: number = Date.now()): string {
   const d = docDate(fm);
   if (!d) return '—';
   const t = Date.parse(d);
@@ -54,12 +54,62 @@ export function idTail(id: string): string {
 }
 
 /** The project doc a task/plan belongs to, or null. Relations win over ad-hoc body links. */
-export function projectOf(doc: Doc): string | null {
-  const rel = doc.relations?.project?.[0] || doc.fm.relations?.project?.[0];
+export function projectOf(card: BoardCard): string | null {
+  if (isLedgerCard(card)) return null; // a ledger topic belongs to no project doc
+  const rel = card.relations?.project?.[0] || card.fm?.relations?.project?.[0];
   if (rel) return linkToId(rel);
-  const covers = doc.relations?.covers?.[0];
+  const covers = card.relations?.covers?.[0];
   if (covers) return linkToId(covers);
   return null;
+}
+
+export function isLedgerCard(card: BoardCard): card is LedgerCard {
+  return (card as LedgerCard).source === 'ledger';
+}
+
+/**
+ * The one place a kanban card is read. Ledger-derived cards carry no frontmatter, so every
+ * renderer takes its fields from here instead of reaching into `.fm` — reaching in is exactly
+ * what blanked the whole SPA when the board started synthesizing cards.
+ */
+export type CardView = {
+  id: string;
+  title: string;
+  type: string;
+  age: string;
+  project: string | null;
+  ledger: boolean;
+  actor: string | null;
+  reason: string;
+  tooltip: string;
+};
+
+export function cardView(card: BoardCard, now: number = Date.now()): CardView {
+  if (isLedgerCard(card)) {
+    return {
+      id: card.id,
+      title: card.title || card.id.replace(/^ledger:/, ''),
+      type: card.type || '',
+      age: ago(card.ts, now),
+      project: null,
+      ledger: true,
+      actor: card.actor || null,
+      reason: '', // a ledger topic has no blocked_reason; its last action carries the story
+      tooltip: card.action || '',
+    };
+  }
+  const fm = card.fm || {};
+  return {
+    id: card.id,
+    title: fm.title || card.id,
+    type: fm.type || '',
+    age: ageLabel(fm, now),
+    project: projectOf(card),
+    ledger: false,
+    actor: null,
+    reason: String(fm.blocked_reason || ''),
+    tooltip: String(fm.description || ''),
+  };
 }
 
 const TYPE_BADGE: Record<string, string> = {

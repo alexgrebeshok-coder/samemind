@@ -1,8 +1,8 @@
 // shared.tsx — pieces used by more than one screen: the kanban board (Overview + Projects) and
 // the open-failures list (Overview + Fleet).
 import { navigate } from './App';
-import type { Doc, LedgerEvent } from './api';
-import { ageLabel, ago, docDate, idTail, projectOf } from './lib';
+import type { BoardCard, Doc, LedgerEvent } from './api';
+import { ago, cardView, docDate, idTail } from './lib';
 import { AllQuiet, Card, Empty, TypeBadge } from './ui';
 
 // `edge` is the 3px colour strip on top of each column. Existing theme tokens only, so both
@@ -17,20 +17,31 @@ export const COLUMNS = [
 
 export type ColumnKey = (typeof COLUMNS)[number]['key'];
 
-function KanbanCard({ doc, now }: { doc: Doc; now: number }) {
-  const project = projectOf(doc);
-  const reason = String(doc.fm.blocked_reason || '');
+function KanbanCard({ card, now }: { card: BoardCard; now: number }) {
+  const { id, title, type, age, project, ledger, actor, reason, tooltip } = cardView(card, now);
   return (
-    <li className="rounded-[12px] border border-line bg-surface p-3">
-      <button
-        type="button"
-        onClick={() => navigate(`/memory/${doc.id}`)}
-        className="block w-full text-left text-sm font-medium hover:text-accent"
-      >
-        {doc.fm.title || doc.id}
-      </button>
+    <li className="rounded-[12px] border border-line bg-surface p-3" title={tooltip || undefined}>
+      {ledger ? (
+        // no concept doc behind a synthesized card, so the title is plain text, not a link
+        <p className="text-sm font-medium">{title}</p>
+      ) : (
+        <button
+          type="button"
+          onClick={() => navigate(`/memory/${id}`)}
+          className="block w-full text-left text-sm font-medium hover:text-accent"
+        >
+          {title}
+        </button>
+      )}
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        {project ? (
+        {ledger ? (
+          <span
+            className="rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[11px] text-muted"
+            title="synthesized from a ledger topic — no Task doc exists for it"
+          >
+            ledger
+          </span>
+        ) : project ? (
           <button
             type="button"
             onClick={() => navigate(`/projects/${project}`)}
@@ -40,8 +51,9 @@ function KanbanCard({ doc, now }: { doc: Doc; now: number }) {
             {idTail(project)}
           </button>
         ) : null}
-        <TypeBadge type={doc.fm.type} />
-        <span className="tnum text-[11px] text-muted">{ageLabel(doc.fm, now)}</span>
+        <TypeBadge type={type} />
+        <span className="tnum text-[11px] text-muted">{age}</span>
+        {actor ? <span className="truncate text-[11px] text-muted">· {actor}</span> : null}
       </div>
       {reason ? (
         // hover for the short form, expand for the whole reason — no truncation-only dead end
@@ -56,11 +68,20 @@ function KanbanCard({ doc, now }: { doc: Doc; now: number }) {
   );
 }
 
-export function Kanban({ columns, now }: { columns: Record<ColumnKey, Doc[]>; now: number }) {
+export function Kanban({
+  columns,
+  now,
+  overflow,
+}: {
+  columns: Record<ColumnKey, BoardCard[]>;
+  now: number;
+  overflow?: Partial<Record<ColumnKey, number>>;
+}) {
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       {COLUMNS.map((c) => {
         const docs = columns[c.key] || [];
+        const more = overflow?.[c.key] || 0;
         return (
           <Card
             key={c.key}
@@ -77,10 +98,15 @@ export function Kanban({ columns, now }: { columns: Record<ColumnKey, Doc[]>; no
             ) : (
               <ul className="flex flex-col gap-2 p-3">
                 {docs.map((d) => (
-                  <KanbanCard key={d.id} doc={d} now={now} />
+                  <KanbanCard key={d.id} card={d} now={now} />
                 ))}
               </ul>
             )}
+            {more > 0 ? (
+              <p className="border-t border-line px-3 py-1.5 text-[11px] text-muted">
+                …and {more} more from the ledger
+              </p>
+            ) : null}
           </Card>
         );
       })}

@@ -2,13 +2,13 @@
 // with the board filtered to that project and its concept links.
 import { useMemo } from 'react';
 import { navigate } from '../App';
-import { useApi, useApiStatus, type Board, type Concept, type ConceptRow, type Doc, type Graph } from '../api';
+import { useApi, useApiStatus, type Board, type BoardCard, type Concept, type ConceptRow, type Graph } from '../api';
 import { docDate, idTail, projectOf } from '../lib';
 import { Markdown } from '../markdown';
 import { COLUMNS, Kanban, type ColumnKey } from '../shared';
 import { Card, Chip, Empty, Panel, Spinner, TypeBadge } from '../ui';
 
-type Cols = Record<ColumnKey, Doc[]>;
+type Cols = Record<ColumnKey, BoardCard[]>;
 
 function emptyCols(): Cols {
   return { backlog: [], inprog: [], blocked: [], done: [] };
@@ -23,8 +23,9 @@ function columnsFor(board: Board, projectId: string | null): Cols {
   return out;
 }
 
-function lastActivity(docs: Doc[], ownDate: string | null): string {
-  const all = [ownDate, ...docs.map((d) => docDate(d.fm))].filter(Boolean) as string[];
+function lastActivity(docs: BoardCard[], ownDate: string | null): string {
+  // every card here came through projectOf(), so it is a real doc — docDate tolerates the rest
+  const all = [ownDate, ...docs.map((d) => docDate('fm' in d ? d.fm : undefined))].filter(Boolean) as string[];
   return all.sort().at(-1)?.slice(0, 10) || '—';
 }
 

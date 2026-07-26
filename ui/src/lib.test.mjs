@@ -22,6 +22,8 @@ import {
   layout,
   silenceTone,
   SILENCE_COLOR,
+  cardView,
+  isLedgerCard,
 } from './lib.ts';
 
 const SRC = dirname(fileURLToPath(import.meta.url));
@@ -59,6 +61,11 @@ test('link paths map to concept ids', () => {
   assert.equal(idTail('nova'), 'nova');
 });
 
+test('projectOf returns null for ledger cards instead of throwing', () => {
+  assert.equal(projectOf(LEDGER_CARD), null);
+  assert.equal(projectOf({ id: 'projects/bare' }), null, 'no fm, no relations, no crash');
+});
+
 test('projectOf reads relations, falling back to fm.relations then covers', () => {
   assert.equal(
     projectOf({ relations: { project: ['/projects/atlas.md'] }, fm: {} }),
@@ -67,6 +74,73 @@ test('projectOf reads relations, falling back to fm.relations then covers', () =
   assert.equal(projectOf({ relations: {}, fm: { relations: { project: ['/projects/lumen.md'] } } }), 'projects/lumen');
   assert.equal(projectOf({ relations: { covers: ['/projects/lumen.md'] }, fm: {} }), 'projects/lumen');
   assert.equal(projectOf({ relations: {}, fm: {} }), null);
+});
+
+// shapes copied off the wire from /api/board, not from the spec prose
+const LEDGER_CARD = {
+  id: 'ledger:samemind-1.0-finalize',
+  title: 'samemind-1.0-finalize',
+  type: 'Task',
+  source: 'ledger',
+  ts: '2026-07-26T17:45:28.058Z',
+  actor: 'claude',
+  action: 'stale worktrees removed, 22 auto/* merged',
+};
+const DOC_CARD = {
+  id: 'projects/task-atlas-retrieval',
+  relations: { project: ['/projects/atlas.md'] },
+  fm: {
+    type: 'Task',
+    title: 'Wire retrieval strategy over the Atlas corpus',
+    status: 'blocked',
+    blocked_reason: 'Corpus ingestion paused — waiting on Alex.',
+    description: 'Connect retrieval-strategy to Atlas sources.',
+    timestamp: '2026-07-10T00:00:00Z',
+  },
+};
+
+test('isLedgerCard discriminates on the top-level source, not fm.source', () => {
+  assert.equal(isLedgerCard(LEDGER_CARD), true);
+  assert.equal(isLedgerCard(DOC_CARD), false);
+  // a doc whose frontmatter happens to say source: demo is still a doc card
+  assert.equal(isLedgerCard({ id: 'x', fm: { source: 'ledger' } }), false);
+});
+
+test('cardView reads a ledger card without touching fm', () => {
+  const now = Date.parse('2026-07-26T18:45:28.058Z');
+  const v = cardView(LEDGER_CARD, now);
+  assert.equal(v.title, 'samemind-1.0-finalize', 'title is the topic');
+  assert.equal(v.age, '1h ago', 'age comes from ts');
+  assert.equal(v.actor, 'claude');
+  assert.equal(v.ledger, true);
+  assert.equal(v.project, null, 'a ledger topic belongs to no project');
+  assert.equal(v.reason, '', 'no blocked_reason exists on a synthesized card');
+  assert.equal(v.tooltip, LEDGER_CARD.action);
+  assert.equal(v.type, 'Task');
+});
+
+test('cardView still reads a real doc card the old way', () => {
+  const now = Date.parse('2026-07-26T00:00:00Z');
+  const v = cardView(DOC_CARD, now);
+  assert.equal(v.title, 'Wire retrieval strategy over the Atlas corpus');
+  assert.equal(v.age, '16d old');
+  assert.equal(v.project, 'projects/atlas');
+  assert.equal(v.ledger, false);
+  assert.equal(v.actor, null);
+  assert.match(v.reason, /Corpus ingestion paused/);
+});
+
+test('cardView survives the malformed cards that blanked the SPA', () => {
+  // the actual pre-fix crash: reading .fm.relations on a card that has no fm
+  assert.doesNotThrow(() => cardView({ id: 'ledger:t', source: 'ledger', ts: null, actor: '', action: '' }));
+  assert.doesNotThrow(() => cardView({ id: 'projects/bare' })); // doc card with no fm at all
+  const bare = cardView({ id: 'projects/bare' });
+  assert.equal(bare.title, 'projects/bare', 'falls back to the id');
+  assert.equal(bare.age, '—');
+  assert.equal(bare.reason, '');
+  const noTitle = cardView({ id: 'ledger:orphan-topic', source: 'ledger', ts: '', actor: '', action: '' });
+  assert.equal(noTitle.title, 'orphan-topic', 'strips the ledger: prefix when no title came through');
+  assert.equal(noTitle.age, 'never');
 });
 
 test('type badge palette is per spec §4 and falls back to slate', () => {
