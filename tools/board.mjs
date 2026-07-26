@@ -6,7 +6,7 @@
 // what's moving, what's blocked (and for how long), what just landed, what was
 // recently agreed, and what candidate ideas are incubating.
 //
-//   node tools/board.mjs [--write] [--project <path>] [--html [--out <file>]]
+//   node tools/board.mjs [--write] [--project <path>] [--html [--out <file>]] [--json]
 //
 // --write            atomic-write the board to <bundle-root>/DASHBOARD.md (committed
 //                     feature — DASHBOARD.md is tracked, not gitignored). Default: stdout.
@@ -16,6 +16,9 @@
 // --html             render a self-contained HTML projection instead of markdown (no CDN/JS,
 //                     light+dark via prefers-color-scheme) — see tools/lib/html-render.mjs.
 //                     Prints to stdout, or atomic-writes to --out <file>.
+// --json             print `{ contract: 1, kind: 'board', generatedAt, data: buildBoardModel() }`
+//                     as one line to stdout — a versioned foundation for a future UI. Incompatible
+//                     with --write/--html (pick one projection). Never atomic-written.
 //
 // The board is a pure function of parsed docs (lib/okf.mjs `load()`); `now` is injectable
 // so aging/davnost is deterministic in tests. No volatile timestamp is baked into the
@@ -355,13 +358,14 @@ export function buildBoard(docs, opts = {}) {
 }
 
 function parseArgs(argv) {
-  const out = { write: false, project: null, html: false, out: null };
+  const out = { write: false, project: null, html: false, out: null, json: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--write') out.write = true;
     else if (a === '--project') out.project = argv[++i] || null;
     else if (a === '--html') out.html = true;
     else if (a === '--out') out.out = argv[++i] || null;
+    else if (a === '--json') out.json = true;
   }
   return out;
 }
@@ -372,7 +376,12 @@ export function boardPath(root = ROOT) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
-  const { write, project, html, out } = parseArgs(argv);
+  const { write, project, html, out, json } = parseArgs(argv);
+  if (json && (write || html)) {
+    console.error('board: --json is incompatible with --write/--html');
+    process.exitCode = 1;
+    return;
+  }
   const docs = load({ includeSecret: false });
   // Event ledger (docs/event-ledger.md) is not part of the OKF graph — read it separately
   // and summarize to open failures here, in the I/O layer, so buildBoardModel/buildBoard stay
@@ -384,6 +393,17 @@ export async function main(argv = process.argv.slice(2)) {
   // buildBoardModel/buildBoard never touch the filesystem themselves. No registry → [].
   const registry = readRegistry(ROOT);
   const overdueEngines = registry ? heartbeat(registry.engines, events, Date.now()).filter(e => e.overdue) : [];
+
+  if (json) {
+    // --json: versioned wrapper over the same buildBoardModel the markdown/--html projections
+    // consume — a foundation for a future UI, not a new model (see contract note in module header).
+    const now = Date.now();
+    const model = buildBoardModel(docs, { now, project, openFailures, overdueEngines });
+    console.log(JSON.stringify({
+      contract: 1, kind: 'board', generatedAt: new Date(now).toISOString(), data: model,
+    }));
+    return;
+  }
 
   if (html) {
     // --html: self-contained HTML projection (tools/lib/html-render.mjs) — canon stays

@@ -253,6 +253,32 @@ relations:
     const second = readFileSync(dash, 'utf8');
     assert.equal(first, second, 're-writing produces byte-identical output');
   });
+
+  it('--json prints one line: contract=1, kind=board, generatedAt, data = buildBoardModel()', () => {
+    const { code, out } = runCLI(root, ['--json']);
+    assert.equal(code, 0, out);
+    const lines = out.trim().split('\n');
+    assert.equal(lines.length, 1, 'exactly one line of JSON on stdout');
+    const payload = JSON.parse(lines[0]);
+    assert.equal(payload.contract, 1);
+    assert.equal(payload.kind, 'board');
+    assert.ok(!Number.isNaN(Date.parse(payload.generatedAt)), 'generatedAt is a valid ISO timestamp');
+    assert.ok(Array.isArray(payload.data.inprog));
+    assert.ok(payload.data.inprog.some(d => d.fm.title === 'CLI task'), 'data is the real buildBoardModel() output');
+    assert.ok(Array.isArray(payload.data.backlog) && Array.isArray(payload.data.blocked) && Array.isArray(payload.data.plans));
+  });
+
+  it('--json rejects --write (one projection at a time)', () => {
+    const { code, out } = runCLI(root, ['--json', '--write']);
+    assert.notEqual(code, 0);
+    assert.match(out, /--json is incompatible with --write\/--html/);
+  });
+
+  it('--json rejects --html (one projection at a time)', () => {
+    const { code, out } = runCLI(root, ['--json', '--html']);
+    assert.notEqual(code, 0);
+    assert.match(out, /--json is incompatible with --write\/--html/);
+  });
 });
 
 describe('init — DASHBOARD placeholder', () => {
@@ -377,5 +403,15 @@ describe('demo — non-empty board', () => {
     assert.ok(out.includes('Wire retrieval strategy over the Atlas corpus'), 'blocked demo task shown');
     assert.ok(out.includes('Lumen multi-device sync'), 'agreed plan shown');
     assert.match(out, /## 🔴 Blocked \(1\)/);
+  });
+
+  it('--json renders the same demo state as valid, parseable JSON', () => {
+    if (!existsSync(join(DEMO, 'index.md'))) return;
+    const { code, out } = runCLI(DEMO, ['--json']);
+    assert.equal(code, 0, out);
+    const payload = JSON.parse(out.trim());
+    assert.equal(payload.contract, 1);
+    assert.equal(payload.kind, 'board');
+    assert.ok(payload.data.blocked.some(d => d.fm.title?.includes('Wire retrieval strategy')));
   });
 });

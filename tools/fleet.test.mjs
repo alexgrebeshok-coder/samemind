@@ -329,6 +329,38 @@ describe('CLI — samemind fleet status', () => {
       assert.match(r.out, /no registry yet/);
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
+
+  it('--json: one line, contract=1, kind=fleet, data.engines = heartbeat() projection', () => {
+    const root = tmp('fleet-cli-status-json');
+    try {
+      runInit({ targetDir: root });
+      writeRegistry(root, buildRegistry({ engines: [{ id: 'quiet-one', heartbeatSec: 60 }] }));
+      appendEvent(root, { actor: 'quiet-one', topic: 't', phase: 'start', action: 'began long ago', ts: '2020-01-01T00:00:00Z' });
+      const r = runCli(['status', '--json'], root);
+      assert.equal(r.code, 0, r.out);
+      const lines = r.stdout.trim().split('\n');
+      assert.equal(lines.length, 1, 'exactly one line of JSON on stdout');
+      const payload = JSON.parse(lines[0]);
+      assert.equal(payload.contract, 1);
+      assert.equal(payload.kind, 'fleet');
+      assert.deepEqual(payload.data.stopPoints, DEFAULT_STOP_POINTS);
+      assert.equal(payload.data.engines.length, 1);
+      assert.equal(payload.data.engines[0].id, 'quiet-one');
+      assert.equal(payload.data.engines[0].overdue, true);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('--json: no registry yet → { engines: [], stopPoints: [] }, still exit 0', () => {
+    const root = tmp('fleet-cli-status-json-empty');
+    try {
+      runInit({ targetDir: root });
+      const r = runCli(['status', '--json'], root);
+      assert.equal(r.code, 0, r.out);
+      const payload = JSON.parse(r.stdout.trim());
+      assert.equal(payload.kind, 'fleet');
+      assert.deepEqual(payload.data, { engines: [], stopPoints: [] });
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
 });
 
 describe('CLI — samemind fleet assign', () => {

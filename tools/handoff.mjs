@@ -3,7 +3,7 @@
 // can continue without re-explaining. Built from the work-discipline layer
 // (Plan / Decision / Task / Session — see docs/work-discipline.md).
 //
-//   node tools/handoff.mjs [--project <path>] [--days N] [--html [--out <file>]]
+//   node tools/handoff.mjs [--project <path>] [--days N] [--html [--out <file>]] [--json]
 //
 // NOT the same as `samemind brief` (identity/personality). This is about *what is in
 // progress* — active tasks, recent decisions, plans in force, last session, open questions.
@@ -11,6 +11,8 @@
 // --html   render a self-contained HTML projection instead of markdown (no CDN/JS, light+dark
 //          via prefers-color-scheme) — see tools/lib/html-render.mjs. Prints to stdout, or
 //          atomic-writes to --out <file>.
+// --json   print `{ contract: 1, kind: 'handoff', generatedAt, data: buildHandoffModel() }` as
+//          one line to stdout — a versioned foundation for a future UI. Incompatible with --html.
 //
 // Target size ≤ ~2000 tokens (~8000 chars). Each line carries a path citation.
 import { fileURLToPath } from 'node:url';
@@ -379,13 +381,14 @@ export function buildHandoff(docs, {
 }
 
 function parseArgs(argv) {
-  const out = { project: null, days: DEFAULT_DAYS, html: false, outFile: null };
+  const out = { project: null, days: DEFAULT_DAYS, html: false, outFile: null, json: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--project') out.project = argv[++i];
     else if (a === '--days') out.days = Number(argv[++i]) || DEFAULT_DAYS;
     else if (a === '--html') out.html = true;
     else if (a === '--out') out.outFile = argv[++i] || null;
+    else if (a === '--json') out.json = true;
     else if (a === '--help' || a === '-h') out.help = true;
   }
   return out;
@@ -399,6 +402,12 @@ async function main() {
     console.log(`  --days N           decision window in days (default ${DEFAULT_DAYS})`);
     console.log('  --html             self-contained HTML projection instead of markdown');
     console.log('  --out <file>       with --html, atomic-write the page here instead of stdout');
+    console.log('  --json             versioned JSON over buildHandoffModel() (incompatible with --html)');
+    return;
+  }
+  if (opts.json && opts.html) {
+    console.error('handoff: --json is incompatible with --html');
+    process.exitCode = 1;
     return;
   }
   // Never include secret — handoff is for session start, not secret review.
@@ -406,6 +415,17 @@ async function main() {
   // work-discipline docs (Plan/Task/Decision/Session); raw inbox notes have no `type` and were
   // never picked up by touchesProject()/typeOf() anyway — see issue #4.
   const docs = load({ includeSecret: false, includeMirror: true });
+
+  if (opts.json) {
+    // --json: versioned wrapper over buildHandoffModel — a foundation for a future UI, not a
+    // new model (same contract shape as `board --json`).
+    const now = new Date();
+    const model = buildHandoffModel(docs, { project: opts.project, days: opts.days, now });
+    console.log(JSON.stringify({
+      contract: 1, kind: 'handoff', generatedAt: now.toISOString(), data: model,
+    }));
+    return;
+  }
 
   if (opts.html) {
     // --html: self-contained HTML projection (tools/lib/html-render.mjs) — canon stays

@@ -57,12 +57,12 @@ function usage() {
   console.log('Commands:');
   console.log('  init [dir] [--demo]   create a bundle from scratch (empty folder only; --demo — with demo content)');
   console.log('  setup [...]           one-shot onboarding: detect engine, scaffold bundle, wire install+MCP, probe local embeddings (default: interactive; --yes — no prompts; --dry-run — plan only; --target <dir>; --global — machine-wide instead of one project)');
-  console.log('  query <cmd> ...       structural queries: list | type <T> | tag <t> | get <id> | links | validate');
+  console.log('  query <cmd> ...       structural queries: list | type <T> | tag <t> | get <id> | links [--json] | validate');
   console.log('  recall <cmd> ...      search: index | "<query>" [-k N] [--mode bm25|semantic|auto] (default auto: BM25 without an endpoint)');
   console.log('  gde "<query>" ...     human-readable search (semantic + BM25 fallback)');
   console.log('  brief [...]           personality-layer brief: identity+owner+engine role (--engine <id> --budget <n> --inject <file>)');
-  console.log('  board [...]           memory kanban in markdown: Backlog/In progress/Done/Blocked+aging, Plans, Recent (--write → DASHBOARD.md, --project <path>)');
-  console.log('  handoff [...]         work-state brief: active/decisions/plans/session (--project <path> --days N)');
+  console.log('  board [...]           memory kanban in markdown: Backlog/In progress/Done/Blocked+aging, Plans, Recent (--write → DASHBOARD.md, --project <path>, --json)');
+  console.log('  handoff [...]         work-state brief: active/decisions/plans/session (--project <path> --days N --json)');
   console.log('  forget <id>           mark a concept deprecated (deprecated: true) — never deletes the file, see docs/memory-hygiene.md');
   console.log('  reconcile [...]       Ф2 bi-temporal supersede proposals (--dir <subpath> --write) — human-gate, prints/saves a report, never writes canon');
   console.log('  reflect [...]         Ф5 reconcile+consolidate+heat proposal report (--write) — human-gate, prints/saves a report, never writes canon');
@@ -70,8 +70,8 @@ function usage() {
   console.log('  export <dir> [...]    shareable OKF-bundle (no secret/mirror/inbox); --visibility public|internal --dry-run --to-gbrain');
   console.log('  import <dir> [...]    accept a foreign OKF-bundle; --into inbox|concepts (default inbox) — see docs/interop.md');
   console.log('  capture --engine <id> [--source <path>] [--since <ts>] [--limit N] [--yes] [--dry-run]   read-only capture of a live engine session store → inbox/<engine>.md; bulk (20+ new items) asks for confirmation first — see docs/session-capture.md');
-  console.log('  ledger <cmd> ...      append-only event ledger: append --actor .. --topic .. --phase .. [--status ..] --action ".." | status | read --topic <t> — see docs/event-ledger.md');
-  console.log('  fleet <cmd> ...       engine registry: init [--target <dir>] | status | assign --engine <id> --topic <t> --goal ".." --verify ".." — see docs/fleet.md');
+  console.log('  ledger <cmd> ...      append-only event ledger: append --actor .. --topic .. --phase .. [--status ..] --action ".." | status [--json] | read --topic <t> — see docs/event-ledger.md');
+  console.log('  fleet <cmd> ...       engine registry: init [--target <dir>] | status [--json] | assign --engine <id> --topic <t> --goal ".." --verify ".." — see docs/fleet.md');
   console.log('  serve                 MCP stdio server (memory_search/get/list/write_inbox/handoff/health/ledger_append/ledger_status) — connect it as an MCP tool');
   console.log('  proactive "<msg>"     Active Memory prototype: auto top-k recall pack before answer (-k N --json --force --pack)');
 }

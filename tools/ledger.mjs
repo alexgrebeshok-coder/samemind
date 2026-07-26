@@ -5,8 +5,10 @@
 //
 //   npx samemind ledger append --actor <id> --topic <t> --phase <p> [--status <s>]
 //                               --action "..." [--artifact <a>] [--ref <r>]
-//   npx samemind ledger status                     summary: open failures first, then every
-//                                                   topic's current stage (freshest first)
+//   npx samemind ledger status [--json]            summary: open failures first, then every
+//                                                   topic's current stage (freshest first);
+//                                                   --json → { contract: 1, kind: 'ledger',
+//                                                   data: summarizeLedger() }, one line
 //   npx samemind ledger read --topic <t> [--limit N]   full history of one topic
 import { fileURLToPath } from 'node:url';
 import { ROOT } from './lib/okf.mjs';
@@ -17,7 +19,7 @@ function usage() {
   console.log('  samemind ledger append --actor <id> --topic <t> --phase <p> [--status <s>] --action "..." [--artifact <a>] [--ref <r>]');
   console.log(`    phase:  ${[...PHASES].join('|')}`);
   console.log(`    status: ${[...STATUSES].join('|')}  (default: ok)`);
-  console.log('  samemind ledger status');
+  console.log('  samemind ledger status [--json]');
   console.log('  samemind ledger read --topic <t> [--limit N]');
 }
 
@@ -47,8 +49,15 @@ export function cmdAppend(a) {
   console.log(`ledger: +${rec.phase}/${rec.status} [${rec.actor}] ${rec.topic} — ${rec.action}${flag}`);
 }
 
-export function cmdStatus() {
-  const { topics, openFailures } = summarizeLedger(readEvents(ROOT));
+export function cmdStatus(a = {}) {
+  const summary = summarizeLedger(readEvents(ROOT));
+  if (a.json) {
+    // --json: versioned wrapper over the same summarizeLedger() the human status uses — a
+    // foundation for a future UI, not a new model.
+    console.log(JSON.stringify({ contract: 1, kind: 'ledger', data: summary }));
+    return;
+  }
+  const { topics, openFailures } = summary;
   if (!topics.length) { console.log('ledger: empty — no events yet.'); return; }
   if (openFailures.length) {
     console.log('🔥 ОТКРЫТЫЕ СБОИ:');
@@ -80,7 +89,7 @@ export function main(argv = process.argv.slice(2)) {
   const cmd = a._;
   try {
     if (cmd === 'append') { cmdAppend(a); return 0; }
-    if (cmd === 'status') { cmdStatus(); return 0; }
+    if (cmd === 'status') { cmdStatus(a); return 0; }
     if (cmd === 'read') { cmdRead(a); return 0; }
     usage();
     return cmd ? 1 : 0;

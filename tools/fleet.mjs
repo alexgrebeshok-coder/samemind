@@ -6,7 +6,9 @@
 //   npx samemind fleet init [--target <dir>]      scaffold/refresh fleet/registry.json by
 //                                                  reusing detectEngines() — never invents
 //                                                  its own engine-file detection
-//   npx samemind fleet status                     registry + who's overdue (ledger-backed)
+//   npx samemind fleet status [--json]            registry + who's overdue (ledger-backed);
+//                                                  --json → { contract: 1, kind: 'fleet',
+//                                                  data: { engines, stopPoints } }, one line
 //   npx samemind fleet assign --engine <id> --topic <t> --goal "..." --verify "..."
 //                              [--boundary "..."]... [--stop <s>]...
 //                                                  declare an assignment, log it as a ledger
@@ -24,7 +26,7 @@ import {
 function usage() {
   console.log('Usage:');
   console.log('  samemind fleet init [--target <dir>]');
-  console.log('  samemind fleet status');
+  console.log('  samemind fleet status [--json]');
   console.log('  samemind fleet assign --engine <id> --topic <t> --goal "..." --verify "..." [--boundary "..."]... [--stop <s>]...');
 }
 
@@ -66,8 +68,18 @@ export function cmdInit(a) {
   console.log(`  total engines in registry: ${registry.engines.length}`);
 }
 
-export function cmdStatus() {
+export function cmdStatus(a = {}) {
   const registry = readRegistry(ROOT);
+  if (a.json) {
+    // --json: versioned wrapper over the same heartbeat() projection the human status uses —
+    // a foundation for a future UI, not a new model. No registry → empty engines/stopPoints,
+    // same "nothing to show yet" contract as the human branch below.
+    const data = registry
+      ? { engines: heartbeat(registry.engines, readEvents(ROOT), Date.now()), stopPoints: registry.stopPoints }
+      : { engines: [], stopPoints: [] };
+    console.log(JSON.stringify({ contract: 1, kind: 'fleet', data }));
+    return;
+  }
   if (!registry) {
     console.log('fleet: no registry yet — run `samemind fleet init`.');
     return;
@@ -135,7 +147,7 @@ export function main(argv = process.argv.slice(2)) {
   const cmd = a._;
   try {
     if (cmd === 'init') { cmdInit(a); return process.exitCode || 0; }
-    if (cmd === 'status') { cmdStatus(); return 0; }
+    if (cmd === 'status') { cmdStatus(a); return 0; }
     if (cmd === 'assign') { cmdAssign(a); return process.exitCode || 0; }
     usage();
     return cmd ? 1 : 0;

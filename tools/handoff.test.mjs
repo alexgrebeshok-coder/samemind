@@ -269,6 +269,44 @@ describe('handoff CLI — demo bundle', () => {
   });
 });
 
+describe('handoff CLI — --json', () => {
+  it('prints one line: contract=1, kind=handoff, generatedAt, data = buildHandoffModel()', () => {
+    const r = spawnSync(process.execPath, [HANDOFF, '--json'], {
+      env: { ...process.env, OKF_ROOT: DEMO },
+      encoding: 'utf8',
+    });
+    assert.equal(r.status, 0, r.stderr);
+    const lines = r.stdout.trim().split('\n');
+    assert.equal(lines.length, 1, 'exactly one line of JSON on stdout');
+    const payload = JSON.parse(lines[0]);
+    assert.equal(payload.contract, 1);
+    assert.equal(payload.kind, 'handoff');
+    assert.ok(!Number.isNaN(Date.parse(payload.generatedAt)), 'generatedAt is a valid ISO timestamp');
+    assert.ok(Array.isArray(payload.data.active));
+    assert.ok(payload.data.active.some(d => d.id.includes('lumen-backlinks')), 'data is the real buildHandoffModel() output');
+  });
+
+  it('--project narrows the JSON data the same way it narrows the markdown', () => {
+    const r = spawnSync(process.execPath, [HANDOFF, '--project', 'lumen', '--json'], {
+      env: { ...process.env, OKF_ROOT: DEMO },
+      encoding: 'utf8',
+    });
+    assert.equal(r.status, 0, r.stderr);
+    const payload = JSON.parse(r.stdout.trim());
+    assert.equal(payload.data.projectKey, 'projects/lumen');
+    assert.ok(!payload.data.active.some(d => d.id.includes('atlas-retrieval')));
+  });
+
+  it('--json rejects --html (one projection at a time)', () => {
+    const r = spawnSync(process.execPath, [HANDOFF, '--json', '--html'], {
+      env: { ...process.env, OKF_ROOT: DEMO },
+      encoding: 'utf8',
+    });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /--json is incompatible with --html/);
+  });
+});
+
 describe('MCP memory_handoff', () => {
   let BUNDLE_DIR;
 

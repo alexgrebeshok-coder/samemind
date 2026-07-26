@@ -368,6 +368,40 @@ describe('CLI — samemind ledger status', () => {
       rmSync(empty, { recursive: true, force: true });
     }
   });
+
+  it('--json: one line, contract=1, kind=ledger, data = summarizeLedger()', () => {
+    const jroot = mkdtempSync(join(tmpdir(), 'samemind-ledger-json-'));
+    try {
+      runInit({ targetDir: jroot });
+      appendEvent(jroot, { actor: 'a', topic: 'proj-a', phase: 'start', action: 'begin', ts: '2026-01-01T00:00:00Z' });
+      appendEvent(jroot, { actor: 'a', topic: 'proj-a', phase: 'fail', status: 'fail', action: 'broke', ts: '2026-01-02T00:00:00Z' });
+      const r = runCli(LEDGER_CLI, ['status', '--json'], jroot);
+      assert.equal(r.code, 0, r.out);
+      const lines = r.stdout.trim().split('\n');
+      assert.equal(lines.length, 1, 'exactly one line of JSON on stdout');
+      const payload = JSON.parse(lines[0]);
+      assert.equal(payload.contract, 1);
+      assert.equal(payload.kind, 'ledger');
+      assert.equal(payload.data.openFailures.length, 1);
+      assert.equal(payload.data.openFailures[0].topic, 'proj-a');
+      assert.equal(payload.data.topics.length, 1);
+    } finally {
+      rmSync(jroot, { recursive: true, force: true });
+    }
+  });
+
+  it('--json: empty ledger still prints valid JSON (not the "empty" friendly message)', () => {
+    const empty = mkdtempSync(join(tmpdir(), 'samemind-ledger-empty-json-'));
+    try {
+      runInit({ targetDir: empty });
+      const r = runCli(LEDGER_CLI, ['status', '--json'], empty);
+      assert.equal(r.code, 0, r.out);
+      const payload = JSON.parse(r.stdout.trim());
+      assert.deepEqual(payload.data, { topics: [], openFailures: [] });
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('CLI — samemind ledger read', () => {
