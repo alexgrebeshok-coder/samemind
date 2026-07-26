@@ -62,7 +62,8 @@ Checklist — ALL required:
 2. **Kanban** — 4 columns Backlog / In progress / Blocked / Done from `/api/board`; card =
    title, project chip, age. Blocked cards show `blocked_reason` on hover/expand. Cards with
    no matching Task doc are synthesized from ledger topics (`source: 'ledger'`) and carry a
-   small grey "ledger" chip instead of a project chip.
+   small grey "ledger" chip instead of a project chip, plus the topic's last `action` as a muted
+   second line (one line, ~90 chars) — a bare topic like `sub:a39fbe85` is unreadable on its own.
 3. **🔥 Open failures** panel — list with topic, age, last action; empty state per §5.
 4. **🔥 Overdue engines** panel — engine id, role, silence duration vs heartbeat limit.
 5. **Ideas strip** — spark / incubating / adopted counts with a compact segmented bar.
@@ -94,9 +95,25 @@ Checklist — ALL required:
 
 ### 3.4 Projects  (`/projects`)
 
-1. **Project cards** — one per `projects/` doc: title, status, task counts by column
-   (from board filtered by project), last activity date.
-2. **Project detail** — board columns filtered to the project + its concept links.
+A bundle can hold many Project docs and no Task docs at all (the live one does: 34 projects, 0
+tasks). Task counts alone therefore say nothing — a card must stand on the doc's own facts.
+
+1. **Project cards** — one per `projects/` doc, the whole card a link to its detail route:
+   - title + type badge;
+   - `status` chip from the doc's own frontmatter, when it has one (most don't — no placeholder);
+   - **links count** — distinct graph neighbours of the project node from `/api/graph`, inbound and
+     outbound folded together, self-loops dropped (`neighbourIds`); shown only when > 0;
+   - last activity (latest of the doc's own date and its board cards' dates);
+   - 1–2 lines of `description` from frontmatter (clamped, full text on hover). `/api/concepts`
+     returns a slim row without it, so the grid fetches `/api/concept/<id>` per project once per
+     id-set — not on every refresh tick;
+   - task counts by column **only when the project has at least one card**; otherwise a single
+     muted line "no linked tasks". A 0/0/0/0 strip on every card is noise, not information.
+2. **Project detail** (route `/projects/<id>`): back button, title + status chip + id, description,
+   frontmatter mini-table (type/status/visibility/tags/date/source), the doc body rendered through
+   the same escaped-markdown renderer as Memory's concept view (§0), linked concepts as chips
+   (graph neighbours, labelled with node titles, click → concept view), and the filtered board —
+   again only when the project has cards, else one muted line.
 
 ## 4. Design tokens
 

@@ -32,6 +32,8 @@ import {
   FEED_LIMIT,
   REFRESH_DEBOUNCE_MS,
   REFRESH_MIN_GAP_MS,
+  neighbourIds,
+  snippet,
 } from './lib.ts';
 
 import {
@@ -459,6 +461,32 @@ test('feed row bits: clock time and the sub badge', () => {
   assert.equal(isSubTopic('sub:atlas-retrieval'), true);
   assert.equal(isSubTopic('atlas-retrieval'), false);
   assert.equal(isSubTopic(''), false);
+});
+
+test('project card facts: graph neighbours fold both directions, snippet cuts once', () => {
+  const graph = {
+    edges: [
+      { from: 'projects/p', to: 'concepts/a', kind: 'link' },
+      { from: 'concepts/b', to: 'projects/p', kind: 'relation', rel: 'project' },
+      { from: 'projects/p', to: 'concepts/a', kind: 'relation', rel: 'covers' }, // second edge, same pair
+      { from: 'projects/p', to: 'projects/p', kind: 'link' }, // self-loop is not a relation
+      { from: 'concepts/c', to: 'concepts/d', kind: 'link' }, // unrelated pair
+    ],
+  };
+  assert.deepEqual(neighbourIds(graph, 'projects/p').sort(), ['concepts/a', 'concepts/b']);
+  assert.deepEqual(neighbourIds(graph, 'concepts/d'), ['concepts/c'], 'inbound-only still counts');
+  assert.deepEqual(neighbourIds(graph, 'projects/absent'), [], 'a node with no edges has no links');
+  assert.deepEqual(neighbourIds(null, 'projects/p'), [], 'graph still loading → no crash, no links');
+
+  assert.equal(snippet('субагент начал: правка UI'), 'субагент начал: правка UI', 'short text is untouched');
+  assert.equal(snippet('a\n b\t\tc'), 'a b c', 'whitespace collapses to one line');
+  assert.equal(snippet('', 10), '');
+  assert.equal(snippet(undefined), '');
+  assert.equal(snippet('x'.repeat(90)), 'x'.repeat(90), '90 chars is the cap, not past it');
+  const cut = snippet('x'.repeat(200));
+  assert.equal(cut.length, 90, 'the cap includes the ellipsis');
+  assert.ok(cut.endsWith('…'));
+  assert.equal(snippet('word boundary', 6), 'word…', 'a cut landing on a space loses it, not keeps it');
 });
 
 test('source carries no HTML-injection sinks and no external hosts (spec §0)', () => {

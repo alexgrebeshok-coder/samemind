@@ -2,7 +2,7 @@
 // the open-failures list (Overview + Fleet).
 import { navigate } from './App';
 import type { BoardCard, Doc, LedgerEvent } from './api';
-import { ago, cardView, docDate, idTail } from './lib';
+import { ago, cardView, docDate, idTail, snippet } from './lib';
 import { AllQuiet, Card, Empty, TypeBadge } from './ui';
 
 // `edge` is the 3px colour strip on top of each column. Existing theme tokens only, so both
@@ -33,6 +33,10 @@ function KanbanCard({ card, now }: { card: BoardCard; now: number }) {
           {title}
         </button>
       )}
+      {ledger && tooltip ? (
+        // a bare topic ("sub:a39fbe85") says nothing; the last ledger action on it says everything
+        <p className="mt-1 text-[11px] leading-snug text-muted">{snippet(tooltip)}</p>
+      ) : null}
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         {ledger ? (
           <span

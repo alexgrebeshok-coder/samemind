@@ -60,6 +60,28 @@ export function idTail(id: string): string {
   return i === -1 ? id : id.slice(i + 1);
 }
 
+/**
+ * Distinct graph neighbours of a node: inbound and outbound edges folded together, self-loops
+ * dropped, one entry per neighbour however many edges join them. This is what a project card
+ * counts — "18 links" — and what its detail view lists as chips.
+ */
+export function neighbourIds(graph: Pick<Graph, 'edges'> | null | undefined, id: string): string[] {
+  const out = new Set<string>();
+  for (const e of graph?.edges || []) {
+    if (e.from === id && e.to !== id) out.add(e.to);
+    else if (e.to === id && e.from !== id) out.add(e.from);
+  }
+  return [...out];
+}
+
+/** One-line card snippet: whitespace collapsed, cut at `max`, ellipsis only when it really cut. */
+export function snippet(text: string | null | undefined, max = 90): string {
+  const s = String(text ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return s.length <= max ? s : `${s.slice(0, max - 1).trimEnd()}…`;
+}
+
 /** The project doc a task/plan belongs to, or null. Relations win over ad-hoc body links. */
 export function projectOf(card: BoardCard): string | null {
   if (isLedgerCard(card)) return null; // a ledger topic belongs to no project doc

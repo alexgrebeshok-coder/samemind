@@ -293,3 +293,38 @@ export function useApi<T>(path: string | null): Result<T> {
 
   return state;
 }
+
+/**
+ * Frontmatter for a set of concepts, one GET per doc, keyed on the id set rather than on the
+ * refresh tick. `/api/concepts` returns a deliberately slim row (no `description`), so a screen
+ * that wants the blurb has to ask per doc — and a project's frontmatter changes far slower than
+ * the board, so re-fetching 34 docs every 30s would buy nothing.
+ */
+export function useConceptMap(ids: string[]): Map<string, Frontmatter> {
+  const key = ids.join('\n');
+  const [map, setMap] = useState<Map<string, Frontmatter>>(new Map());
+
+  useEffect(() => {
+    const list = key ? key.split('\n') : [];
+    if (!list.length) {
+      setMap(new Map());
+      return;
+    }
+    let alive = true;
+    Promise.all(
+      list.map((id) =>
+        getJson<Concept>(`/api/concept/${id}`).then(
+          (env) => [id, env.data.frontmatter || {}] as [string, Frontmatter],
+          () => null, // one unreadable doc must not blank the whole grid
+        ),
+      ),
+    ).then((pairs) => {
+      if (alive) setMap(new Map(pairs.filter((p): p is [string, Frontmatter] => p !== null)));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [key]);
+
+  return map;
+}
