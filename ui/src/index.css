@@ -83,3 +83,9 @@ body {
 .tnum {
   font-variant-numeric: tabular-nums;
 }
+
+/* SVG graph nodes take focus on click as well as by tab; keep that ring on-brand, not UA blue. */
+svg [tabindex]:focus {
+  outline: 2px solid var(--sm-accent);
+  outline-offset: 1px;
+}

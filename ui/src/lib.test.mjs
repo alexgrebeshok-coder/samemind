@@ -26,7 +26,32 @@ import {
   isLedgerCard,
 } from './lib.ts';
 
+import {
+  createSim,
+  tick,
+  settle,
+  isClick,
+  zoomAt,
+  toWorld,
+  panBy,
+  fitView,
+  clampZoom,
+  DRAG_THRESHOLD,
+  SIM_REST_ENERGY,
+  ZOOM_MIN,
+  ZOOM_MAX,
+  IDENTITY_VIEW,
+} from './sim.ts';
+
 const SRC = dirname(fileURLToPath(import.meta.url));
+
+/** A ring of `n` nodes, each linked to the next — enough structure for the physics to shape. */
+function ringGraph(n) {
+  return {
+    nodes: Array.from({ length: n }, (_, i) => ({ id: `c/${i}`, title: `node ${i}`, type: 'Concept' })),
+    edges: Array.from({ length: n }, (_, i) => ({ from: `c/${i}`, to: `c/${(i + 1) % n}`, kind: 'link' })),
+  };
+}
 
 test('ago / agoSec collapse to coarse buckets', () => {
   const now = Date.parse('2026-07-26T12:00:00Z');
@@ -197,6 +222,153 @@ test('kanban columns carry one colour edge each, all from theme tokens', async (
   assert.equal(edges.length, 4, 'one edge colour per column');
   assert.deepEqual(edges, ['var(--sm-muted)', 'var(--sm-accent)', 'var(--sm-danger)', 'var(--sm-ok)']);
   assert.equal(new Set(edges).size, 4, 'columns are distinguishable');
+});
+
+// ─────────────────────────── force simulation (src/sim.ts) ───────────────────────────
+
+test('sim: energy decays to rest and the layout stops moving', () => {
+  const sim = createSim(ringGraph(40));
+  const first = tick(sim);
+  const { steps, energy } = settle(sim);
+  assert.ok(steps < 400, `settled in ${steps} steps, before the cap`);
+  assert.ok(energy <= SIM_REST_ENERGY, `final energy ${energy} is at rest`);
+  assert.ok(energy < first / 100, `energy fell from ${first.toFixed(1)} to ${energy.toFixed(4)}`);
+
+  // and it STAYS at rest: ten more ticks must not move anything meaningfully
+  const before = sim.nodes.map((n) => ({ x: n.x, y: n.y }));
+  for (let i = 0; i < 10; i++) tick(sim);
+  const moved = Math.max(...sim.nodes.map((n, i) => Math.hypot(n.x - before[i].x, n.y - before[i].y)));
+  assert.ok(moved < 1, `largest drift after rest was ${moved.toFixed(3)}px`);
+});
+
+test('sim: springs pull linked nodes together, repulsion keeps the rest apart', () => {
+  const sim = createSim(ringGraph(30));
+  settle(sim);
+  const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const linked = sim.edges.map((e) => d(sim.nodes[e.a], sim.nodes[e.b]));
+  const avg = (a) => a.reduce((s, x) => s + x, 0) / a.length;
+  const arbitrary = [];
+  for (let i = 0; i < sim.nodes.length; i++) {
+    const j = (i * 7 + 3) % sim.nodes.length;
+    if (i !== j) arbitrary.push(d(sim.nodes[i], sim.nodes[j]));
+  }
+  assert.ok(avg(linked) < avg(arbitrary), `linked ${avg(linked).toFixed(1)} < arbitrary ${avg(arbitrary).toFixed(1)}`);
+  assert.ok(sim.nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y)), 'no NaN escaped');
+});
+
+test('sim: coincident nodes are pushed apart instead of exploding', () => {
+  const sim = createSim(ringGraph(4));
+  for (const n of sim.nodes) { n.x = 360; n.y = 360; n.vx = 0; n.vy = 0; }
+  settle(sim);
+  assert.ok(sim.nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y)), 'still finite');
+  const pairs = [];
+  for (let i = 0; i < sim.nodes.length; i++)
+    for (let j = i + 1; j < sim.nodes.length; j++)
+      pairs.push(Math.hypot(sim.nodes[i].x - sim.nodes[j].x, sim.nodes[i].y - sim.nodes[j].y));
+  assert.ok(Math.min(...pairs) > 1, `closest pair ended ${Math.min(...pairs).toFixed(1)}px apart`);
+});
+
+test('sim: a pinned node stays exactly where it was put while the rest keeps moving', () => {
+  const sim = createSim(ringGraph(20));
+  const held = sim.nodes[0];
+  held.pinned = true;
+  held.x = 100;
+  held.y = 120;
+  const othersBefore = sim.nodes.slice(1).map((n) => ({ x: n.x, y: n.y }));
+  for (let i = 0; i < 30; i++) tick(sim);
+  assert.equal(held.x, 100, 'pinned x untouched');
+  assert.equal(held.y, 120, 'pinned y untouched');
+  assert.equal(held.vx, 0);
+  const movedOthers = sim.nodes.slice(1).filter((n, i) => Math.hypot(n.x - othersBefore[i].x, n.y - othersBefore[i].y) > 1);
+  assert.ok(movedOthers.length > 0, 'the simulation kept living around the pinned node');
+});
+
+test('sim: deterministic — the same graph always seeds and settles identically', () => {
+  const a = createSim(ringGraph(25));
+  const b = createSim(ringGraph(25));
+  settle(a);
+  settle(b);
+  assert.deepEqual(a.nodes.map((n) => [n.x, n.y]), b.nodes.map((n) => [n.x, n.y]));
+});
+
+test('sim: edges to nodes outside the budget, and self-loops, are dropped', () => {
+  const sim = createSim({
+    nodes: [{ id: 'a', title: 'A', type: 'Concept' }, { id: 'b', title: 'B', type: 'Concept' }],
+    edges: [
+      { from: 'a', to: 'b', kind: 'link' },
+      { from: 'a', to: 'a', kind: 'link' }, // self-loop
+      { from: 'a', to: 'index', kind: 'link' }, // target is not a node (index.md)
+    ],
+  });
+  assert.equal(sim.edges.length, 1);
+  assert.deepEqual([sim.edges[0].a, sim.edges[0].b], [0, 1]);
+});
+
+// ─────────────────────────── click vs drag, zoom, pan, fit ───────────────────────────
+
+test('isClick: the 4px threshold separates a click from a drag', () => {
+  assert.equal(DRAG_THRESHOLD, 4);
+  assert.equal(isClick(0, 0), true, 'no movement is a click');
+  assert.equal(isClick(3, 0), true, 'a 3px twitch is still a click');
+  assert.equal(isClick(0, -3.9), true);
+  assert.equal(isClick(3, 3), false, '4.24px diagonal is a drag');
+  assert.equal(isClick(0, 4), false, 'exactly the threshold is a drag');
+  assert.equal(isClick(200, 200), false);
+});
+
+test('zoomAt: the point under the cursor stays under the cursor', () => {
+  const view = { k: 1, tx: 0, ty: 0 };
+  const cursor = { x: 200, y: 140 };
+  const worldBefore = toWorld(view, cursor.x, cursor.y);
+  for (const factor of [1.3, 1 / 1.3, 2, 0.5]) {
+    const next = zoomAt(view, cursor.x, cursor.y, factor);
+    const worldAfter = toWorld(next, cursor.x, cursor.y);
+    assert.ok(Math.abs(worldAfter.x - worldBefore.x) < 1e-9, `x anchored at factor ${factor}`);
+    assert.ok(Math.abs(worldAfter.y - worldBefore.y) < 1e-9, `y anchored at factor ${factor}`);
+  }
+  // anchoring must hold when starting from an already panned+zoomed view
+  const panned = { k: 2.5, tx: -300, ty: 80 };
+  const w = toWorld(panned, 90, 400);
+  const zoomed = zoomAt(panned, 90, 400, 0.7);
+  const w2 = toWorld(zoomed, 90, 400);
+  assert.ok(Math.hypot(w2.x - w.x, w2.y - w.y) < 1e-9, 'anchored from a panned view too');
+  // zooming to the centre instead would move the cursor's world point — guard against that bug
+  const centreZoom = zoomAt(panned, 360, 360, 0.7);
+  assert.notDeepEqual(centreZoom, zoomed, 'cursor anchoring differs from centre anchoring');
+});
+
+test('zoom stays inside 0.2–4x and is a no-op at the rails', () => {
+  assert.equal(clampZoom(100), ZOOM_MAX);
+  assert.equal(clampZoom(0.0001), ZOOM_MIN);
+  const maxed = { k: ZOOM_MAX, tx: 10, ty: 20 };
+  assert.equal(zoomAt(maxed, 100, 100, 2), maxed, 'already at max: same object, no drift');
+  const mined = { k: ZOOM_MIN, tx: 10, ty: 20 };
+  assert.equal(zoomAt(mined, 100, 100, 0.5), mined, 'already at min: same object');
+  let v = IDENTITY_VIEW;
+  for (let i = 0; i < 50; i++) v = zoomAt(v, 300, 300, 1.3);
+  assert.equal(v.k, ZOOM_MAX, 'repeated zoom-in saturates instead of running away');
+});
+
+test('panBy shifts the viewport without changing scale', () => {
+  const v = panBy({ k: 1.7, tx: 5, ty: -5 }, 30, -12);
+  assert.deepEqual(v, { k: 1.7, tx: 35, ty: -17 });
+});
+
+test('fitView frames every node inside the viewport', () => {
+  const size = 720;
+  const sim = createSim(ringGraph(24));
+  settle(sim);
+  const v = fitView(sim.nodes, size);
+  for (const n of sim.nodes) {
+    const sx = n.x * v.k + v.tx;
+    const sy = n.y * v.k + v.ty;
+    assert.ok(sx >= 0 && sx <= size, `x ${sx.toFixed(1)} inside 0..${size}`);
+    assert.ok(sy >= 0 && sy <= size, `y ${sy.toFixed(1)} inside 0..${size}`);
+  }
+  // a tight cluster zooms in, but never past the max
+  const tight = [{ x: 359, y: 359, r: 6 }, { x: 361, y: 361, r: 6 }];
+  assert.ok(fitView(tight, size).k <= ZOOM_MAX);
+  assert.deepEqual(fitView([], size), IDENTITY_VIEW, 'empty graph: identity, no NaN');
 });
 
 test('graph layout: most-connected in the centre, 300-node budget, no NaN coordinates', () => {
