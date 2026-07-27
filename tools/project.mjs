@@ -17,7 +17,7 @@
 //                        deprecated sink, importance/heat/decay weigh in), ties by freshness then id.
 // Anti-echo: a fact whose `source` is the target engine's excludeSource is dropped — an engine
 // never gets its own writes projected back at it.
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load, displayTitle, displayType } from './lib/okf.mjs';
@@ -28,6 +28,17 @@ import { readProjectionConfig, migrateProjectionConfig } from './lib/projection-
 import { ENGINE_FILES } from './install.mjs';
 import { injectBetweenMarkers } from './lib/inject.mjs';
 import { withFileLock } from '../lib/file-lock.mjs';
+import { writeHealth } from './lib/health.mjs';
+
+// version stamped into .samemind/health.json — read once at load time, same pattern as
+// tools/lib/mcp.mjs's SERVER_VERSION.
+const PKG_VERSION = (() => {
+  try {
+    return JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')).version;
+  } catch {
+    return null;
+  }
+})();
 
 export const PROJECT_START = '<!-- samemind:project:start -->';
 export const PROJECT_END = '<!-- samemind:project:end -->';
@@ -134,8 +145,22 @@ function usage() {
   console.log(`Known engines: ${Object.keys(ENGINE_FILES).join(', ')}`);
 }
 
+/** Health is a secondary side-effect of a run — a write failure here must never fail the run
+ *  itself (see tools/lib/health.mjs). */
+function writeHealthSafe(root, fields) {
+  try {
+    writeHealth(root, { ...fields, version: PKG_VERSION });
+  } catch (e) {
+    console.warn(`project: health write failed (non-fatal): ${e.message}`);
+  }
+}
+
 /** Throws on any error (loud-fail — no silent catch); the top-level handler turns it into a
- *  non-zero exit with one actionable stderr line. Returns 0 on success. */
+ *  non-zero exit with one actionable stderr line. Returns 0 on success.
+ *
+ *  Every real (non-dry-run) run — success or failure — records its outcome to .samemind/
+ *  health.json (writeHealthSafe) so `samemind status` can tell "is memory projection alive"
+ *  without parsing logs. --dry-run never writes health: it's not a real run. */
 export function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
   if (args.help) { usage(); return 0; }
@@ -147,51 +172,57 @@ export function main(argv = process.argv.slice(2)) {
   const root = resolve(args.root || process.env.OKF_ROOT || process.cwd());
   if (!existsSync(root)) throw new Error(`root not found: ${root} (pass --root <dir> or set OKF_ROOT)`);
 
-  const cfg = readProjectionConfig(root);
-  const factSource = args.source || cfg.factSource;
-  const budgetTokens = Number.isFinite(args.budget) ? args.budget : cfg.budgetTokens;
-  const coreFresh = Number.isFinite(args.coreFresh) ? args.coreFresh : cfg.coreFresh;
-  const indexTail = cfg.indexTail;
+  try {
+    const cfg = readProjectionConfig(root);
+    const factSource = args.source || cfg.factSource;
+    const budgetTokens = Number.isFinite(args.budget) ? args.budget : cfg.budgetTokens;
+    const coreFresh = Number.isFinite(args.coreFresh) ? args.coreFresh : cfg.coreFresh;
+    const indexTail = cfg.indexTail;
 
-  // Ad-hoc --engine wins over config targets; its anti-echo source defaults to the engine id
-  // (an engine's own writes carry source=<engine>). Config targets carry their own excludeSource.
-  const targets = args.engine
-    ? [{ engine: args.engine, excludeSource: args.engine }]
-    : cfg.targets;
-  if (!targets.length) {
-    throw new Error('no target: pass --engine <id>, or add projection.targets to .samemind/config.json');
-  }
+    // Ad-hoc --engine wins over config targets; its anti-echo source defaults to the engine id
+    // (an engine's own writes carry source=<engine>). Config targets carry their own excludeSource.
+    const targets = args.engine
+      ? [{ engine: args.engine, excludeSource: args.engine }]
+      : cfg.targets;
+    if (!targets.length) {
+      throw new Error('no target: pass --engine <id>, or add projection.targets to .samemind/config.json');
+    }
 
-  // Validate every target engine up front (loud-fail before touching disk). --file only applies
-  // to a single ad-hoc --engine target, not to config-declared ones.
-  const plan = targets.map(t => ({ ...t, files: targetFilesFor(t.engine, args.engine ? args.file : null) }));
+    // Validate every target engine up front (loud-fail before touching disk). --file only applies
+    // to a single ad-hoc --engine target, not to config-declared ones.
+    const plan = targets.map(t => ({ ...t, files: targetFilesFor(t.engine, args.engine ? args.file : null) }));
 
-  const docs = load({ includeSecret: false }, root);
+    const docs = load({ includeSecret: false }, root);
 
-  if (args.dryRun) {
+    if (args.dryRun) {
+      for (const t of plan) {
+        const { block } = buildProjectBlock(docs, { factSource, excludeSource: t.excludeSource, budgetTokens, coreFresh, indexTail });
+        if (plan.length > 1) console.log(`# --- ${t.engine} ---`);
+        console.log(block);
+      }
+      return 0; // dry-run: no health write, not a real run
+    }
+
+    // Write path: stamp config schema (idempotent no-op if already migrated / no config file) — the
+    // one place a projection run writes the config. Skipped on --dry-run so dry-run writes nothing.
+    migrateProjectionConfig(root);
+
     for (const t of plan) {
-      const { block } = buildProjectBlock(docs, { factSource, excludeSource: t.excludeSource, budgetTokens, coreFresh, indexTail });
-      if (plan.length > 1) console.log(`# --- ${t.engine} ---`);
-      console.log(block);
+      const { block, count, truncated } = buildProjectBlock(docs, { factSource, excludeSource: t.excludeSource, budgetTokens, coreFresh, indexTail });
+      for (const rel of t.files) {
+        const abs = resolve(root, rel);
+        mkdirSync(dirname(abs), { recursive: true }); // lockdir mkdir is non-recursive — parent must exist
+        const res = withFileLock(abs, () => injectBetweenMarkers(abs, block, PROJECT_START, PROJECT_END));
+        const verb = res.replaced ? 'updated' : res.created ? 'created' : 'appended';
+        console.log(`✓ ${t.engine} ${verb} ${rel} (${count} fact${count === 1 ? '' : 's'}${truncated ? ', truncated' : ''})`);
+      }
     }
+    writeHealthSafe(root, { ok: true, targets: plan.map(t => t.engine) });
     return 0;
+  } catch (e) {
+    if (!args.dryRun) writeHealthSafe(root, { ok: false, lastError: e.message });
+    throw e;
   }
-
-  // Write path: stamp config schema (idempotent no-op if already migrated / no config file) — the
-  // one place a projection run writes the config. Skipped on --dry-run so dry-run writes nothing.
-  migrateProjectionConfig(root);
-
-  for (const t of plan) {
-    const { block, count, truncated } = buildProjectBlock(docs, { factSource, excludeSource: t.excludeSource, budgetTokens, coreFresh, indexTail });
-    for (const rel of t.files) {
-      const abs = resolve(root, rel);
-      mkdirSync(dirname(abs), { recursive: true }); // lockdir mkdir is non-recursive — parent must exist
-      const res = withFileLock(abs, () => injectBetweenMarkers(abs, block, PROJECT_START, PROJECT_END));
-      const verb = res.replaced ? 'updated' : res.created ? 'created' : 'appended';
-      console.log(`✓ ${t.engine} ${verb} ${rel} (${count} fact${count === 1 ? '' : 's'}${truncated ? ', truncated' : ''})`);
-    }
-  }
-  return 0;
 }
 
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);

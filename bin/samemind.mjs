@@ -17,6 +17,7 @@
 //   npx samemind capture --engine <id>   → tools/capture.mjs     (read-only capture of a live engine session store → inbox)
 //   npx samemind ledger <cmd> ...        → tools/ledger.mjs      (append-only event ledger: append|status|read)
 //   npx samemind fleet <cmd> ...         → tools/fleet.mjs       (engine registry: init|status|assign|set)
+//   npx samemind service <cmd> ...       → tools/service.mjs     (install|status|uninstall periodic `project` as an OS user-unit)
 //   npx samemind serve                   → tools/mcp-server.mjs  (MCP stdio server: memory_* tools)
 //
 // query/recall/gde are routed with OKF_ROOT defaulted to the caller's cwd, so the tools
@@ -43,11 +44,13 @@ const ROUTES = {
   reflect: 'tools/reflect.mjs',
   install: 'tools/install.mjs',
   project: 'tools/project.mjs',
+  status: 'tools/status.mjs',
   export: 'tools/export.mjs',
   import: 'tools/import.mjs',
   capture: 'tools/capture.mjs',
   ledger: 'tools/ledger.mjs',
   fleet: 'tools/fleet.mjs',
+  service: 'tools/service.mjs',
   ui: 'tools/ui.mjs',
   serve: 'tools/mcp-server.mjs',
   proactive: 'tools/proactive.mjs',
@@ -70,11 +73,13 @@ function usage() {
   console.log('  reflect [...]         Ф5 reconcile+consolidate+heat proposal report (--write) — human-gate, prints/saves a report, never writes canon');
   console.log('  install --agent <id>  wire brief+protocol into an engine\'s instruction file (--list — list them; --agent all — into all existing ones)');
   console.log('  project [...]         project curated FACTS into an engine instruction file (between samemind:project markers): --engine <id> | config targets, --source canon|bundle, --budget <n>, --dry-run');
+  console.log('  status [...]          is memory projection alive: reads .samemind/health.json written by `project` (--root <dir>, --json)');
   console.log('  export <dir> [...]    shareable OKF-bundle (no secret/mirror/inbox); --visibility public|internal --dry-run --to-gbrain');
   console.log('  import <dir> [...]    accept a foreign OKF-bundle; --into inbox|concepts (default inbox) — see docs/interop.md');
   console.log('  capture --engine <id> [--source <path>] [--since <ts>] [--limit N] [--yes] [--dry-run]   read-only capture of a live engine session store → inbox/<engine>.md; bulk (20+ new items) asks for confirmation first — see docs/session-capture.md');
   console.log('  ledger <cmd> ...      append-only event ledger: append --actor .. --topic .. --phase .. [--status ..] --action ".." | status [--json] | read --topic <t> — see docs/event-ledger.md');
   console.log('  fleet <cmd> ...       engine registry: init [--target <dir>] | status [--json] | assign --engine <id> --topic <t> --goal ".." --verify ".." | set --engine <id> --status active|reserve|dead [--role r] [--heartbeat N] [--zone ".."] — see docs/fleet.md');
+  console.log('  service <cmd> ...     install|status|uninstall a periodic `samemind project` as a per-user OS unit (mac LaunchAgent / linux systemd --user / win Scheduled Task); no sudo, no network — see docs, explicit command only (never postinstall)');
   console.log('  ui [...]              local read-only dashboard over the bundle, GET /api/* (--port N default 7787, --root <dir>, --open) — see docs/ui-spec.md');
   console.log('  serve                 MCP stdio server (memory_search/get/list/write_inbox/handoff/health/ledger_append/ledger_status) — connect it as an MCP tool');
   console.log('  proactive "<msg>"     Active Memory prototype: auto top-k recall pack before answer (-k N --json --force --pack)');
