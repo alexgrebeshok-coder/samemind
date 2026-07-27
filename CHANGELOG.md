@@ -3,6 +3,34 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.12.0] — 2026-07-27
+
+Memory projection becomes a first-class, tested part of the product. Until now the logic that
+renders curated facts into an engine's instruction file lived only in a private orchestrator —
+untested here, which is exactly how a stale snapshot once reached a downstream engine. That
+core now ships in samemind, under tests, behind a new command.
+
+### Added
+
+- **`samemind project`** — projects a fact block into an engine's instruction file (its own
+  `<!-- samemind:project:start/end -->` markers, coexisting with the `install` identity block).
+  Config-driven via a new `projection` section in `.samemind/config.json`
+  (`budgetTokens`/`factSource`/`coreFresh`/`indexTail`/`targets[]`), or ad-hoc `--engine`;
+  `--dry-run`, `--source canon|bundle`, `--budget`, `--core-fresh`. Ranks canon by recency,
+  bundle by hygiene score; anti-echo per target (`sourceMatches`); dedup-by-name (the direct
+  fix for the stale-snapshot bug class); hard budget with marker-preserving truncation. Fails
+  loud — non-zero exit with an actionable message, never a silent log.
+- **`tools/lib/project.mjs`** — pure, side-effect-free projection core (`renderFactEntries`,
+  `dedupeByName`, `truncateBlock`, `stripSections`, `stripMarkerBlocks`), lifted from the
+  private bridge and put under tests.
+- **`tools/lib/projection-config.mjs`** — pure `readProjectionConfig` (in-memory merge
+  global←project) + explicit `migrateProjectionConfig` (schema_version, preserves foreign keys).
+
+### Changed
+
+- `install`/`brief` injection refactored onto one shared `injectBetweenMarkers`
+  (`tools/lib/inject.mjs`) — behavior byte-identical, existing tests unchanged.
+
 ## [0.11.0] — 2026-07-26
 
 The board fills itself: when a bundle has a ledger but no Task docs (the common case for
