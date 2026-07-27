@@ -68,8 +68,11 @@ describe('okf-recall.mjs CLI — multi-root', () => {
   });
 
   it('OKF_GLOBAL_ROOT="" (explicitly disabled) == project-only output', () => {
-    const disabled = run(OKF_RECALL, ['widgets', '-k', '5', '--mode', 'bm25'], { OKF_ROOT: projectRoot, OKF_GLOBAL_ROOT: '' });
-    const projectOnly = run(OKF_RECALL, ['widgets', '-k', '5', '--mode', 'bm25'], { OKF_ROOT: projectRoot, OKF_GLOBAL_ROOT: undefined });
+    // HOME=emptyHome on BOTH runs: `undefined` falls back to homedir-resolved ~/.samemind/bundle,
+    // which on a dogfooding machine is a live bundle mutated by background tacts — without pinning
+    // HOME the two runs race against that and diverge. (Same isolation as the sibling test above.)
+    const disabled = run(OKF_RECALL, ['widgets', '-k', '5', '--mode', 'bm25'], { OKF_ROOT: projectRoot, OKF_GLOBAL_ROOT: '', HOME: emptyHome });
+    const projectOnly = run(OKF_RECALL, ['widgets', '-k', '5', '--mode', 'bm25'], { OKF_ROOT: projectRoot, OKF_GLOBAL_ROOT: undefined, HOME: emptyHome });
     assert.equal(disabled.stdout, projectOnly.stdout);
   });
 

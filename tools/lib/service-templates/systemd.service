@@ -1,0 +1,21 @@
+[Unit]
+Description=samemind periodic project — memory projection into engine instruction files
+Documentation=https://github.com/alexgrebeshok-coder/samemind
+
+[Service]
+Type=oneshot
+ExecStart=${NODE} ${CLI} project --root ${ROOT}
+StandardOutput=append:${LOG}
+StandardError=append:${ERRLOG}
+
+# --- samemind:timer --- everything below this line is written to ${LABEL}.timer, not the .service unit
+[Unit]
+Description=samemind periodic project timer — triggers ${LABEL}.service every ${INTERVAL}s
+
+[Timer]
+OnBootSec=${INTERVAL}
+OnUnitActiveSec=${INTERVAL}
+Persistent=true
+
+[Install]
+WantedBy=default.target
