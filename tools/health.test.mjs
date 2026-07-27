@@ -255,7 +255,10 @@ describe('samemind status — CLI', () => {
     try {
       try { runProject(['--engine', 'not-a-real-engine'], root, home); } catch { /* expected non-zero */ }
       const parsed = JSON.parse(runStatus(['--json'], root, home));
-      assert.equal(parsed.data.state, 'ok', 'fresh but failed run is still a live (recent) heartbeat');
+      // liveness = the heartbeat is fresh; state folds outcome in → a failed run is NOT a
+      // silent green (that's the bug class this layer exists to kill).
+      assert.equal(parsed.data.liveness, 'ok', 'fresh but failed run is still a live (recent) heartbeat');
+      assert.equal(parsed.data.state, 'failed', 'a fresh-but-failed run must not display as ok');
       assert.equal(parsed.data.ok, false);
       assert.match(parsed.data.lastError, /unknown engine/);
     } finally {
