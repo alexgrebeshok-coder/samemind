@@ -21,12 +21,12 @@
 // explicitly; under `--agent all` a shared file that already exists gets the generic
 // (no single --engine) brief, since which of its several readers is actually in use can't be
 // inferred from the file's mere presence.
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildBrief, BRIEF_START, BRIEF_END, DEFAULT_BUDGET_TOKENS } from './brief.mjs';
 import { load } from './lib/okf.mjs';
-import { atomicWriteFileSync } from '../lib/atomic-write.mjs';
+import { injectBetweenMarkers } from './lib/inject.mjs';
 
 export const INSTALL_START = '<!-- samemind:install:start -->';
 export const INSTALL_END = '<!-- samemind:install:end -->';
@@ -116,27 +116,7 @@ export function buildInstallBlock(docs, engineId, { budgetTokens = DEFAULT_BUDGE
  * job, see installEngine) if it doesn't exist yet. Same shape as brief.mjs's injectBrief.
  */
 export function injectInstallBlock(filePath, block) {
-  const target = resolve(filePath);
-  const exists = existsSync(target);
-  const original = exists ? readFileSync(target, 'utf8') : '';
-
-  const startIdx = original.indexOf(INSTALL_START);
-  const endIdx = original.indexOf(INSTALL_END);
-
-  let next;
-  let replaced = false;
-  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-    const tail = original.slice(endIdx + INSTALL_END.length);
-    next = original.slice(0, startIdx) + block + tail;
-    replaced = true;
-  } else if (!exists || !original.trim()) {
-    next = `${block}\n`;
-  } else {
-    next = `${original.replace(/\n*$/, '\n\n')}${block}\n`;
-  }
-
-  atomicWriteFileSync(target, next);
-  return { file: target, created: !exists, replaced };
+  return injectBetweenMarkers(filePath, block, INSTALL_START, INSTALL_END);
 }
 
 /** All (relative-path → owning engine ids[]) pairs, in ENGINE_FILES declaration order. */

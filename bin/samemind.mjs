@@ -42,6 +42,7 @@ const ROUTES = {
   reconcile: 'tools/reconcile.mjs',
   reflect: 'tools/reflect.mjs',
   install: 'tools/install.mjs',
+  project: 'tools/project.mjs',
   export: 'tools/export.mjs',
   import: 'tools/import.mjs',
   capture: 'tools/capture.mjs',
@@ -68,6 +69,7 @@ function usage() {
   console.log('  reconcile [...]       Ф2 bi-temporal supersede proposals (--dir <subpath> --write) — human-gate, prints/saves a report, never writes canon');
   console.log('  reflect [...]         Ф5 reconcile+consolidate+heat proposal report (--write) — human-gate, prints/saves a report, never writes canon');
   console.log('  install --agent <id>  wire brief+protocol into an engine\'s instruction file (--list — list them; --agent all — into all existing ones)');
+  console.log('  project [...]         project curated FACTS into an engine instruction file (between samemind:project markers): --engine <id> | config targets, --source canon|bundle, --budget <n>, --dry-run');
   console.log('  export <dir> [...]    shareable OKF-bundle (no secret/mirror/inbox); --visibility public|internal --dry-run --to-gbrain');
   console.log('  import <dir> [...]    accept a foreign OKF-bundle; --into inbox|concepts (default inbox) — see docs/interop.md');
   console.log('  capture --engine <id> [--source <path>] [--since <ts>] [--limit N] [--yes] [--dry-run]   read-only capture of a live engine session store → inbox/<engine>.md; bulk (20+ new items) asks for confirmation first — see docs/session-capture.md');

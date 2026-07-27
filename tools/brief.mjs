@@ -18,12 +18,10 @@
 // --inject <file>  idempotently insert/replace the brief between
 //                   <!-- samemind:brief:start --> / <!-- samemind:brief:end --> markers in
 //                   <file>. Text outside the markers is never touched; no file → created.
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load } from './lib/okf.mjs';
 import { sourceMatches } from './lib/recall.mjs';
-import { atomicWriteFileSync } from '../lib/atomic-write.mjs';
+import { injectBetweenMarkers } from './lib/inject.mjs';
 
 export const BRIEF_START = '<!-- samemind:brief:start -->';
 export const BRIEF_END = '<!-- samemind:brief:end -->';
@@ -240,27 +238,7 @@ export function buildBrief(docs, { engine = null, budgetTokens = DEFAULT_BUDGET_
  * it doesn't exist.
  */
 export function injectBrief(filePath, briefBlock) {
-  const target = resolve(filePath);
-  const exists = existsSync(target);
-  const original = exists ? readFileSync(target, 'utf8') : '';
-
-  const startIdx = original.indexOf(BRIEF_START);
-  const endIdx = original.indexOf(BRIEF_END);
-
-  let next;
-  let replaced = false;
-  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-    const tail = original.slice(endIdx + BRIEF_END.length);
-    next = original.slice(0, startIdx) + briefBlock + tail;
-    replaced = true;
-  } else if (!exists || !original.trim()) {
-    next = `${briefBlock}\n`;
-  } else {
-    next = `${original.replace(/\n*$/, '\n\n')}${briefBlock}\n`;
-  }
-
-  atomicWriteFileSync(target, next);
-  return { file: target, created: !exists, replaced };
+  return injectBetweenMarkers(filePath, briefBlock, BRIEF_START, BRIEF_END);
 }
 
 function parseArgs(argv) {
