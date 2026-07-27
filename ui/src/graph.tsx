@@ -37,11 +37,17 @@ import { Chip } from './ui';
 // 103 nodes and the middle became a wall of text; deg>=10 still stacked 16 labels in the dense
 // centre, because that is exactly where hubs sit. deg>=14 leaves 7. Everything else is labelled on
 // hover, or once you zoom past LABEL_ZOOM.
-// ponytail: no label collision avoidance — the few remaining centre labels can still overlap at the
-// far zoom. A greedy "skip a label whose box hits one already placed" pass in paint() is the
-// upgrade, worth it only if the far view is where people actually read names.
 const LABEL_MIN_DEG = 14;
 const WAKE_ALPHA = 0.4; // how much life an interaction breathes back into a settled layout
+
+// Greedy label collision avoidance (paint(), below): even the deg>=14 set can still overlap in the
+// dense centre. No real text metrics — screen space is small and the call runs every frame, so the
+// box is just char-count * a flat per-character width, in screen px (the font is a constant 11px
+// on screen at every zoom — see the `text` element below — so screen-space px, not world units).
+// ponytail: flat char width, not measured glyph widths; wrong by a few px on wide letters, cheap
+// enough to run per frame and nobody reads it that close to correct.
+const LABEL_CHAR_PX = 6;
+const LABEL_BOX_H = 14;
 
 function trim(s: string, n = 26) {
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
@@ -220,6 +226,9 @@ function ForceGraph({ graph, onOpen }: { graph: Graph; onOpen: (id: string) => v
     if (reduced) settle(s); // reduced motion: arrive already at rest, never animate
     return s;
   }, [graph, reduced]);
+  // SimNode objects are mutated in place by tick() (x/y move, deg/title/id never change) — a map
+  // built once per sim stays live for the collision pass below without recomputing per frame.
+  const byId = useMemo(() => new Map(sim.nodes.map((n) => [n.id, n])), [sim]);
 
   const [hover, setHoverState] = useState<string | null>(null);
   // Only what the MARKUP depends on lives in state: the zoom percentage readout and whether every
@@ -232,6 +241,7 @@ function ForceGraph({ graph, onOpen }: { graph: Graph; onOpen: (id: string) => v
   const svgRef = useRef<SVGSVGElement>(null);
   const sceneRef = useRef<SVGGElement>(null);
   const nodeEls = useRef(new Map<string, SVGGElement>());
+  const labelEls = useRef(new Map<string, SVGTextElement>());
   const relPathRef = useRef<SVGPathElement>(null);
   const linkPathRef = useRef<SVGPathElement>(null);
   const litPathRef = useRef<SVGPathElement>(null);
@@ -263,7 +273,41 @@ function ForceGraph({ graph, onOpen }: { graph: Graph; onOpen: (id: string) => v
     relPathRef.current?.setAttribute('d', rel);
     linkPathRef.current?.setAttribute('d', link);
     litPathRef.current?.setAttribute('d', lit);
-  }, [sim]);
+
+    // Label collision avoidance: past LABEL_ZOOM every node is labelled on purpose (zoomed in far
+    // enough that the centre has spread apart) — skip the pass entirely and show them all, same as
+    // before this fix. Below that, walk the mounted labels by degree (hover always first, drawn
+    // regardless of overlap — it is the one label the user asked to see) and hide any whose
+    // estimated box hits one already placed.
+    if (labelEls.current.size) {
+      if (v.k >= LABEL_ZOOM) {
+        for (const el of labelEls.current.values()) el.style.display = '';
+      } else {
+        const order = [...labelEls.current.keys()]
+          .map((id) => byId.get(id))
+          .filter((n): n is SimNode => !!n)
+          .sort((a, b) => (a.id === hovered ? -1 : b.id === hovered ? 1 : b.deg - a.deg));
+        const placed: { x: number; y: number; w: number }[] = [];
+        for (const n of order) {
+          const el = labelEls.current.get(n.id);
+          if (!el) continue;
+          const sx = v.tx + n.x * v.k;
+          // The label floats above its node by (r*k + 5px) — see the `text y=` below. Comparing
+          // raw node centres instead of this actual label position was the first cut of this fix
+          // and missed real overlaps: two labels can float into the same screen band even when
+          // their nodes sit tens of px apart, because bigger hubs push their label further up.
+          const sy = v.ty + n.y * v.k - (n.r * v.k + 5);
+          const w = trim(n.title).length * LABEL_CHAR_PX;
+          const isHover = n.id === hovered;
+          const hit =
+            !isHover &&
+            placed.some((p) => Math.abs(sx - p.x) < (w + p.w) / 2 && Math.abs(sy - p.y) < LABEL_BOX_H);
+          el.style.display = hit ? 'none' : '';
+          if (!hit) placed.push({ x: sx, y: sy, w });
+        }
+      }
+    }
+  }, [sim, byId]);
 
   const applyView = useCallback(
     (next: View) => {
@@ -529,6 +573,10 @@ function ForceGraph({ graph, onOpen }: { graph: Graph; onOpen: (id: string) => v
                   {labelled ? (
                     // sizes divided by the scale so a label reads the same at 20% and at 400%
                     <text
+                      ref={(el) => {
+                        if (el) labelEls.current.set(p.id, el);
+                        else labelEls.current.delete(p.id);
+                      }}
                       y={-p.r - 5 / zoomState.k}
                       textAnchor="middle"
                       fontSize={11 / zoomState.k}

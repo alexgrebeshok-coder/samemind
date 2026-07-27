@@ -258,7 +258,10 @@ export function Memory({ id }: { id: string | null }) {
             </button>
           ))}
         </div>
-        <label className="flex min-w-[12rem] flex-1 items-center gap-2 rounded-[12px] border border-line bg-surface px-3 py-2 focus-within:border-accent">
+        {/* Narrow screens (<900px, same threshold the sidebar collapses at — spec §2): the search
+            box was squeezed to ~267px by the two selects sharing the row, clipping its placeholder
+            with no ellipsis. Push it to its own full-width row instead of letting it shrink. */}
+        <label className="order-last flex min-w-[12rem] grow shrink basis-full items-center gap-2 rounded-[12px] border border-line bg-surface px-3 py-2 focus-within:border-accent min-[900px]:order-none min-[900px]:basis-0">
           <span aria-hidden="true" className="text-muted">
             ⌕
           </span>
