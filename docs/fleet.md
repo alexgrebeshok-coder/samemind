@@ -283,7 +283,7 @@ samemind fleet set --engine <id> --status active|reserve|dead [--role r] [--hear
 ## MCP
 
 Two tools, alongside the eight already documented in the
-[README → MCP](../README.md#mcp) / [docs/event-ledger.md → MCP](event-ledger.md#mcp) —
+[docs/full-guide.md § MCP](full-guide.md#mcp) / [docs/event-ledger.md → MCP](event-ledger.md#mcp) —
 thin wrappers over the same pure `tools/lib/fleet.mjs` this document covers, no logic
 duplicated:
 

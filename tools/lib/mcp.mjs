@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 
 import { ROOT, load, findById } from './okf.mjs';
 import {
-  fetchEmbedding, recallSearch, extractSnippet, resolveEmbedConfig,
+  fetchEmbedding, recallSearch, extractSnippet, resolveEmbedConfig, expandHits, DEFAULT_EXPAND_BUDGET,
 } from './recall.mjs';
 import { scanForInjection } from './injection.mjs';
 import { buildHeatIndex, heatScore, heatTier } from './hygiene.mjs';
@@ -67,7 +67,7 @@ function readableDocs() {
 export const TOOLS = [
   {
     name: 'memory_search',
-    description: 'Search the memory bundle (semantic if an index exists and answers, BM25 fallback otherwise). Never returns secret-visibility concepts. Pass exclude_source (an engine id like "claude-code") to filter out concepts authored by that source — anti-echo, so an engine does not get back what it just wrote. Results also fold in the global personal bundle ($HOME/.samemind/bundle by default, U5 "Same mind") — those hits carry source: "global"; pass no_global: true to search the project bundle only.',
+    description: 'Search the memory bundle (semantic if an index exists and answers, BM25 fallback otherwise). Never returns secret-visibility concepts. Pass exclude_source (an engine id like "claude-code") to filter out concepts authored by that source — anti-echo, so an engine does not get back what it just wrote. Results also fold in the global personal bundle ($HOME/.samemind/bundle by default, U5 "Same mind") — those hits carry source: "global"; pass no_global: true to search the project bundle only. Pass expand: true to also pull in 1-hop graph neighbors (typed `relations` edges + reverse wikilinks) of the top hits, returned in a separate `expanded` block — same graph-expand CLI users get via `okf-recall.mjs --expand` (G2); budget-capped via expand_budget (default 5).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -76,6 +76,8 @@ export const TOOLS = [
         mode: { type: 'string', enum: ['bm25', 'semantic', 'hybrid', 'auto'], description: 'Search mode (default auto). hybrid (Ф3) fuses BM25+semantic via RRF, falls back to BM25 if the embeddings endpoint is unavailable.' },
         exclude_source: { type: 'string', pattern: '^[a-z0-9-]+$', description: 'Drop concepts whose frontmatter `source` is this id (anti-echo). Lowercase letters, digits, hyphens only.' },
         no_global: { type: 'boolean', description: 'Skip the global personal bundle — search only this project\'s memory (default false).' },
+        expand: { type: 'boolean', description: '1-hop graph expand: also return neighbors of the top hits (relations + reverse wikilinks), in a separate `expanded` block, never mixed into `results` ranking (default false).' },
+        expand_budget: { type: 'integer', minimum: 1, description: `Max expanded neighbors, shared across all seed hits (default ${DEFAULT_EXPAND_BUDGET}). Only used when expand is true.` },
       },
       required: ['query'],
     },
@@ -174,9 +176,15 @@ export const TOOLS = [
   },
 ];
 
-async function memorySearch({ query, k = 5, mode = 'auto', exclude_source, no_global } = {}) {
+async function memorySearch({
+  query, k = 5, mode = 'auto', exclude_source, no_global, expand, expand_budget,
+} = {}) {
   if (!query || !String(query).trim()) throw new Error('memory_search: "query" is required');
   const kk = Number.isFinite(Number(k)) && Number(k) > 0 ? Math.floor(Number(k)) : 5;
+  const doExpand = !!expand;
+  const budget = Number.isFinite(Number(expand_budget)) && Number(expand_budget) > 0
+    ? Math.floor(Number(expand_budget))
+    : DEFAULT_EXPAND_BUDGET;
   let excludeSource = null;
   if (exclude_source !== undefined && exclude_source !== null && String(exclude_source).trim()) {
     excludeSource = String(exclude_source);
@@ -216,9 +224,33 @@ async function memorySearch({ query, k = 5, mode = 'auto', exclude_source, no_gl
     };
   });
   const warnings = [warning, ...(dedupWarnings || [])].filter(Boolean);
-  return {
+  const out = {
     query, mode: used, warning: warnings.length ? warnings.join('; ') : null, count: results.length, results,
   };
+
+  // G2 — 1-hop graph expand (opt-in, MCP parity with `okf-recall.mjs --expand`): walked over the
+  // project docs ∪ the (already project-deduped) global docs — same pool okf-recall.mjs's own
+  // `query()` builds — so a global-root neighbor never shadows a same-id project doc. `docs` here
+  // is readableDocs() (secret always excluded, see module header); globalHalf.docs is loaded with
+  // the same includeSecret:false above — so the expand pool can never contain a secret concept,
+  // and expandHits' own hygiene gate (isDeprecated/isStaleForRecall) drops superseded/deprecated
+  // neighbors on top of that. Kept as its own `expanded` block, never merged into `results`.
+  if (doExpand) {
+    const pool = globalHalf?.docs?.length ? [...docs, ...globalHalf.docs] : docs;
+    const extra = expandHits(hits, pool, { budget });
+    out.expanded = extra.map(e => {
+      const doc = docById.get(e.id) || globalDocById.get(e.id);
+      return {
+        id: e.id,
+        type: e.type || null,
+        title: e.title || null,
+        hop: 1,
+        expandedFrom: e.expandedFrom,
+        snippet: extractSnippet(doc?.body || '', query, { contextLines: 1 }),
+      };
+    });
+  }
+  return out;
 }
 
 async function memoryGet({ id } = {}) {

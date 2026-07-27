@@ -54,6 +54,22 @@ tags: [lumen, notes]
 
 A fresh note about the Lumen notes editor that claude-code just wrote.
 `, 'utf8');
+  // relations edge pointing AT the secret vault — used by the G2 expand secret-isolation test
+  // (expand must never surface a secret-visibility neighbor, even one hop from a live hit).
+  writeFileSync(join(BUNDLE_DIR, 'projects', 'leaky-expand.md'), `---
+type: Concept
+title: Leaky Expand Seed
+description: unique-expand-seed-marker whose only relation targets the secret vault
+visibility: internal
+tags: [leaky]
+relations:
+  touches: [/secret/vault.md]
+---
+
+# Leaky Expand Seed
+
+Proves 1-hop expand never pulls a secret-visibility neighbor in.
+`, 'utf8');
 });
 
 after(() => {
@@ -318,6 +334,101 @@ describe('MCP stdio — memory_search', () => {
       const search = res.result.tools.find(t => t.name === 'memory_search');
       assert.ok(search.inputSchema.properties.exclude_source, 'exclude_source property declared');
       assert.match(search.inputSchema.properties.exclude_source.pattern, /\[a-z0-9-\]/);
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+describe('MCP stdio — memory_search expand (G2 1-hop graph expand parity)', () => {
+  it('expand omitted/false: no `expanded` key at all — byte-identical to pre-G2 shape', async () => {
+    const client = startClient({ OKF_EMBED_URL: '', OKF_GLOBAL_ROOT: '' });
+    try {
+      await initialized(client);
+      const res = await client.request('tools/call', {
+        name: 'memory_search',
+        arguments: { query: 'lumen notes', k: 1 },
+      });
+      const payload = toolPayload(res);
+      assert.ok(!('expanded' in payload), JSON.stringify(payload));
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('expand: true returns 1-hop relation neighbors of a hit in a separate `expanded` block', async () => {
+    const client = startClient({ OKF_EMBED_URL: '', OKF_GLOBAL_ROOT: '' });
+    try {
+      await initialized(client);
+      // k generous on purpose: this bundle also has projects/engine-echo.md (added for the
+      // exclude_source tests, itself full of "lumen notes" terms) competing for BM25 rank —
+      // this test is about expand pulling projects/lumen's own relations once it IS a hit, not
+      // about winning rank #1 (that's covered by the plain memory_search test above).
+      const res = await client.request('tools/call', {
+        name: 'memory_search',
+        arguments: { query: 'lumen notes', k: 10, expand: true },
+      });
+      const payload = toolPayload(res);
+      assert.ok(payload.results.some(r => r.id === 'projects/lumen'), JSON.stringify(payload));
+      assert.ok(Array.isArray(payload.expanded), JSON.stringify(payload));
+      assert.ok(payload.expanded.length > 0);
+      // known outbound relation of projects/lumen in the demo bundle (relations.depends_on)
+      const neighbor = payload.expanded.find(e => e.id === 'concepts/retrieval-strategy');
+      assert.ok(neighbor, JSON.stringify(payload.expanded));
+      assert.equal(neighbor.hop, 1);
+      assert.equal(neighbor.expandedFrom, 'projects/lumen');
+      // expanded rows never mixed into the ranked `results` array
+      assert.ok(!payload.results.some(r => r.id === 'concepts/retrieval-strategy'));
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('expand_budget caps the number of expanded neighbors', async () => {
+    const client = startClient({ OKF_EMBED_URL: '', OKF_GLOBAL_ROOT: '' });
+    try {
+      await initialized(client);
+      const res = await client.request('tools/call', {
+        name: 'memory_search',
+        arguments: {
+          query: 'lumen notes', k: 10, expand: true, expand_budget: 1,
+        },
+      });
+      const payload = toolPayload(res);
+      assert.equal(payload.expanded.length, 1);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('a secret-visibility neighbor is never surfaced by expand, even 1 hop from a live hit', async () => {
+    const client = startClient({ OKF_EMBED_URL: '', OKF_GLOBAL_ROOT: '' });
+    try {
+      await initialized(client);
+      const res = await client.request('tools/call', {
+        name: 'memory_search',
+        arguments: {
+          query: 'unique-expand-seed-marker', k: 5, expand: true, expand_budget: 20,
+        },
+      });
+      const payload = toolPayload(res);
+      assert.ok(payload.results.some(r => r.id === 'projects/leaky-expand'), JSON.stringify(payload));
+      assert.ok(!(payload.expanded || []).some(e => e.id === 'secret/vault'), JSON.stringify(payload.expanded));
+      assert.ok(!JSON.stringify(payload).includes(TOP_SECRET_MARKER));
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('memory_search advertises expand and expand_budget in its input schema', async () => {
+    const client = startClient();
+    try {
+      await initialized(client);
+      const res = await client.request('tools/list', {});
+      const search = res.result.tools.find(t => t.name === 'memory_search');
+      assert.equal(search.inputSchema.properties.expand.type, 'boolean');
+      assert.equal(search.inputSchema.properties.expand_budget.type, 'integer');
+      assert.match(search.description, /expand/);
     } finally {
       await client.close();
     }

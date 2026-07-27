@@ -86,8 +86,8 @@ project's own `mcp add`/config-file docs — the JSON/TOML shape is the same
 
 ## See also
 
-- [README → MCP](../README.md#mcp) — what `samemind serve` exposes (tool list, security perimeter).
-- [README → Compatibility](../README.md#compatibility) — short version of this page.
+- [docs/full-guide.md § MCP](full-guide.md#mcp) — what `samemind serve` exposes (tool list, security perimeter).
+- [docs/full-guide.md § Compatibility](full-guide.md#compatibility) — short version of this page.
 - [`INSTALL_FOR_AGENTS.md`](../INSTALL_FOR_AGENTS.md) — self-install protocol for an agent to run against its own project.
 - [docs/identity-layer.md](identity-layer.md) — what `samemind install` actually embeds (Identity/User/EngineRule → `samemind brief`).
 - [docs/memory-protocol.md](memory-protocol.md) — the recall→read→cite→gaps protocol embedded in every instruction file.

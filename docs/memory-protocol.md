@@ -62,7 +62,9 @@ ranking of the hits above them:
 - superseded/deprecated docs are never pulled in as neighbors (same hygiene
   gate live recall already applies).
 - Off by default: without the flag, output is byte-identical to a plain
-  `recall`. CLI only today — no MCP `memory_search` equivalent yet.
+  `recall`. MCP parity: `memory_search { query, expand: true, expand_budget? }`
+  returns the same neighbors in a separate `expanded` block (never merged into
+  `results`).
 
 Use it when a hit points at connected context worth knowing (project → its
 decisions/plans, person → their org/collaborators); skip it for a plain fact

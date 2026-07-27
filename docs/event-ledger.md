@@ -122,7 +122,7 @@ so the board's own tests never need a real ledger file, only a synthetic
 
 ## MCP
 
-Two tools, alongside the six already documented in the [README → MCP](../README.md#mcp):
+Two tools, alongside the six already documented in the [docs/full-guide.md § MCP](full-guide.md#mcp):
 
 | Tool | Purpose |
 |------|---------|
@@ -238,6 +238,6 @@ Not built here (flagged, not shipped, per the naryad's scope):
 
 - [docs/work-discipline.md](work-discipline.md) — `Plan`/`Task`/`Decision`/`Session`,
   the coarse-grained layer this complements.
-- [README → MCP → Security](../README.md#security) — the injection-quarantine
+- [docs/full-guide.md § MCP → Security](full-guide.md#security) — the injection-quarantine
   and path-safety guarantees shared across every write path in this package.
 - [alexgrebeshok-coder/samemind#3](https://github.com/alexgrebeshok-coder/samemind/issues/3) — the issue this closes.

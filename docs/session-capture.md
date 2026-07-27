@@ -135,7 +135,7 @@ run is read-only.
   promoting anything out of `inbox/` into the canon.
 - **Prompt-injection content is quarantined, not dropped** — identical
   contract to `memory_write_inbox` (see
-  [README → MCP → Security](../README.md#security)). Live transcripts can
+  [docs/full-guide.md § MCP → Security](full-guide.md#security)). Live transcripts can
   contain adversarial or copy-pasted instruction-like text; it is still
   captured (memory is never silently lost) but fenced so nothing downstream
   executes it blindly.
@@ -173,5 +173,5 @@ npx samemind capture --engine generic-markdown --source ~/.openclaw/workspace/me
 - [docs/memory-protocol.md](memory-protocol.md) — the `memory_write_inbox`
   contract `capture` mirrors (append-only, quarantine, never promotes to
   canon).
-- [README → MCP → Security](../README.md#security) — the injection-quarantine
+- [docs/full-guide.md § MCP → Security](full-guide.md#security) — the injection-quarantine
   and path-safety guarantees shared across every write path in this package.
