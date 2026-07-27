@@ -17,8 +17,10 @@
 //   npx samemind capture --engine <id>   → tools/capture.mjs     (read-only capture of a live engine session store → inbox)
 //   npx samemind ledger <cmd> ...        → tools/ledger.mjs      (append-only event ledger: append|status|read)
 //   npx samemind fleet <cmd> ...         → tools/fleet.mjs       (engine registry: init|status|assign|set)
-//   npx samemind service <cmd> ...       → tools/service.mjs     (install|status|uninstall periodic `project` as an OS user-unit)
-//   npx samemind serve                   → tools/mcp-server.mjs  (MCP stdio server: memory_* tools)
+//   npx samemind service <cmd> ...       → tools/service.mjs     (install|status|uninstall periodic `project`, or --daemon `serviced`, as an OS user-unit)
+//   npx samemind serviced [...]          → tools/serviced.mjs    (long-lived event-driven projection daemon; run under an OS supervisor)
+//   npx samemind hooks <cmd> ...         → tools/hooks.mjs       (list | install --agent <id>: engine lifecycle-hook wiring)
+//   npx samemind serve [--http]          → tools/mcp-server.mjs  (MCP server: memory_* tools; stdio default, --http = Streamable HTTP on loopback)
 //
 // query/recall/gde are routed with OKF_ROOT defaulted to the caller's cwd, so the tools
 // operate on the user's own bundle rather than on samemind's own repo checkout.
@@ -51,6 +53,8 @@ const ROUTES = {
   ledger: 'tools/ledger.mjs',
   fleet: 'tools/fleet.mjs',
   service: 'tools/service.mjs',
+  serviced: 'tools/serviced.mjs',
+  hooks: 'tools/hooks.mjs',
   ui: 'tools/ui.mjs',
   serve: 'tools/mcp-server.mjs',
   proactive: 'tools/proactive.mjs',
@@ -79,9 +83,11 @@ function usage() {
   console.log('  capture --engine <id> [--source <path>] [--since <ts>] [--limit N] [--yes] [--dry-run]   read-only capture of a live engine session store → inbox/<engine>.md; bulk (20+ new items) asks for confirmation first — see docs/session-capture.md');
   console.log('  ledger <cmd> ...      append-only event ledger: append --actor .. --topic .. --phase .. [--status ..] --action ".." | status [--json] | read --topic <t> — see docs/event-ledger.md');
   console.log('  fleet <cmd> ...       engine registry: init [--target <dir>] | status [--json] | assign --engine <id> --topic <t> --goal ".." --verify ".." | set --engine <id> --status active|reserve|dead [--role r] [--heartbeat N] [--zone ".."] — see docs/fleet.md');
-  console.log('  service <cmd> ...     install|status|uninstall a periodic `samemind project` as a per-user OS unit (mac LaunchAgent / linux systemd --user / win Scheduled Task); no sudo, no network — see docs, explicit command only (never postinstall)');
+  console.log('  service <cmd> ...     install|status|uninstall an OS unit: default periodic `samemind project`; --daemon → long-lived `samemind serviced` (mac LaunchAgent / linux systemd --user / win Scheduled Task); no sudo, no network — explicit command only (never postinstall)');
+  console.log('  serviced [...]        long-lived event-driven projection daemon (run under an OS supervisor — see `service install --daemon`): --root <dir> --interval <sec>');
+  console.log('  hooks <cmd> ...       lifecycle-hook wiring: list (hook tier per engine) | install --agent <id> [--target <dir>] (auto-tier engines only) — see docs/hooks/');
   console.log('  ui [...]              local read-only dashboard over the bundle, GET /api/* (--port N default 7787, --root <dir>, --open) — see docs/ui-spec.md');
-  console.log('  serve                 MCP stdio server (memory_search/get/list/write_inbox/handoff/health/ledger_append/ledger_status) — connect it as an MCP tool');
+  console.log('  serve [--http [--port N]]  MCP server (memory_search/get/list/write_inbox/handoff/health/ledger_append/ledger_status): stdio by default; --http → Streamable HTTP on 127.0.0.1 (--port 0 = ephemeral)');
   console.log('  proactive "<msg>"     Active Memory prototype: auto top-k recall pack before answer (-k N --json --force --pack)');
 }
 

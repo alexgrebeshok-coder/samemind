@@ -35,7 +35,7 @@ describe('readProjectionConfig — pure read, never writes', () => {
     const after = readConfigRaw(root);
 
     assert.deepEqual(result, {
-      budgetTokens: 1500, factSource: 'canon', coreFresh: 12, indexTail: true, targets: [],
+      budgetTokens: 1500, factSource: 'canon', coreFresh: 12, indexTail: true, intervalSec: 1800, targets: [],
     });
     assert.equal(after, before); // read must not mutate the file
   });
@@ -106,7 +106,7 @@ describe('readProjectionConfig — pure read, never writes', () => {
 
     const result = readProjectionConfig(root, home);
     assert.deepEqual(result, {
-      budgetTokens: 1500, factSource: 'canon', coreFresh: 12, indexTail: true, targets: [],
+      budgetTokens: 1500, factSource: 'canon', coreFresh: 12, indexTail: true, intervalSec: 1800, targets: [],
     });
   });
 });
@@ -123,7 +123,7 @@ describe('migrateProjectionConfig — explicit write, called by CLI/setup', () =
     assert.equal(onDisk.embedUrl, 'http://127.0.0.1:8000/v1/embeddings');
     assert.equal(onDisk.embedModel, 'bge-m3');
     assert.deepEqual(onDisk.projection, {
-      budgetTokens: 1500, factSource: 'canon', coreFresh: 12, indexTail: true, targets: [],
+      budgetTokens: 1500, factSource: 'canon', coreFresh: 12, indexTail: true, intervalSec: 1800, targets: [],
     });
   });
 

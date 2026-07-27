@@ -125,6 +125,43 @@ describe('buildPlan — platform detection & shape', () => {
   });
 });
 
+describe('buildPlan — --daemon (long-lived serviced, supervisor-restarted)', () => {
+  const DCFG = { ...CFG, daemon: true };
+
+  it('darwin daemon → KeepAlive plist running `serviced`, no StartInterval', () => {
+    const p = buildPlan('darwin', DCFG, '/units', 501);
+    assert.equal(p.kind, 'launchd');
+    assert.equal(p.files.length, 1);
+    const c = p.files[0].content;
+    assert.match(c, /<key>KeepAlive<\/key>\s*<true\/>/);
+    assert.match(c, /<key>ThrottleInterval<\/key>\s*<integer>10<\/integer>/);
+    assert.doesNotMatch(c, /StartInterval/, 'daemon plist has no periodic StartInterval');
+    assert.ok(c.includes('<string>serviced</string>'), 'runs serviced, not project');
+    assert.doesNotMatch(c, /\$\{[A-Z_]+\}/, 'no unresolved placeholders');
+  });
+
+  it('linux daemon → single Restart=always .service, NO timer, enable --now .service', () => {
+    const p = buildPlan('linux', { ...DCFG, label: 'samemind-project' }, '/units');
+    assert.equal(p.kind, 'systemd');
+    assert.equal(p.files.length, 1, 'daemon has one unit — no separate timer');
+    assert.ok(p.files[0].path.endsWith('samemind-project.service'));
+    assert.match(p.files[0].content, /Restart=always/);
+    assert.match(p.files[0].content, /serviced --root/);
+    assert.doesNotMatch(p.files[0].content, /\[Timer\]/);
+    assert.ok(p.activate.some(s => s.argv.join(' ') === 'systemctl --user enable --now samemind-project.service'));
+    assert.equal(p.status.argv.join(' '), 'systemctl --user is-active samemind-project.service');
+  });
+
+  it('win32 daemon → schtasks task running `serviced` with RestartOnFailure', () => {
+    const p = buildPlan('win32', { ...DCFG, label: 'samemind-project' }, 'C:/units');
+    assert.equal(p.kind, 'schtasks');
+    assert.equal(p.files.length, 1);
+    assert.match(p.files[0].content, /<RestartOnFailure>/);
+    assert.match(p.files[0].content, /serviced --root/);
+    assert.doesNotMatch(p.files[0].content, /\$\{[A-Z_]+\}/);
+  });
+});
+
 describe('plist validity (darwin only — plutil -lint)', { skip: process.platform !== 'darwin' }, () => {
   it('rendered plist passes plutil -lint', () => {
     const p = buildPlan('darwin', CFG, '/units', 0);

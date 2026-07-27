@@ -5,12 +5,16 @@
 //
 // Methods: initialize / notifications/initialized / tools/list / tools/call / ping.
 // stdout carries ONLY protocol frames (one JSON object per line) — every diagnostic goes to stderr.
+//
+//   node tools/mcp-server.mjs --http [--port N]   same tools over Streamable HTTP on 127.0.0.1
+// The default (no --http) stays pure stdio — nothing about that path changes.
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import {
   TOOLS, callTool, SERVER_NAME, SERVER_VERSION,
   SUPPORTED_PROTOCOL_VERSIONS, DEFAULT_PROTOCOL_VERSION,
 } from './lib/mcp.mjs';
+import { createMcpHttpServer } from './lib/mcp-http.mjs';
 
 function send(msg) {
   process.stdout.write(`${JSON.stringify(msg)}\n`);
@@ -64,7 +68,22 @@ async function handleMessage(msg) {
   }
 }
 
-function main() {
+/** Start the HTTP transport instead of stdio. Returns the http.Server (kept alive by its own
+ *  listener) so callers/tests can read the port and close it. Bundle root comes from OKF_ROOT,
+ *  captured at import time by okf.mjs — same root the stdio path serves. */
+function serveHttp(argv) {
+  const pIdx = argv.indexOf('--port');
+  const port = pIdx !== -1 && argv[pIdx + 1] !== undefined ? (Number(argv[pIdx + 1]) || 0) : 0;
+  const server = createMcpHttpServer({ port }); // root omitted → uses okf ROOT, no mismatch check
+  server.on('listening', () => {
+    const { port: bound } = server.address();
+    console.error(`samemind serve: MCP HTTP server ready on http://127.0.0.1:${bound}/mcp (root ${process.env.OKF_ROOT || process.cwd()}, v${SERVER_VERSION})`);
+  });
+  return server;
+}
+
+export function main(argv = process.argv.slice(2)) {
+  if (argv.includes('--http')) return serveHttp(argv);
   const rl = createInterface({ input: process.stdin, terminal: false });
   rl.on('line', (line) => {
     const trimmed = line.trim();

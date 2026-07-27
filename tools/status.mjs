@@ -49,9 +49,9 @@ export function main(argv = process.argv.slice(2)) {
   if (!existsSync(root)) throw new Error(`root not found: ${root} (pass --root <dir> or set OKF_ROOT)`);
 
   const health = readHealth(root);
-  // intervalSec: projection-config doesn't declare this field yet — cfg.intervalSec is always
-  // undefined today, so this always falls back to the default; reading it here means the day
-  // projection-config grows the field, status picks it up with no change on this side.
+  // intervalSec is the single source of truth (projection-config): the same field serviced reads
+  // for its backstop period, so this liveness window (2×) and the daemon's cadence never diverge.
+  // Falls back to the default only when the config read yields no finite value.
   const cfg = readProjectionConfig(root);
   const intervalSec = Number.isFinite(cfg.intervalSec) ? cfg.intervalSec : DEFAULT_INTERVAL_SEC;
   const { state, ageSec } = assessLiveness(health, { intervalSec });

@@ -68,6 +68,7 @@ export function resolveConfig(args = {}, platform = process.platform, env = proc
     root,
     interval,
     label,
+    daemon: !!args.daemon,   // true → long-lived `serviced` under supervision; false → periodic `project`
     log: join(logDir, 'service.log'),
     errlog: join(logDir, 'service.err'),
     logDir,
@@ -94,9 +95,13 @@ export function buildPlan(platform, cfg, dir, uid = 0) {
 
   if (platform === 'darwin') {
     const path = join(dir, `${cfg.label}.plist`);
+    // --daemon: a KeepAlive-supervised `serviced` (no StartInterval); default: periodic `project`.
+    const content = cfg.daemon
+      ? renderTemplate('launchd-daemon.plist', vars)
+      : renderTemplate('launchd.plist', { ...vars, INTERVAL: String(cfg.interval) });
     return {
       kind: 'launchd',
-      files: [{ path, content: renderTemplate('launchd.plist', { ...vars, INTERVAL: String(cfg.interval) }) }],
+      files: [{ path, content }],
       // bootout first (ignore "not loaded"), then bootstrap the freshly written plist.
       activate: [
         { argv: ['launchctl', 'bootout', `gui/${uid}/${cfg.label}`], optional: true },
@@ -108,6 +113,23 @@ export function buildPlan(platform, cfg, dir, uid = 0) {
   }
 
   if (platform === 'linux') {
+    if (cfg.daemon) {
+      // Restart=always service, NO timer — systemd itself keeps `serviced` alive.
+      const path = join(dir, `${cfg.label}.service`);
+      return {
+        kind: 'systemd',
+        files: [{ path, content: renderTemplate('systemd-daemon.service', vars).trim() + '\n' }],
+        activate: [
+          { argv: ['systemctl', '--user', 'daemon-reload'] },
+          { argv: ['systemctl', '--user', 'enable', '--now', `${cfg.label}.service`] },
+        ],
+        deactivate: [
+          { argv: ['systemctl', '--user', 'disable', '--now', `${cfg.label}.service`], optional: true },
+        ],
+        status: { argv: ['systemctl', '--user', 'is-active', `${cfg.label}.service`] },
+        reload: { argv: ['systemctl', '--user', 'daemon-reload'], optional: true },
+      };
+    }
     const rendered = renderTemplate('systemd.service', { ...vars, INTERVAL: String(cfg.interval) });
     const [svc, timer] = rendered.split(SYSTEMD_TIMER_SPLIT);
     return {
@@ -130,9 +152,13 @@ export function buildPlan(platform, cfg, dir, uid = 0) {
 
   if (platform === 'win32') {
     const path = join(dir, `${cfg.label}.xml`);
+    // --daemon: a RestartOnFailure task running `serviced` (no repetition interval).
+    const content = cfg.daemon
+      ? renderTemplate('win-task-daemon.xml', vars)
+      : renderTemplate('win-task.xml', { ...vars, INTERVAL: iso8601Duration(cfg.interval) });
     return {
       kind: 'schtasks',
-      files: [{ path, content: renderTemplate('win-task.xml', { ...vars, INTERVAL: iso8601Duration(cfg.interval) }) }],
+      files: [{ path, content }],
       activate: [{ argv: ['schtasks', '/create', '/tn', cfg.label, '/xml', path, '/f'] }],
       deactivate: [{ argv: ['schtasks', '/delete', '/tn', cfg.label, '/f'], optional: true }],
       status: { argv: ['schtasks', '/query', '/tn', cfg.label] },
@@ -222,7 +248,8 @@ export function cmdInstall(args, platform = process.platform, env = process.env)
   }
 
   for (const s of plan.activate) runOrFail(s);
-  console.log(`service: installed "${cfg.label}" (${plan.kind}) — periodic \`samemind project\` every ${cfg.interval}s`);
+  const mode = cfg.daemon ? 'long-lived `samemind serviced` (supervised)' : `periodic \`samemind project\` every ${cfg.interval}s`;
+  console.log(`service: installed "${cfg.label}" (${plan.kind}) — ${mode}`);
   for (const f of plan.files) console.log(`  unit: ${f.path}`);
   console.log(`  logs: ${cfg.log}`);
   return 0;
@@ -278,12 +305,13 @@ export function cmdStatus(args, platform = process.platform, env = process.env) 
 // ── router ───────────────────────────────────────────────────────────────────
 
 export function parseArgs(argv) {
-  const a = { root: null, interval: null, label: null, dryRun: false, help: false };
+  const a = { root: null, interval: null, label: null, daemon: false, dryRun: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
     if (t === '--root') a.root = argv[++i];
     else if (t === '--interval') a.interval = Number(argv[++i]);
     else if (t === '--label') a.label = argv[++i];
+    else if (t === '--daemon') a.daemon = true;
     else if (t === '--dry-run') a.dryRun = true;
     else if (t === '--help' || t === '-h') a.help = true;
     else if (a._ === undefined && !t.startsWith('--')) a._ = t;
@@ -293,14 +321,15 @@ export function parseArgs(argv) {
 }
 
 function usage() {
-  console.log('samemind service — run `samemind project` periodically as a per-user OS scheduler unit (no sudo, no network)');
+  console.log('samemind service — run memory projection as a per-user OS scheduler unit (no sudo, no network)');
   console.log('');
-  console.log('  samemind service install   [--root <dir>] [--interval <sec>] [--label <id>] [--dry-run]');
+  console.log('  samemind service install   [--root <dir>] [--interval <sec>] [--label <id>] [--daemon] [--dry-run]');
   console.log('  samemind service status    [--label <id>]');
   console.log('  samemind service uninstall [--label <id>]');
   console.log('');
+  console.log('Default: periodic `samemind project` every --interval sec. --daemon: long-lived `samemind serviced` kept alive by the supervisor (launchd KeepAlive / systemd Restart=always / win RestartOnFailure).');
   console.log('Defaults: --interval 1800 · --root OKF_ROOT|cwd · --label ' + `${defaultLabel('darwin')} (mac) / ${defaultLabel('linux')} (linux/win)`);
-  console.log('Platform: mac LaunchAgent · linux systemd --user timer · win per-user Scheduled Task.');
+  console.log('Platform: mac LaunchAgent · linux systemd --user · win per-user Scheduled Task.');
 }
 
 export function main(argv = process.argv.slice(2)) {

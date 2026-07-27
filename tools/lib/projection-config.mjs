@@ -15,6 +15,8 @@ const DEFAULTS = Object.freeze({
   factSource: 'canon',
   coreFresh: 12,
   indexTail: true,
+  intervalSec: 1800,   // single source of truth for the projection cadence: status's liveness
+                       // window (2× this) and serviced's backstop period both read cfg.intervalSec.
   targets: [],
 });
 
@@ -80,9 +82,9 @@ function normalizeTargets(rawTargets, topExcludeSource) {
  * surprise (e.g. a `project --dry-run` or an unrelated module's test). Migration is a deliberate,
  * separate write — see migrateProjectionConfig, called explicitly by the CLI/setup, not from here.
  *
- * Returns `{ budgetTokens, factSource, coreFresh, indexTail, targets: [{engine, excludeSource}] }`.
+ * Returns `{ budgetTokens, factSource, coreFresh, indexTail, intervalSec, targets: [{engine, excludeSource}] }`.
  * Missing section/file at either tier → documented defaults (budgetTokens=1500, factSource=
- * 'canon', coreFresh=12, indexTail=true, targets=[]). `globalHome` defaults to $HOME — pass a
+ * 'canon', coreFresh=12, indexTail=true, intervalSec=1800, targets=[]). `globalHome` defaults to $HOME — pass a
  * tmp dir (or a falsy value to skip the global tier) from tests so real ~/.samemind is never touched.
  */
 export function readProjectionConfig(root, globalHome = process.env.HOME) {
@@ -95,6 +97,7 @@ export function readProjectionConfig(root, globalHome = process.env.HOME) {
     factSource: normalizeFactSource(merged.factSource, root),
     coreFresh: Number.isFinite(merged.coreFresh) ? merged.coreFresh : DEFAULTS.coreFresh,
     indexTail: !!merged.indexTail,
+    intervalSec: Number.isFinite(merged.intervalSec) && merged.intervalSec > 0 ? merged.intervalSec : DEFAULTS.intervalSec,
     targets: normalizeTargets(merged.targets, merged.excludeSource),
   };
 }
