@@ -1,6 +1,6 @@
 {
   "name": "samemind",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "OKF-compatible memory for AI coding agents — identity, work-ledger and kanban in one plain-markdown bundle, git-native, zero-infra.",
   "license": "MIT",
   "type": "module",
@@ -54,7 +54,10 @@
     "!**/.index/**",
     "!tools/*.test.mjs",
     "!**/*.before-*",
-    "!**/*.bak*"
+    "!**/*.bak*",
+    "!**/.samemind/health.json",
+    "!**/.samemind/logs",
+    "!**/.samemind/logs/**"
   ],
   "optionalDependencies": {
     "sqlite-vec": "^0.1.9"
