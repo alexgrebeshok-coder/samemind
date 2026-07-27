@@ -1,0 +1,11 @@
+[
+  {
+    "matcher": "",
+    "hooks": [
+      {
+        "type": "command",
+        "command": "OKF_ROOT=${ROOT} ${CLI} handoff"
+      }
+    ]
+  }
+]

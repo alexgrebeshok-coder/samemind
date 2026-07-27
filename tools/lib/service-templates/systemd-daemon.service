@@ -1,0 +1,15 @@
+[Unit]
+Description=samemind serviced — long-lived event-driven memory-projection daemon
+Documentation=https://github.com/alexgrebeshok-coder/samemind
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=${NODE} ${CLI} serviced --root ${ROOT}
+Restart=always
+RestartSec=5
+StandardOutput=append:${LOG}
+StandardError=append:${ERRLOG}
+
+[Install]
+WantedBy=default.target

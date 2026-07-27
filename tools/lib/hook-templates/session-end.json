@@ -1,0 +1,11 @@
+[
+  {
+    "matcher": "",
+    "hooks": [
+      {
+        "type": "command",
+        "command": "OKF_ROOT=${ROOT} sh -c 'mkdir -p \"$OKF_ROOT/inbox\"; printf \"\\n## %s - session end (${ENGINE})\\n\\nAuto stub from samemind SessionEnd hook - fill Done/Decided/Next before it is lost.\\n\" \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" >> \"$OKF_ROOT/inbox/${ENGINE}.md\"'"
+      }
+    ]
+  }
+]
