@@ -35,7 +35,41 @@ samemind recall "<question>" -k 5 --mode bm25
 Use `auto` if a semantic index exists; otherwise BM25 is enough.
 Take the **top 3–5** hits by score. Do not load the whole graph.
 
-### 2. Read top hits fully
+### 2. Optional: expand one hop (`--expand`)
+
+Top-k hits are ranked matches only — they don't show what a hit is
+*connected* to. When a hit is clearly the anchor of the question (a project →
+its decisions, a person → their org), extend it one hop before reading:
+
+```sh
+samemind recall "<question>" -k 5 --expand
+# --expand-hops 1 is the same switch; --expand-budget N caps the pull (default 5)
+```
+
+`--expand` walks one hop from each top-k hit over typed `relations` edges (in
+either direction) and reverse wikilinks (some other doc's markdown link
+pointing *at* the hit — "who cites this", not the hit's own outbound links).
+Neighbors print after the main hits, marked `+hop`, and never affect the
+ranking of the hits above them:
+
+```
+0.412  Project    projects/lumen — Lumen
+  +hop  Decision   projects/lumen-sync — Sync backlog  (+1 hop from projects/lumen)
+```
+
+- Budget-capped (`--expand-budget N`, default 5), shared across all seed hits
+  — not per-hit.
+- superseded/deprecated docs are never pulled in as neighbors (same hygiene
+  gate live recall already applies).
+- Off by default: without the flag, output is byte-identical to a plain
+  `recall`. CLI only today — no MCP `memory_search` equivalent yet.
+
+Use it when a hit points at connected context worth knowing (project → its
+decisions/plans, person → their org/collaborators); skip it for a plain fact
+lookup. A `+hop` neighbor still needs a full read (step 3) if it actually
+informs the answer — expand only tells you it exists.
+
+### 3. Read top hits fully
 
 For each hit id, load the full node:
 
@@ -46,15 +80,16 @@ samemind query get <id>
 
 If a hit points at a person/project that is clearly the subject of the
 question, also open **one hop** of direct relation targets (e.g. `works_at`,
-`uses`) when they are still within the same budget of ~5 full reads total.
+`uses`) when they are still within the same budget of ~5 full reads total —
+or use `--expand` (step 2) to surface those neighbors automatically first.
 
-### 3. Answer with path citations
+### 4. Answer with path citations
 
 Write the answer from those nodes only. Cite bundle paths in backticks, e.g.
 `/entities/iris-vale.md`, `/projects/lumen.md`. Prefer short quotes or
 paraphrases tied to a path — not anonymous “from memory”.
 
-### 4. Mandatory closing block: gaps
+### 5. Mandatory closing block: gaps
 
 End every protocol answer with:
 
@@ -72,7 +107,7 @@ List **explicit** gaps relevant to the question, not generic caveats:
 If the graph has nothing on-topic, say that first and still list what would
 need to be written later.
 
-### 5. Write new facts to the inbox only
+### 6. Write new facts to the inbox only
 
 When the user states a new fact, decision, or meeting outcome:
 

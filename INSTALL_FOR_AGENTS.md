@@ -209,6 +209,19 @@ without an error.
 
 ---
 
+## Optional: point the human at `samemind ui`
+
+The bundle also ships a local, read-only dashboard — board / graph / fleet,
+with live auto-refresh — served by `samemind ui` (or `npx samemind ui`,
+default `http://127.0.0.1:7787`; `--port N`, `--root <dir>`, `--open` to
+launch a browser; see [`docs/ui-spec.md`](docs/ui-spec.md)). You don't need
+it: recall, write, and MCP all work with it never started. It's a face for
+the human, not a step in your protocol — once Step 6 passes, mention it once
+("`samemind ui` gives you a browser view of the bundle if you want one") and
+move on; don't launch it yourself as part of verification.
+
+---
+
 ## Done
 
 You now have: a git-native markdown bundle, your instruction file wired with
