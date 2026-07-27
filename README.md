@@ -2,7 +2,7 @@
 
 samemind is a git-native markdown memory bundle for AI coding agents — identity, search, a work ledger, and a kanban board in one place, portable across engines like Claude Code, Cursor, and OpenClaw. No daemon, no required database; BM25 search always works offline, semantic search is optional.
 
-**Latest: v0.8.0** — fleet layer: a declared registry of the engines sharing one bundle, plus heartbeat (who stopped reporting). See [CHANGELOG.md](CHANGELOG.md).
+**Latest: v0.11.0** — the memory gets a face: `npx samemind ui`, a local read-only dashboard — kanban that fills itself from the work ledger, an interactive concept graph, live orchestration feed over SSE. See [CHANGELOG.md](CHANGELOG.md).
 
 [![ci](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml/badge.svg)](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml)
 
@@ -20,6 +20,7 @@ Git-native markdown bundle (no daemon, no required DB): identity, search, handof
 | Multi-engine ops | assumed, never checked | [fleet registry](docs/fleet.md) + heartbeat: who reports, who went quiet |
 | Engines | often one client | `samemind install` → 12 engines ([adapters](docs/adapters.md)) |
 | Capture | — | `samemind capture` (read-only session → inbox) |
+| Face | raw files | `samemind ui` — local dashboard: board, graph, fleet, live feed |
 
 ## First use
 
@@ -37,6 +38,22 @@ npx samemind brief --engine claude-code
 ```
 
 Agent self-install protocol: [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md).
+
+## Dashboard
+
+```sh
+npx samemind ui          # → http://127.0.0.1:7787 (your bundle; --root <dir>, --open)
+```
+
+Local and read-only by design (binds 127.0.0.1, exact-match Host guard, zero write endpoints).
+Four screens: **Overview** — kanban with honest totals, synthesized from ledger topics when no
+Task docs exist (real Task docs always win); **Memory** — concept browser, BM25 search, and an
+interactive graph (wheel-zoom at cursor, pan, draggable nodes, neighbor highlight); **Fleet** —
+engine heartbeat bars, naryad timeline, and a live event feed over SSE (`/api/events/stream`) —
+the board updates itself seconds after an agent reports; **Projects** — cards with status,
+description and linked concepts, opening into the full project doc. Light + dark. The same data
+is scriptable: `board`, `handoff`, `fleet status`, `ledger status`, `query links` all take
+`--json` (`{ contract: 1, … }`), and the dashboard's `/api/*` serves the same shapes.
 
 **Global personal bundle** (project + global recall, project wins on id collision):
 
@@ -57,6 +74,7 @@ Details: [docs/full-guide.md § Global mode](docs/full-guide.md#global-mode) (ar
 | `capture` | Pull engine transcripts → `inbox/` |
 | `ledger` | Append-only work events |
 | `fleet` | Declared engine registry: who reports, who went quiet ([docs/fleet.md](docs/fleet.md)) |
+| `ui` | Local read-only dashboard: board, graph, fleet, live SSE feed |
 | `serve` | MCP: `memory_search`, `memory_get`, `memory_write_inbox`, … |
 | `forget` / `export` / `import` | Hygiene + OKF packs |
 
@@ -101,16 +119,20 @@ No. It's git-native markdown with no daemon and no required database. BM25 searc
 ### Which AI engines does it work with?
 `samemind install` wires the memory protocol into 12 engines (see [docs/adapters.md](docs/adapters.md)), and it exposes an MCP server (`npx samemind serve`) for engines like Claude Code.
 
+### What's new in v0.11.0?
+
+`samemind ui` grew into a real cockpit: the kanban **fills itself** from ledger topics (a fleet
+that reports work gets a live board with zero Task-doc bookkeeping), the concept graph is
+interactive (zoom/pan/drag, Obsidian-style), and `/api/events/stream` (SSE) drives a live feed —
+subagent start/finish events land on the board within seconds. v0.10.0 introduced the dashboard
+itself and the versioned `--json` contract; v0.9.0 added `recall --expand` (1-hop graph expand
+over relations and reverse wikilinks) and a human gate on bulk `capture`. See [CHANGELOG.md](CHANGELOG.md).
+
 ### What's new in v0.8.0?
 
-The **fleet layer**: `samemind fleet init | status | assign`. A memory bundle shared by several
-engines answers "what do we know" — it cannot answer "is everyone still working, and did anyone stop
-telling us". The registry declares each engine's reporting cadence, `status` shows who is overdue,
-the board renders a `🔥 Overdue engines` section above all columns, right after Open failures, and MCP exposes
+The **fleet layer**: `samemind fleet init | status | assign` — a declared registry of the engines
+sharing one bundle, reporting cadence, and `🔥 Overdue engines` on the board; MCP exposes
 `memory_fleet_status` / `memory_fleet_assign`. See [docs/fleet.md](docs/fleet.md).
-
-### What's new in v0.7.0?
-Proactive recall (`samemind proactive`) assembles a top-k memory pack before an agent answers, and conflict-aware recall excludes superseded or time-expired facts by default (opt-out via `--include-superseded` / `--as-of`). See [CHANGELOG.md](CHANGELOG.md).
 
 ### What are the current limits?
 Canon promotion is human-gated (inbox → concepts, not a silent auto-rewrite); semantic search needs an embeddings endpoint or falls back to BM25 by design; scale is hand-curated (roughly 10²–10³ concepts), not a 24/7 ingestion daemon.
