@@ -11,6 +11,20 @@ cards from ledger topics. Pure projection; the canon is never written.
 
 ### Added
 
+- **Interactive graph (Obsidian-style)** — the Memory graph is now a live force layout:
+  wheel zoom at the cursor (0.2–4x), background pan, draggable nodes (the simulation keeps
+  running around the grabbed node), neighbor highlight on hover, zoom-aware labels, fit
+  button. Hand-rolled simulation, zero new dependencies; >300 nodes falls back to the
+  static layout; `prefers-reduced-motion` starts settled.
+- **Live orchestration** — `GET /api/events/stream` (SSE): snapshot of the last 50 ledger
+  events on connect, then one event per new ledger line, 25s heartbeats. The dashboard
+  holds one EventSource with its own reconnect/backoff: a live-dot in the header, a live
+  feed on Fleet (fail rows red, `sub:*` subagent events badged), and the board/fleet
+  refresh themselves within seconds of an event — no Refresh button.
+- **Projects that say something** — project cards carry the doc's status, a description
+  snippet, a linked-concepts count and last activity (task strip only when tasks exist);
+  cards open a full project view: frontmatter, body, linked concepts, and the project's
+  task board when there is one.
 - **Derived kanban** — a ledger topic with no matching Task doc becomes a card: last
   `start/step/note` → In progress, `done` (inside the recent window) → Done, `fail/block` →
   Blocked. A real Task doc with the topic's name always wins. Cards carry `source: 'ledger'`
