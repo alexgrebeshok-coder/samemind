@@ -3,6 +3,89 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.16.0] — 2026-08-01
+
+The switchboard. 0.15 made connection honest — an engine was either provably reaching memory or
+plainly told it was not. But the person who owns that memory still had a window with no handles:
+the dashboard showed everything and could touch nothing, and every action meant leaving for a
+terminal. This release gives it controls, and a screen that answers "what am I standing on".
+
+The design question was where a button is allowed to write. Toggling a capability is a *setting*,
+not a memory: idempotent, reversible, touching no canon. Consequential work — dispatching to an
+engine, writing a fact, merging — is not, and stays behind a command the card shows and copies but
+never runs. So exactly one write route exists, and everything else is still 405.
+
+### Added
+
+- **`samemind doctor`-grade honesty for capabilities** — a `voice`/`vision` section in
+  `.samemind/config.json` alongside `projection`, with the same discipline: frozen defaults
+  (everything **off**), field-by-field normalization that warns and falls back rather than
+  throwing, two-tier global←project merge, and a read that never writes. Voice's three consents
+  are deliberately separate — microphone access ≠ storing transcripts ≠ sending text to an LLM
+  are three different human decisions.
+- **`GET /api/settings`** — effective state plus, for every value, the **layer it came from**
+  (default / global / project). A settings screen showing an effective value without its origin
+  cannot answer "why is this on?", and the user edits the wrong file.
+- **`POST /api/config`** — the single write route, and the only non-GET the dashboard accepts.
+  Guarded by `tools/lib/http-guard.mjs`: an **anchored** loopback match (a prefix test lets
+  `127.0.0.1.evil.com` through — a documented path to RCE elsewhere), a missing `Host` treated as
+  untrusted, full `hostname:port` authority comparison (a page on another loopback port is
+  *same-site*, so `Sec-Fetch-Site` does not catch it), a same-authority `Origin` requirement, and
+  `application/json` only — without which a CORS-safelisted `text/plain` POST reaches the handler
+  with no preflight. `withFileLock` around read-modify-write, because this file is machine-wide
+  and `setup` writes it too: atomic write protects a reader from a torn file, not either writer
+  from a lost update.
+- **Settings screen** — a capability with no runner renders as **unavailable**, never as an
+  unchecked box: an empty checkbox says "you chose this" when the truth is "nothing here can do
+  it". After saving, the screen draws the **server's re-read state**, not the click; on error it
+  leaves the last known truth alone.
+- **Today screen** — in-flight and stuck work, what to do next, recent decisions, and a recovery
+  card that shows the exact command and copies it. Built on `/api/board`, not `/api/handoff`: on a
+  real bundle handoff came back completely empty (work lives as ledger topics, which handoff never
+  reads) while the board showed 123 in flight and 40 blocked. Counts come from `columnTotals`;
+  the arrays are capped at eight, so their length would have understated by 15×.
+- **`GET /api/status` / `GET /api/doctor`** — projection liveness and engine connection health,
+  wrapping the existing pure functions; `probe:false` so a GET never spawns a server.
+- **Voice loop** — `tools/lib/probe-voice.mjs` (the `probe-embed` pattern: 2s abort, injectable
+  fetch, `null` on every failure, never throws), `tools/lib/voice-intent.mjs` (a pure gate:
+  below-threshold speech yields a re-ask, never a best guess; `assign` demands a verification
+  criterion because the ledger refuses an assignment without one; a deterministic `ref` minted
+  from the utterance), and **`GET /api/voice/route`**, which serves that gate from the core so the
+  browser never owns a second copy of it.
+- **Voice panel** — five attention states with **microphone-off in red and in words**, transcript
+  preview with confidence, and a confirmation card carrying the quarantine verdict and the
+  required verification field. No `getUserMedia`: this release makes state visible; capturing
+  audio is a separate, explicit decision.
+- **`docs/voice-companion.md`** — the core ships no speech recognition and will not. It talks to
+  any OpenAI-compatible endpoint via `voice.serviceUrl`, exactly as it talks to embeddings, so the
+  companion is a port rather than a dependency and zero-dependency survives. Documents the traps
+  other projects already hit: a SpeechAnalyzer binary must be ad-hoc signed with entitlements or
+  it `SIGTRAP`s on first use, `swift run` skips that step, and macOS grants speech-recognition
+  permission only to an app bundle carrying privacy metadata.
+- **`Cmd`** — a command with one-click copy. The dashboard shows commands and never runs them;
+  that boundary is what makes recovery affordances safe on a read-only screen.
+
+### Fixed
+
+- **Voice availability was the 0.15 defect in new clothes.** `assessAvailability` reported a
+  capability available because a `serviceUrl` was *set* — "a config entry counts as a working
+  connection", the exact lie this project cleaned up a release earlier, reintroduced in its own
+  code. Now three states: `unavailable` / `configured` / `reachable`, where only a probe produces
+  the last. The probe stays out of the render path: `GET /api/settings` is polled every tick, and
+  a network call there would make a slow companion a slow dashboard.
+- **A re-heard utterance could dispatch twice.** `memory_fleet_assign` never passed `ref`, so the
+  ledger's idempotency key did nothing for it. It does now; the actor stays the target engine so
+  heartbeat keeps working, and the issuer is recorded in the event.
+- **`board.byId` shipped as `{}`** on every response — a `Map` through `JSON.stringify`.
+- **`npm run dev` was broken**: the Vite proxy pointed at 7804 while the server listens on 7787.
+- **The first-ever save threw `ENOENT`** on a bundle with no `.samemind/` — the lock directory is
+  created beside the target file, and a fresh bundle is the ordinary case, not an edge one.
+- Docs stopped contradicting the code: the control-centre spec no longer claims there are no write
+  endpoints, and the voice spec carries three constraints the primitives actually impose. One
+  claim in it — that the injection scanner fires on dictation like "run the script" — was measured
+  and found **false** (the patterns are English; Russian speech never trips them), and is now a
+  table of measurements rather than an assertion.
+
 ## [0.15.0] — 2026-08-01
 
 Honest connection. Until now a config entry counted as "connected" — samemind wrote a file and
