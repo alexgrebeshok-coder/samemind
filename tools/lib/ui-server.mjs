@@ -15,16 +15,24 @@ import { fileURLToPath } from 'node:url';
 import { load, findById } from './okf.mjs';
 import { readEvents, summarizeLedger, ledgerFile, ledgerDir } from './ledger.mjs';
 import { readRegistry, heartbeat } from './fleet.mjs';
+import { readHealth, assessLiveness } from './health.mjs';
+import { readProjectionConfig } from './projection-config.mjs';
 import { buildBoardModel, dateOf, statusOf } from '../board.mjs';
 import { buildHandoffModel } from '../handoff.mjs';
 import { buildLinksModel } from '../okf-query.mjs';
+import { displayState } from '../status.mjs';
+import { runDoctor } from '../doctor.mjs';
 import { buildCorpus, bm25Score } from './bm25.mjs';
 import { docText } from './recall.mjs';
 import { assertSafeConceptId } from '../../lib/safe-path.mjs';
+import { checkWriteRequest } from './http-guard.mjs';
+import { buildSettingsModel, applySettingsPatch } from './settings.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(HERE, '..', '..');
 const PKG = JSON.parse(readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf8'));
+// Same default as tools/status.mjs — keep in lockstep with projection-config / serviced cadence.
+const DEFAULT_INTERVAL_SEC = 1800;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -65,9 +73,9 @@ function hostAllowed(host) {
 }
 
 const API_ENDPOINTS = [
-  'GET /api/health', 'GET /api/board', 'GET /api/handoff', 'GET /api/fleet',
-  'GET /api/ledger', 'GET /api/concepts', 'GET /api/concept/<id>', 'GET /api/graph',
-  'GET /api/events/stream',
+  'GET /api/health', 'GET /api/status', 'GET /api/doctor', 'GET /api/board',
+  'GET /api/handoff', 'GET /api/fleet', 'GET /api/ledger', 'GET /api/concepts',
+  'GET /api/concept/<id>', 'GET /api/graph', 'GET /api/events/stream',
 ];
 
 function placeholderHtml() {
@@ -86,6 +94,32 @@ function placeholderHtml() {
 function apiHealth(root) {
   const docs = load({ includeSecret: false }, root).filter(d => !d.reserved);
   return wrap('health', { root, concepts: docs.length, version: PKG.version, searchMode: 'bm25' });
+}
+
+/** Projection liveness — same payload as `samemind status --json` (displayState folds
+ *  fresh-but-failed into `failed`, so a green mark never covers a broken last run). */
+function apiStatus(root) {
+  const health = readHealth(root);
+  const cfg = readProjectionConfig(root);
+  const intervalSec = Number.isFinite(cfg.intervalSec) ? cfg.intervalSec : DEFAULT_INTERVAL_SEC;
+  const { state, ageSec } = assessLiveness(health, { intervalSec });
+  return wrap('status', {
+    state: displayState(state, health),
+    liveness: state,
+    ageSec,
+    ok: health?.ok ?? null,
+    lastError: health?.lastError ?? null,
+    targets: health?.targets ?? [],
+    version: health?.version ?? null,
+    ts: health?.ts ?? null,
+  });
+}
+
+/** Engine connection report — probe:false so a GET never spawns MCP servers. Env values
+ *  stay redacted inside runDoctor (publicEntry → redactEnv); do not unmask here. */
+async function apiDoctor(root) {
+  const report = await runDoctor({ root, probe: false });
+  return wrap('doctor', report);
 }
 
 function apiBoard(root) {
@@ -148,8 +182,44 @@ function apiGraph(root) {
   return wrap('links', buildLinksModel(docs, { root }));
 }
 
+function apiSettings(root) {
+  return wrap('settings', buildSettingsModel(root));
+}
+
+/** 64 KiB is far more than a settings patch needs; the cap exists so a hostile or buggy client
+ *  cannot make the dashboard buffer unbounded memory. Mirrors the MCP HTTP transport's limit. */
+const MAX_WRITE_BODY = 64 * 1024;
+
+function handleConfigWrite(req, res, root) {
+  let body = '';
+  let aborted = false;
+  req.on('data', (chunk) => {
+    if (aborted) return;
+    body += chunk;
+    if (body.length > MAX_WRITE_BODY) {
+      aborted = true;
+      sendJson(res, 413, { error: 'body too large' });
+      req.destroy();
+    }
+  });
+  req.on('end', () => {
+    if (aborted) return;
+    let patch;
+    try { patch = JSON.parse(body || '{}'); } catch { sendJson(res, 400, { error: 'invalid JSON body' }); return; }
+    let result;
+    try { result = applySettingsPatch(root, patch); } catch (e) { sendJson(res, 500, { error: e.message }); return; }
+    if (!result.ok) { sendJson(res, result.status, { error: 'rejected', errors: result.errors }); return; }
+    // Echo the re-read model, not the patch: the screen must render what is on disk now, so a
+    // silently-normalized or partially-applied value can never look like a clean save.
+    sendJson(res, 200, wrap('settings', result.settings.features ? result.settings : buildSettingsModel(root)));
+  });
+}
+
 const API_ROUTES = {
   '/api/health': apiHealth,
+  '/api/settings': apiSettings,
+  '/api/status': apiStatus,
+  '/api/doctor': apiDoctor,
   '/api/board': apiBoard,
   '/api/handoff': apiHandoff,
   '/api/fleet': apiFleet,
@@ -283,9 +353,31 @@ function serveStaticFile(res, distDir, relPath) {
   return true;
 }
 
+/** The only path that accepts a write, and the only method it accepts. Kept as data next to the
+ *  guard so "what can this server mutate" is one line to read, not a grep across handlers. */
+const WRITE_ROUTES = new Map([['/api/config', 'POST']]);
+
 function handleRequest(req, res, root, distDir, hub) {
   if (!hostAllowed(req.headers.host)) { sendJson(res, 403, { error: 'forbidden host' }); return; }
-  if (req.method !== 'GET') { sendJson(res, 405, { error: 'method not allowed' }); return; }
+
+  // GET stays unconditionally allowed. Everything else must match WRITE_ROUTES exactly *and*
+  // clear the full write guard — an anchored loopback Host, a same-authority Origin, and a JSON
+  // Content-Type. The blanket `!== 'GET' → 405` this replaces was a stronger sentence but it
+  // could not express "one route, one method"; the allowlist keeps the property and names it.
+  if (req.method !== 'GET') {
+    const writePath = (req.url || '').split('?')[0];
+    if (WRITE_ROUTES.get(writePath) !== req.method) {
+      sendJson(res, 405, { error: 'method not allowed' }); return;
+    }
+    // localPort, not the Host header: the bound port is ours to know, and comparing an
+    // attacker-supplied value against itself proves nothing.
+    const verdict = checkWriteRequest({
+      method: req.method, headers: req.headers, boundPort: req.socket?.localPort,
+    });
+    if (!verdict.ok) { sendJson(res, verdict.status, { error: verdict.error }); return; }
+    handleConfigWrite(req, res, root);
+    return;
+  }
 
   // Parse path/query by hand, not via `new URL()` — WHATWG URL normalizes `../`/`%2e%2e`
   // dot-segments away during parsing, which would silently defeat the traversal guard below
@@ -307,7 +399,10 @@ function handleRequest(req, res, root, distDir, hub) {
     return;
   }
   if (Object.prototype.hasOwnProperty.call(API_ROUTES, pathname)) {
-    sendJson(res, 200, API_ROUTES[pathname](root, query));
+    // Handlers are usually sync; /api/doctor is async (runDoctor). Promise.resolve covers both.
+    Promise.resolve(API_ROUTES[pathname](root, query))
+      .then((payload) => sendJson(res, 200, payload))
+      .catch((e) => sendJson(res, 500, { error: e.message }));
     return;
   }
   if (pathname.startsWith('/api/')) { sendJson(res, 404, { error: 'not found' }); return; }
