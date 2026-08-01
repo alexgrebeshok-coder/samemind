@@ -142,6 +142,80 @@ export type Graph = {
   totalEdges: number;
 };
 
+export type ConfigLayer = 'default' | 'global' | 'project';
+
+export type VoiceConfig = {
+  enabled: boolean;
+  trigger: 'hotkey' | 'wake-word';
+  wakeWord: boolean;
+  storeTranscripts: boolean;
+  transcriptRetentionDays: number;
+  sendTextToLlm: boolean;
+  confidenceThreshold: number;
+  serviceUrl: string | null;
+};
+
+export type VisionConfig = {
+  enabled: boolean;
+  mode: 'off' | 'manual' | 'presence' | 'proactive';
+  camera: boolean;
+  microphone: boolean;
+  retentionDays: number;
+  proactivePrompts: boolean;
+};
+
+type FeatureAvailability =
+  | { available: true; note?: string }
+  | { available: false; reason: string; fix: string | null };
+
+export type SettingsFeature<T extends Record<string, unknown>> = {
+  values: T;
+  layers: { [K in keyof T]: ConfigLayer };
+} & FeatureAvailability;
+
+export type Settings = {
+  root: string;
+  configPath: string;
+  globalConfigPath: string | null;
+  features: {
+    voice: SettingsFeature<VoiceConfig>;
+    vision: SettingsFeature<VisionConfig>;
+  };
+};
+
+export type ConfigPatch = { voice?: Partial<VoiceConfig>; vision?: Partial<VisionConfig> };
+
+export type PostConfigResult =
+  | { ok: true; data: Settings; generatedAt: string }
+  | { ok: false; status: number; errors?: string[]; message: string };
+
+/** POST /api/config — returns the settings envelope re-read from disk (no optimistic merge). */
+export async function postConfig(patch: ConfigPatch): Promise<PostConfigResult> {
+  const res = await fetch('/api/config', {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  let json: unknown;
+  try {
+    json = await res.json();
+  } catch {
+    return { ok: false, status: res.status, message: `POST /api/config → unreadable body` };
+  }
+  if (res.ok) {
+    const env = json as Envelope<Settings>;
+    if (!env?.data?.features) return { ok: false, status: res.status, message: 'POST /api/config → bad payload' };
+    set({ generatedAt: env.generatedAt, offline: false });
+    return { ok: true, data: env.data, generatedAt: env.generatedAt };
+  }
+  const body = json as { error?: string; errors?: string[]; message?: string };
+  if (res.status === 400 && body.error === 'rejected' && Array.isArray(body.errors)) {
+    return { ok: false, status: 400, errors: body.errors, message: 'rejected' };
+  }
+  const message = body.message || body.error || `POST /api/config → HTTP ${res.status}`;
+  return { ok: false, status: res.status, errors: body.errors, message };
+}
+
 // --- shared refresh clock + reachability, so every screen agrees on "fresh" and "offline" ----
 
 const REFRESH_MS = 30_000;

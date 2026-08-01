@@ -12,6 +12,7 @@ import { Overview } from './screens/Overview';
 import { Memory } from './screens/Memory';
 import { Fleet } from './screens/Fleet';
 import { Projects } from './screens/Projects';
+import { Settings } from './screens/Settings';
 
 type Theme = 'light' | 'dark' | 'system';
 const THEME_KEY = 'samemind.theme';
@@ -40,7 +41,7 @@ function useTheme() {
   return { theme, setTheme };
 }
 
-export type Route = { screen: 'overview' | 'memory' | 'fleet' | 'projects'; id: string | null };
+export type Route = { screen: 'overview' | 'memory' | 'fleet' | 'projects' | 'settings'; id: string | null };
 
 function parseHash(): Route {
   const raw = location.hash.replace(/^#\/?/, '');
@@ -49,6 +50,7 @@ function parseHash(): Route {
   if (head === 'memory') return { screen: 'memory', id };
   if (head === 'fleet') return { screen: 'fleet', id: null };
   if (head === 'projects') return { screen: 'projects', id };
+  if (head === 'settings') return { screen: 'settings', id: null };
   return { screen: 'overview', id: null };
 }
 
@@ -71,6 +73,7 @@ const NAV = [
   { screen: 'memory', label: 'Memory', href: '#/memory' },
   { screen: 'fleet', label: 'Fleet', href: '#/fleet' },
   { screen: 'projects', label: 'Projects', href: '#/projects' },
+  { screen: 'settings', label: 'Settings', href: '#/settings' },
 ] as const;
 
 const TITLES: Record<Route['screen'], string> = {
@@ -78,6 +81,7 @@ const TITLES: Record<Route['screen'], string> = {
   memory: 'Memory',
   fleet: 'Fleet',
   projects: 'Projects',
+  settings: 'Settings',
 };
 
 function ThemeToggle({ theme, setTheme }: { theme: Theme; setTheme: (t: Theme) => void }) {
@@ -239,6 +243,7 @@ export default function App() {
           {route.screen === 'memory' && <Memory id={route.id} />}
           {route.screen === 'fleet' && <Fleet />}
           {route.screen === 'projects' && <Projects id={route.id} />}
+          {route.screen === 'settings' && <Settings />}
         </main>
       </div>
     </div>
