@@ -14,6 +14,7 @@ import { Memory } from './screens/Memory';
 import { Fleet } from './screens/Fleet';
 import { Projects } from './screens/Projects';
 import { Settings } from './screens/Settings';
+import { Voice } from './screens/Voice';
 
 type Theme = 'light' | 'dark' | 'system';
 const THEME_KEY = 'samemind.theme';
@@ -43,7 +44,7 @@ function useTheme() {
 }
 
 export type Route = {
-  screen: 'today' | 'overview' | 'memory' | 'fleet' | 'projects' | 'settings';
+  screen: 'today' | 'overview' | 'memory' | 'fleet' | 'projects' | 'settings' | 'voice';
   id: string | null;
 };
 
@@ -57,6 +58,7 @@ function parseHash(): Route {
   if (head === 'fleet') return { screen: 'fleet', id: null };
   if (head === 'projects') return { screen: 'projects', id };
   if (head === 'settings') return { screen: 'settings', id: null };
+  if (head === 'voice') return { screen: 'voice', id: null };
   return { screen: 'today', id: null };
 }
 
@@ -80,6 +82,7 @@ const NAV = [
   { screen: 'memory', label: 'Memory', href: '#/memory' },
   { screen: 'fleet', label: 'Fleet', href: '#/fleet' },
   { screen: 'projects', label: 'Projects', href: '#/projects' },
+  { screen: 'voice', label: 'Voice', href: '#/voice' },
   { screen: 'settings', label: 'Settings', href: '#/settings' },
 ] as const;
 
@@ -90,6 +93,7 @@ const TITLES: Record<Route['screen'], string> = {
   fleet: 'Fleet',
   projects: 'Projects',
   settings: 'Settings',
+  voice: 'Voice',
 };
 
 function ThemeToggle({ theme, setTheme }: { theme: Theme; setTheme: (t: Theme) => void }) {
@@ -253,6 +257,7 @@ export default function App() {
           {route.screen === 'fleet' && <Fleet />}
           {route.screen === 'projects' && <Projects id={route.id} />}
           {route.screen === 'settings' && <Settings />}
+          {route.screen === 'voice' && <Voice />}
         </main>
       </div>
     </div>

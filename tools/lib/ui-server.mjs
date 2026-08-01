@@ -29,6 +29,8 @@ import { checkWriteRequest } from './http-guard.mjs';
 import { buildSettingsModel, applySettingsPatch, assessAvailability } from './settings.mjs';
 import { readFeatureConfig } from './feature-config.mjs';
 import { probeVoiceCompanion } from './probe-voice.mjs';
+import { routeIntent } from './voice-intent.mjs';
+import { scanForInjection } from './injection.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(HERE, '..', '..');
@@ -78,7 +80,7 @@ const API_ENDPOINTS = [
   'GET /api/health', 'GET /api/status', 'GET /api/doctor', 'GET /api/board',
   'GET /api/handoff', 'GET /api/fleet', 'GET /api/ledger', 'GET /api/concepts',
   'GET /api/concept/<id>', 'GET /api/graph', 'GET /api/events/stream',
-  'GET /api/voice/probe',
+  'GET /api/voice/probe', 'GET /api/voice/route',
 ];
 
 function placeholderHtml() {
@@ -200,6 +202,30 @@ async function apiVoiceProbe(root, fetchImpl = fetch) {
   return wrap('voice-probe', { ...voice, url: values.voice.serviceUrl, probe });
 }
 
+/**
+ * The intent gate, served from the core implementation.
+ *
+ * This route exists so the browser never has to own a second copy of the gate. A hand-mirrored
+ * client-side router would drift from `lib/voice-intent.mjs`, and the copy is the one a person
+ * actually sees — a weakened browser-side injection scan would show "no quarantine" on a phrase
+ * the core quarantines, and a divergent threshold would show a decision the core would not take.
+ *
+ * GET, not POST: routing computes a verdict and changes nothing, so it needs no write guard.
+ * The transcript rides in the query string; that is fine here because nothing is persisted and
+ * the server is loopback-only — but it is also why this must never grow a side effect.
+ */
+function apiVoiceRoute(root, query) {
+  const text = query.get('text') || '';
+  const confidence = Number(query.get('confidence'));
+  const cfg = readFeatureConfig(root);
+  const threshold = Number.isFinite(cfg.voice.confidenceThreshold) ? cfg.voice.confidenceThreshold : 0.6;
+  const decision = routeIntent(text, {
+    confidence: Number.isFinite(confidence) ? confidence : 0,
+    threshold,
+  });
+  return wrap('voice-route', { ...decision, threshold, quarantine: scanForInjection(text) });
+}
+
 /** 64 KiB is far more than a settings patch needs; the cap exists so a hostile or buggy client
  *  cannot make the dashboard buffer unbounded memory. Mirrors the MCP HTTP transport's limit. */
 const MAX_WRITE_BODY = 64 * 1024;
@@ -240,6 +266,7 @@ const API_ROUTES = {
   '/api/ledger': apiLedger,
   '/api/concepts': apiConcepts,
   '/api/graph': apiGraph,
+  '/api/voice/route': apiVoiceRoute,
 };
 
 // --- live event stream: GET /api/events/stream (SSE) -------------------------------------

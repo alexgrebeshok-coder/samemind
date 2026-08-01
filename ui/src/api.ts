@@ -1,3 +1,4 @@
+import type { VoiceRoute } from './voice-types.ts';
 // api.ts — same-origin `/api/*` access. Types mirror the actual payloads served by
 // tools/lib/ui-server.mjs (fetched and read off the wire, not copied from the spec table).
 import { useEffect, useState, useSyncExternalStore } from 'react';
@@ -179,14 +180,30 @@ export type VisionConfig = {
   proactivePrompts: boolean;
 };
 
-type FeatureAvailability =
-  | { available: true; note?: string }
-  | { available: false; reason: string; fix: string | null };
+export type VoiceCompanionState = 'unavailable' | 'configured' | 'reachable';
+
+export type VoiceFeatureFields = {
+  state: VoiceCompanionState;
+  available: boolean;
+  reason?: string;
+  fix?: string | null;
+  note?: string;
+};
 
 export type SettingsFeature<T extends Record<string, unknown>> = {
   values: T;
   layers: { [K in keyof T]: ConfigLayer };
-} & FeatureAvailability;
+} & (T extends VoiceConfig ? VoiceFeatureFields : { state: 'unavailable'; available: false; reason: string; fix: string | null });
+
+export type VoiceProbe = {
+  state: VoiceCompanionState;
+  available: boolean;
+  url: string | null;
+  reason?: string;
+  fix?: string | null;
+  note?: string;
+  probe: { url?: string; engine?: string; model?: string } | null;
+};
 
 export type Settings = {
   root: string;
@@ -205,6 +222,21 @@ export type PostConfigResult =
   | { ok: false; status: number; errors?: string[]; message: string };
 
 /** POST /api/config — returns the settings envelope re-read from disk (no optimistic merge). */
+/** GET /api/voice/probe — on-demand companion check (never on render / poll). */
+export async function fetchVoiceProbe(): Promise<
+  { ok: true; data: VoiceProbe; generatedAt: string } | { ok: false; message: string }
+> {
+  try {
+    const env = await getJson<VoiceProbe>('/api/voice/probe');
+    set({ generatedAt: env.generatedAt, offline: false });
+    return { ok: true, data: env.data, generatedAt: env.generatedAt };
+  } catch (err: unknown) {
+    set({ offline: true });
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, message };
+  }
+}
+
 export async function postConfig(patch: ConfigPatch): Promise<PostConfigResult> {
   const res = await fetch('/api/config', {
     method: 'POST',
@@ -416,4 +448,20 @@ export function useConceptMap(ids: string[]): Map<string, Frontmatter> {
   }, [key]);
 
   return map;
+}
+
+/** The intent gate, fetched from the core. The panel never routes locally: a mirrored gate in
+ *  the browser would drift from tools/lib/voice-intent.mjs, and the copy is what a person sees. */
+export async function routeVoice(text: string, confidence: number): Promise<VoiceRoute | null> {
+  try {
+    const r = await fetch(
+      `/api/voice/route?text=${encodeURIComponent(text)}&confidence=${encodeURIComponent(String(confidence))}`,
+      { headers: { accept: 'application/json' } },
+    );
+    if (!r.ok) return null;
+    const body = await r.json();
+    return body?.data ?? null;
+  } catch {
+    return null;
+  }
 }
