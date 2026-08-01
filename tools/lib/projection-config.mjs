@@ -82,10 +82,18 @@ function normalizeTargets(rawTargets, topExcludeSource) {
  * surprise (e.g. a `project --dry-run` or an unrelated module's test). Migration is a deliberate,
  * separate write — see migrateProjectionConfig, called explicitly by the CLI/setup, not from here.
  *
- * Returns `{ budgetTokens, factSource, coreFresh, indexTail, intervalSec, targets: [{engine, excludeSource}] }`.
- * Missing section/file at either tier → documented defaults (budgetTokens=1500, factSource=
- * 'canon', coreFresh=12, indexTail=true, intervalSec=1800, targets=[]). `globalHome` defaults to $HOME — pass a
- * tmp dir (or a falsy value to skip the global tier) from tests so real ~/.samemind is never touched.
+ * Returns `{ budgetTokens, factSource, coreFresh, indexTail, intervalSec, targets: [{engine, excludeSource}],
+ * maxFactChars?, maxBlockChars? }`. Missing section/file at either tier → documented defaults
+ * (budgetTokens=1500, factSource='canon', coreFresh=12, indexTail=true, intervalSec=1800, targets=[]).
+ * `globalHome` defaults to $HOME — pass a tmp dir (or a falsy value to skip the global tier) from
+ * tests so real ~/.samemind is never touched.
+ *
+ * maxFactChars/maxBlockChars — opt-in, no default (absent from the returned object unless
+ * configured): the memory-bridge production sync (~/.claude/memory-bridge/sync.mjs) keeps these
+ * as two independent fixed constants (MAX_FACT_CHARS=6000 per-fact, MAX_BLOCK_CHARS=60000 per-
+ * block), ten times apart. project's own `budgetTokens` derives a single number used for both,
+ * which can't reproduce that split. These two fields let a caller (e.g. a shadow-parity run)
+ * pass the bridge's real numbers through without touching the ordinary-user default at all.
  */
 export function readProjectionConfig(root, globalHome = process.env.HOME) {
   const globalProj = (globalHome && readJson(configPath(globalHome))?.projection) || {};
@@ -99,5 +107,7 @@ export function readProjectionConfig(root, globalHome = process.env.HOME) {
     indexTail: !!merged.indexTail,
     intervalSec: Number.isFinite(merged.intervalSec) && merged.intervalSec > 0 ? merged.intervalSec : DEFAULTS.intervalSec,
     targets: normalizeTargets(merged.targets, merged.excludeSource),
+    ...(Number.isFinite(merged.maxFactChars) ? { maxFactChars: merged.maxFactChars } : {}),
+    ...(Number.isFinite(merged.maxBlockChars) ? { maxBlockChars: merged.maxBlockChars } : {}),
   };
 }

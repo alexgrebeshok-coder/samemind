@@ -32,25 +32,25 @@ export const INSTALL_START = '<!-- samemind:install:start -->';
 export const INSTALL_END = '<!-- samemind:install:end -->';
 
 /**
- * Supported engines → instruction file(s) each one reads. Order matters for `--agent all`'s
- * tie-break on shared files (first declared owner wins when the file has no single owner).
- * Paths with a `/` live in a subfolder created on demand (rules-file convention: Cursor,
- * Roo Code, Kiro get a dedicated `samemind.md`/`samemind.md`-shaped file rather than sharing
- * their folder's other rule files).
+ * Supported engines → instruction file(s) each one reads, plus an `mcp` MCP-config descriptor
+ * (single source of truth `samemind doctor` + mcp-register.mjs read — no second hint map).
+ * Order matters for `--agent all`'s tie-break on shared files (first declared owner wins when
+ * the file has no single owner). Paths with a `/` create their subfolder on demand (Cursor/Roo/
+ * Kiro `samemind.md`). `mcp`: { shape∈MCP_SHAPES, user[]/project[] (rel. home/proj), hint? } | null.
  */
 export const ENGINE_FILES = {
-  'claude-code': { label: 'Claude Code', files: ['CLAUDE.md'] },
-  cursor: { label: 'Cursor', files: ['AGENTS.md', '.cursor/rules/samemind.md'] },
-  copilot: { label: 'GitHub Copilot (agent mode)', files: ['.github/copilot-instructions.md', 'AGENTS.md'] },
-  codex: { label: 'Codex CLI', files: ['AGENTS.md'] },
-  'gemini-cli': { label: 'Gemini CLI', files: ['GEMINI.md'] },
-  opencode: { label: 'opencode', files: ['AGENTS.md'] },
-  cline: { label: 'Cline', files: ['.clinerules'] },
-  roo: { label: 'Roo Code', files: ['.roo/rules/samemind.md'] },
-  windsurf: { label: 'Windsurf', files: ['.windsurf/rules/samemind.md', 'AGENTS.md'] },
-  goose: { label: 'Goose', files: ['.goosehints'] },
-  kiro: { label: 'Kiro', files: ['.kiro/steering/samemind.md'] },
-  antigravity: { label: 'Antigravity', files: ['AGENTS.md', 'GEMINI.md'] },
+  'claude-code': { label: 'Claude Code', files: ['CLAUDE.md'], mcp: { shape: 'mcpServers-nested', project: ['.mcp.json'], user: ['.claude.json'] } },
+  cursor: { label: 'Cursor', files: ['AGENTS.md', '.cursor/rules/samemind.md'], mcp: { shape: 'mcpServers', project: ['.cursor/mcp.json'], user: ['.cursor/mcp.json'] } },
+  copilot: { label: 'GitHub Copilot (agent mode)', files: ['.github/copilot-instructions.md', 'AGENTS.md'], mcp: { shape: 'vscode-servers', project: ['.vscode/mcp.json'] } },
+  codex: { label: 'Codex CLI', files: ['AGENTS.md'], mcp: { shape: 'codex-toml', user: ['.codex/config.toml'], hint: 'codex mcp add samemind -- npx samemind serve' } },
+  'gemini-cli': { label: 'Gemini CLI', files: ['GEMINI.md'], mcp: { shape: 'mcpServers', project: ['.gemini/settings.json'], user: ['.gemini/settings.json'] } },
+  opencode: { label: 'opencode', files: ['AGENTS.md'], mcp: { shape: 'opencode', user: ['.config/opencode/opencode.json'], project: ['opencode.json'] } },
+  cline: { label: 'Cline', files: ['.clinerules'], mcp: { shape: 'mcpServers', user: ['.cline/mcp.json'] } },
+  roo: { label: 'Roo Code', files: ['.roo/rules/samemind.md'], mcp: { shape: 'mcpServers', project: ['.roo/mcp.json'], user: ['mcp_settings.json'] } },
+  windsurf: { label: 'Windsurf', files: ['.windsurf/rules/samemind.md', 'AGENTS.md'], mcp: { shape: 'mcpServers', user: ['.codeium/windsurf/mcp_config.json'] } },
+  goose: { label: 'Goose', files: ['.goosehints'], mcp: { hint: 'goose configure → Add Extension → Command-Line Extension → command npx, args "samemind serve"' } },
+  kiro: { label: 'Kiro', files: ['.kiro/steering/samemind.md'], mcp: { shape: 'mcpServers', project: ['.kiro/settings/mcp.json'], user: ['.kiro/settings/mcp.json'], hint: 'kiro-cli mcp add --name samemind --command npx --args "samemind serve"' } },
+  antigravity: { label: 'Antigravity', files: ['AGENTS.md', 'GEMINI.md'], mcp: null },
 };
 
 function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }

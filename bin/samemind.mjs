@@ -47,6 +47,7 @@ const ROUTES = {
   install: 'tools/install.mjs',
   project: 'tools/project.mjs',
   status: 'tools/status.mjs',
+  doctor: 'tools/doctor.mjs',
   export: 'tools/export.mjs',
   import: 'tools/import.mjs',
   capture: 'tools/capture.mjs',

@@ -307,7 +307,11 @@ describe('runGlobalSetup — native MCP registration gated on the REAL machine h
       assert.match(res.lines.join('\n'), /wrote samemind.*claude\.json/i);
 
       const claudeJson = JSON.parse(readFileSync(join(home, '.claude.json'), 'utf8'));
-      assert.deepEqual(claudeJson.mcpServers.samemind, { command: 'npx', args: ['samemind', 'serve'] });
+      assert.deepEqual(claudeJson.mcpServers.samemind.args, ['samemind', 'serve']);
+      assert.equal(claudeJson.mcpServers.samemind.command, 'npx');
+      // user scope applies in every project, so the personal bundle must be pinned —
+      // otherwise the server resolves a root from cwd and can serve its own package dir.
+      assert.equal(claudeJson.mcpServers.samemind.env.OKF_ROOT, join(home, '.samemind', 'bundle'));
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -333,7 +337,9 @@ describe('runGlobalSetup — native MCP registration gated on the REAL machine h
       assert.deepEqual(after.mcpServers.exa, before.mcpServers.exa);
       assert.deepEqual(after.mcpServers.context7, before.mcpServers.context7);
       assert.deepEqual(after.mcpServers.playwright, before.mcpServers.playwright);
-      assert.deepEqual(after.mcpServers.samemind, { command: 'npx', args: ['samemind', 'serve'] });
+      assert.deepEqual(after.mcpServers.samemind.args, ['samemind', 'serve']);
+      assert.equal(after.mcpServers.samemind.command, 'npx');
+      assert.equal(after.mcpServers.samemind.env.OKF_ROOT, join(home, '.samemind', 'bundle'));
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -391,7 +397,11 @@ describe('samemind setup --global (G-A) — fake $HOME, real ~/.claude*/~/.samem
       // native `claude` is unreachable (PATH forced empty) → JSON-merge fallback must have run
       assert.match(out, /wrote samemind.*claude\.json/i);
       const claudeJson = JSON.parse(readFileSync(join(home, '.claude.json'), 'utf8'));
-      assert.deepEqual(claudeJson.mcpServers.samemind, { command: 'npx', args: ['samemind', 'serve'] });
+      assert.deepEqual(claudeJson.mcpServers.samemind.args, ['samemind', 'serve']);
+      assert.equal(claudeJson.mcpServers.samemind.command, 'npx');
+      // user scope applies in every project, so the personal bundle must be pinned —
+      // otherwise the server resolves a root from cwd and can serve its own package dir.
+      assert.equal(claudeJson.mcpServers.samemind.env.OKF_ROOT, join(home, '.samemind', 'bundle'));
 
       assert.match(out, /Semantic \(global\):/);
     } finally {
@@ -418,7 +428,9 @@ describe('samemind setup --global (G-A) — fake $HOME, real ~/.claude*/~/.samem
       assert.deepEqual(after.mcpServers.exa, before.mcpServers.exa);
       assert.deepEqual(after.mcpServers.context7, before.mcpServers.context7);
       assert.deepEqual(after.mcpServers.playwright, before.mcpServers.playwright);
-      assert.deepEqual(after.mcpServers.samemind, { command: 'npx', args: ['samemind', 'serve'] });
+      assert.deepEqual(after.mcpServers.samemind.args, ['samemind', 'serve']);
+      assert.equal(after.mcpServers.samemind.command, 'npx');
+      assert.equal(after.mcpServers.samemind.env.OKF_ROOT, join(home, '.samemind', 'bundle'));
       const backups = readdirSync(home).filter(f => f.startsWith('.claude.json.bak-'));
       assert.equal(backups.length, 1, 'the pre-existing real-looking config must have been backed up before merge');
     } finally {

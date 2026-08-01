@@ -70,6 +70,18 @@ describe('buildProjectBlock — unit', () => {
     assert.ok(block.indexOf('Local-first') < block.indexOf('Retrieval strategy'), 'newer (07-20) ranks above older (07-10)');
   });
 
+  it('maxFactChars/maxBlockChars decouple the per-fact clamp from the per-block cap (bridge parity)', () => {
+    // Regression: --budget used to derive ONE number for both, so a caller could not reproduce
+    // the production memory-bridge's independent MAX_FACT_CHARS=6000/MAX_BLOCK_CHARS=60000 split.
+    const long = doc({ id: 'concepts/long', type: 'Concept', title: 'Long fact', body: 'z'.repeat(50) });
+    // Tiny per-fact clamp (10 chars) but a generous per-block cap (10000): body is clamped, the
+    // overall block is not further truncated by the (much larger) block cap.
+    const { block, truncated } = buildProjectBlock([long], { maxFactChars: 10, maxBlockChars: 10000 });
+    assert.ok(block.includes('z'.repeat(10)));
+    assert.ok(!block.includes('z'.repeat(11)), 'per-fact clamp applied');
+    assert.equal(truncated, false, 'block cap (10000) not hit — only the fact body was clamped');
+  });
+
   it('bundle ranking: a superseded fact is demoted below a live one, unlike canon', () => {
     // A (older) supersedes B (newer). canon would put B first (fresher); bundle demotes B.
     const A = doc({ id: 'concepts/a', type: 'Concept', title: 'Alpha fact', source: 'demo', timestamp: '2026-07-10T00:00:00Z', body: 'FACT-A', supersedes: ['/concepts/b.md'] });

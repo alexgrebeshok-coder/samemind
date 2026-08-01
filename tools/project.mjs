@@ -9,7 +9,13 @@
 //   node tools/project.mjs                                   every projection.targets in .samemind/config.json
 //   node tools/project.mjs --engine <id> --file <path>       generic target for an engine outside ENGINE_FILES
 //   Flags: --root <dir> (default OKF_ROOT/cwd) · --budget <n> · --core-fresh <n> · --source canon|bundle
-//          (each overrides config) · --dry-run (print the block, write nothing).
+//          --max-fact-chars <n> · --max-block-chars <n> (each overrides config) · --dry-run (print, write nothing).
+//
+// --budget (tokens) derives ONE char count used for both the per-fact clamp and the per-block cap
+// — a convenience default. --max-fact-chars / --max-block-chars split them, matching how the
+// production memory-bridge (~/.claude/memory-bridge/sync.mjs) actually limits: MAX_FACT_CHARS=6000
+// (per fact) and MAX_BLOCK_CHARS=60000 (per block) are independent constants there, not one budget.
+// Pass both explicitly to reproduce that split (e.g. for a bridge-vs-product parity comparison).
 //
 // Ranking of the projected facts is decided HERE (not in lib/project.mjs, which is pure render):
 //   factSource=canon  → freshness: valid_from/timestamp desc, then id (deterministic).
@@ -84,6 +90,8 @@ export function buildProjectBlock(docs, {
   factSource = 'canon',
   excludeSource = null,
   budgetTokens = DEFAULT_BUDGET_TOKENS,
+  maxFactChars = null,
+  maxBlockChars = null,
   coreFresh = 12,
   indexTail = true,
   now = Date.now(),
@@ -95,16 +103,21 @@ export function buildProjectBlock(docs, {
 
   const ranked = factSource === 'bundle' ? rankBundle(facts, now) : rankCanon(facts);
 
+  // budgetTokens is the back-compat convenience: absent an explicit maxFactChars/maxBlockChars it
+  // derives ONE char count used for both. Passing the two explicitly (see file header) decouples
+  // them, matching the production bridge's independent MAX_FACT_CHARS/MAX_BLOCK_CHARS constants.
   const budgetChars = Math.max(1, Math.floor(budgetTokens * CHARS_PER_TOKEN));
+  const factChars = Number.isFinite(maxFactChars) ? maxFactChars : budgetChars;
+  const blockChars = Number.isFinite(maxBlockChars) ? maxBlockChars : budgetChars;
   const entries = ranked.map(d => ({
     name: displayTitle(d.fm) || d.id,
     desc: d.fm.description || '',
     body: d.body || '',
   }));
 
-  const body = renderFactEntries(entries, { coreFresh, indexTail, maxFactChars: budgetChars });
+  const body = renderFactEntries(entries, { coreFresh, indexTail, maxFactChars: factChars });
   const raw = `${PROJECT_START}\n${body}\n${PROJECT_END}`;
-  const { text, truncated } = truncateBlock(raw, { maxChars: budgetChars, endMark: PROJECT_END });
+  const { text, truncated } = truncateBlock(raw, { maxChars: blockChars, endMark: PROJECT_END });
   return { block: text, count: entries.length, truncated };
 }
 
@@ -118,7 +131,10 @@ function targetFilesFor(engine, file) {
 }
 
 function parseArgs(argv) {
-  const out = { root: null, engine: null, file: null, budget: null, coreFresh: null, source: null, dryRun: false, help: false };
+  const out = {
+    root: null, engine: null, file: null, budget: null, coreFresh: null, source: null,
+    maxFactChars: null, maxBlockChars: null, dryRun: false, help: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--root') out.root = argv[++i];
@@ -127,6 +143,8 @@ function parseArgs(argv) {
     else if (a === '--budget') out.budget = Number(argv[++i]);
     else if (a === '--core-fresh') out.coreFresh = Number(argv[++i]);
     else if (a === '--source') out.source = argv[++i];
+    else if (a === '--max-fact-chars') out.maxFactChars = Number(argv[++i]);
+    else if (a === '--max-block-chars') out.maxBlockChars = Number(argv[++i]);
     else if (a === '--dry-run') out.dryRun = true;
     else if (a === '--help' || a === '-h') out.help = true;
     else throw new Error(`unknown flag "${a}" — see: samemind project --help`);
@@ -142,6 +160,7 @@ function usage() {
   console.log('');
   console.log('Flags: --root <dir> (default OKF_ROOT/cwd) · --engine <id> · --file <path> (generic, engine outside the table)');
   console.log('       --budget <n> · --core-fresh <n> · --source canon|bundle (override config) · --dry-run (print, write nothing)');
+  console.log('       --max-fact-chars <n> · --max-block-chars <n> — split per-fact/per-block char caps (override --budget for that side)');
   console.log(`Known engines: ${Object.keys(ENGINE_FILES).join(', ')}`);
 }
 
@@ -178,6 +197,8 @@ export function main(argv = process.argv.slice(2)) {
     const budgetTokens = Number.isFinite(args.budget) ? args.budget : cfg.budgetTokens;
     const coreFresh = Number.isFinite(args.coreFresh) ? args.coreFresh : cfg.coreFresh;
     const indexTail = cfg.indexTail;
+    const maxFactChars = Number.isFinite(args.maxFactChars) ? args.maxFactChars : cfg.maxFactChars;
+    const maxBlockChars = Number.isFinite(args.maxBlockChars) ? args.maxBlockChars : cfg.maxBlockChars;
 
     // Ad-hoc --engine wins over config targets; its anti-echo source defaults to the engine id
     // (an engine's own writes carry source=<engine>). Config targets carry their own excludeSource.
@@ -196,7 +217,7 @@ export function main(argv = process.argv.slice(2)) {
 
     if (args.dryRun) {
       for (const t of plan) {
-        const { block } = buildProjectBlock(docs, { factSource, excludeSource: t.excludeSource, budgetTokens, coreFresh, indexTail });
+        const { block } = buildProjectBlock(docs, { factSource, excludeSource: t.excludeSource, budgetTokens, maxFactChars, maxBlockChars, coreFresh, indexTail });
         if (plan.length > 1) console.log(`# --- ${t.engine} ---`);
         console.log(block);
       }
@@ -208,7 +229,7 @@ export function main(argv = process.argv.slice(2)) {
     migrateProjectionConfig(root);
 
     for (const t of plan) {
-      const { block, count, truncated } = buildProjectBlock(docs, { factSource, excludeSource: t.excludeSource, budgetTokens, coreFresh, indexTail });
+      const { block, count, truncated } = buildProjectBlock(docs, { factSource, excludeSource: t.excludeSource, budgetTokens, maxFactChars, maxBlockChars, coreFresh, indexTail });
       for (const rel of t.files) {
         const abs = resolve(root, rel);
         mkdirSync(dirname(abs), { recursive: true }); // lockdir mkdir is non-recursive — parent must exist

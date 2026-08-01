@@ -81,6 +81,21 @@ describe('readProjectionConfig — pure read, never writes', () => {
     ]);
   });
 
+  it('maxFactChars/maxBlockChars are opt-in — absent by default, present only when configured', () => {
+    const root = tmp('proj-maxchars');
+    const home = tmp('home-empty-maxchars');
+    writeConfig(root, {});
+
+    const bare = readProjectionConfig(root, home);
+    assert.equal('maxFactChars' in bare, false);
+    assert.equal('maxBlockChars' in bare, false);
+
+    writeConfig(root, { projection: { maxFactChars: 6000, maxBlockChars: 60000 } });
+    const configured = readProjectionConfig(root, home);
+    assert.equal(configured.maxFactChars, 6000);
+    assert.equal(configured.maxBlockChars, 60000);
+  });
+
   it('invalid factSource falls back to default with a warning, does not throw', () => {
     const root = tmp('proj');
     const home = tmp('home-empty3');

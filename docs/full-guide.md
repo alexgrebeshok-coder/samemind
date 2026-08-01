@@ -12,9 +12,10 @@ v0.1) — the piece no git+markdown memory tool has — and identity, an
 append-only work-ledger, and a kanban board live in the same plain-markdown
 bundle, with no integration glue between them.
 
-Also git-native and zero-infra: no database, no daemon, just one bundle that
-every agent you run — Claude Code, OpenClaw, Hermes, opencode, Codex, Cursor,
-and the rest — can read and write.
+Also git-native: no database or daemon required, just one bundle that every
+agent you run — Claude Code, OpenClaw, Hermes, opencode, Codex, Cursor, and
+the rest — can read and write. An opt-in event-driven daemon is available to
+keep engine files projected automatically — see [docs/service.md](service.md).
 
 ## Why samemind (vs. the git-markdown crowd)
 
@@ -485,19 +486,26 @@ sync-mechanism research → cron-sync-adapters idea).
 | `samemind import <dir> [--into inbox\|concepts]` | Accept a foreign OKF-bundle (default → curated `inbox/import-<date>.md`; never overwrites) — see [docs/interop.md](interop.md) |
 | `samemind capture --engine <id> [--source <path>] [--since <ts>] [--dry-run]` | Read-only capture of a live engine session store (Claude Code JSONL transcripts, any directory of markdown diaries) into a distilled `inbox/<engine>.md` — see [docs/session-capture.md](session-capture.md) |
 | `samemind ledger append\|status\|read` | Append-only event ledger (`ledger/events.jsonl`): fine-grained "who did what step, when", 🔥 open failures until resolved — complements (never replaces) `Task.status` — see [docs/event-ledger.md](event-ledger.md) |
-| `samemind serve` | MCP stdio server: `memory_search/get/list/write_inbox/handoff/health/ledger_append/ledger_status` — see [MCP](#mcp) |
+| `samemind project [--engine <id>] [--dry-run]` | Project curated FACTS into an engine's own instruction file (between `samemind:project` markers); config-driven via `.samemind/config.json`'s `projection` section, or ad-hoc `--engine` — see [docs/service.md](service.md) |
+| `samemind service install\|status\|uninstall [--daemon]` | Install a per-user OS unit (LaunchAgent/systemd/Scheduled Task, no sudo) that runs `project` periodically, or (`--daemon`) keeps `serviced` supervised — see [docs/service.md](service.md) |
+| `samemind serviced [--root <dir>] [--interval <sec>]` | Long-lived event-driven projection daemon, run under an OS supervisor — see [docs/service.md](service.md) |
+| `samemind hooks list\|install --agent <id>` | Per-engine lifecycle-hook wiring: `auto` (Claude Code/Codex/opencode — real SessionStart/SessionEnd) vs `projection` (everyone else — file only) — see [docs/service.md](service.md) |
+| `samemind status [--json]` | Is memory projection alive: reads `.samemind/health.json` written by `project`/`serviced` — see [docs/service.md](service.md) |
+| `samemind serve [--http [--port N]]` | MCP server: `memory_search/get/list/write_inbox/handoff/health/ledger_append/ledger_status/fleet_status/fleet_assign` — stdio by default, `--http` for local Streamable HTTP — see [MCP](#mcp), [docs/service.md](service.md) |
 | `tools/consolidate.mjs` | Gap map: inbox/mirror → candidates for promotion into the canon, plus a same-type "contradictions" section (dev-mode only, run from a checkout) |
 | `tools/reconcile.mjs [--dir <subpath>] [--write]` | Bi-temporal supersede proposals (`valid_from`/`invalid_at`/`superseded_by`) — never writes to a concept's frontmatter, human-gate like `consolidate.mjs` (dev-mode only, run from a checkout) |
 | `tools/reflect.mjs [--write]` | Ф5 reflection/forgetting cycle: reconcile + consolidate + tiered-heat re-evaluation fused into ONE proposal report (merge / supersede / cooled-off facts) — human-gate, never writes to a concept's frontmatter (dev-mode only, run from a checkout). See [Memory hygiene § Tiered heat](memory-hygiene.md#tiered-heat-ф5) |
 
-`query`/`recall`/`gde`/`brief`/`board`/`handoff`/`forget`/`install`/`export`/`import`/`capture`/`ledger`/`serve` run against `OKF_ROOT` if set, otherwise your
+`query`/`recall`/`gde`/`brief`/`board`/`handoff`/`forget`/`install`/`export`/`import`/`capture`/`ledger`/`project`/`service`/`serviced`/`status`/`hooks`/`serve` run against `OKF_ROOT` if set, otherwise your
 current directory — so they operate on your own bundle, not on the samemind package itself.
 
 Under the hood: `bin/samemind.mjs` routes to `tools/okf-query.mjs`, `tools/okf-recall.mjs`,
 `tools/gde.mjs`, `tools/init.mjs`, `tools/brief.mjs`, `tools/board.mjs`, `tools/handoff.mjs`,
 `tools/forget.mjs`, `tools/install.mjs`, `tools/export.mjs`, `tools/import.mjs`, `tools/capture.mjs`,
-`tools/ledger.mjs`, `tools/mcp-server.mjs`. Shared libraries: `tools/lib/` (okf, recall, bm25,
-hygiene, mcp, injection, ledger, **html-render** — the `--html` projection for board/handoff),
+`tools/ledger.mjs`, `tools/project.mjs`, `tools/service.mjs`, `tools/serviced.mjs`, `tools/status.mjs`,
+`tools/hooks.mjs`, `tools/mcp-server.mjs`. Shared libraries: `tools/lib/` (okf, recall, bm25,
+hygiene, mcp, mcp-http, injection, ledger, project, projection-config, health, hooks, digest-file,
+**html-render** — the `--html` projection for board/handoff),
 `lib/` (atomic write, safe paths, mirror sync).
 
 ### HTML projections (`--html`)
