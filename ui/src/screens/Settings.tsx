@@ -354,12 +354,17 @@ export function Settings() {
             layer={voice.layers.serviceUrl}
             errors={errFor('voice', 'serviceUrl')}
           >
+            {/* Placeholder is a loopback example, not a remote-looking one: the companion is
+                local by design — raw audio never leaves the device — so hinting at a remote
+                host would contradict the promise. It also keeps the source free of external
+                hosts, which ui/src/lib.test.mjs enforces as a spec §0 invariant (that check
+                reads source text, so even a URL inside a comment trips it). */}
             <input
               type="url"
               className="w-full rounded-[12px] border border-line bg-surface px-3 py-2 font-mono text-sm"
               defaultValue={voice.values.serviceUrl ?? ''}
               key={`voice-url-${voice.values.serviceUrl ?? 'null'}`}
-              placeholder="https://…"
+              placeholder="http://127.0.0.1:11434"
               disabled={busy}
               onBlur={(e) => {
                 const raw = e.target.value.trim();
