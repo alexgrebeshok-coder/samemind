@@ -96,6 +96,19 @@ export function isLedgerCard(card: BoardCard): card is LedgerCard {
   return (card as LedgerCard).source === 'ledger';
 }
 
+/** Copy-paste CLI hint for a blocked card — shown via `<Cmd>`, never executed (spec control-center §3.1). */
+export function blockedRecoveryCmd(card: BoardCard): string {
+  const topic = isLedgerCard(card)
+    ? card.title || card.id.replace(/^ledger:/, '')
+    : idTail(card.id);
+  // The actor must be whoever actually owns the topic. A hard-coded engine would hand the user
+  // a command that attributes the work to the wrong one — and the ledger is the attribution
+  // record, so a wrong actor there is a lie that outlives the copy-paste. Ledger cards carry
+  // their actor; a Task doc has no engine, so leave a placeholder the user must fill in.
+  const actor = isLedgerCard(card) ? card.actor : '<engine>';
+  return `samemind ledger append --actor ${actor} --topic ${topic} --phase step --status wip --action "resume"`;
+}
+
 /**
  * The one place a kanban card is read. Ledger-derived cards carry no frontmatter, so every
  * renderer takes its fields from here instead of reaching into `.fm` — reaching in is exactly

@@ -106,6 +106,21 @@ export type Board = {
   columnTotals?: Partial<Record<'backlog' | 'inprog' | 'blocked' | 'done', number>>;
 };
 
+/** `/api/handoff` — work-state slice; board covers kanban; handoff fills session + decisions. */
+export type HandoffDecision = { d: Doc; date: string | null; age: number };
+
+export type Handoff = {
+  projectKey: string | null;
+  dayWindow: number;
+  active: Doc[];
+  recentDecisions: HandoffDecision[];
+  plansInForce: Doc[];
+  lastSession: Doc | null;
+  blocked: Doc[];
+  sessionNext: string[];
+  nowMs: number;
+};
+
 export type Fleet = { engines: Engine[]; stopPoints: string[] };
 
 export type LedgerTopic = {

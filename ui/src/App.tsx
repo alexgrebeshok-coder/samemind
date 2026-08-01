@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import { refreshAll, startClock, useApi, useApiStatus, type Health } from './api';
 import { ago } from './lib';
 import { Overview } from './screens/Overview';
+import { Today } from './screens/Today';
 import { Memory } from './screens/Memory';
 import { Fleet } from './screens/Fleet';
 import { Projects } from './screens/Projects';
@@ -41,17 +42,22 @@ function useTheme() {
   return { theme, setTheme };
 }
 
-export type Route = { screen: 'overview' | 'memory' | 'fleet' | 'projects' | 'settings'; id: string | null };
+export type Route = {
+  screen: 'today' | 'overview' | 'memory' | 'fleet' | 'projects' | 'settings';
+  id: string | null;
+};
 
 function parseHash(): Route {
   const raw = location.hash.replace(/^#\/?/, '');
   const [head, ...rest] = raw.split('/');
   const id = rest.join('/') || null;
+  if (head === '' || head === 'today') return { screen: 'today', id: null };
+  if (head === 'overview') return { screen: 'overview', id: null };
   if (head === 'memory') return { screen: 'memory', id };
   if (head === 'fleet') return { screen: 'fleet', id: null };
   if (head === 'projects') return { screen: 'projects', id };
   if (head === 'settings') return { screen: 'settings', id: null };
-  return { screen: 'overview', id: null };
+  return { screen: 'today', id: null };
 }
 
 export function navigate(to: string) {
@@ -69,7 +75,8 @@ function useRoute(): Route {
 }
 
 const NAV = [
-  { screen: 'overview', label: 'Overview', href: '#/' },
+  { screen: 'today', label: 'Today', href: '#/today' },
+  { screen: 'overview', label: 'Overview', href: '#/overview' },
   { screen: 'memory', label: 'Memory', href: '#/memory' },
   { screen: 'fleet', label: 'Fleet', href: '#/fleet' },
   { screen: 'projects', label: 'Projects', href: '#/projects' },
@@ -77,6 +84,7 @@ const NAV = [
 ] as const;
 
 const TITLES: Record<Route['screen'], string> = {
+  today: 'Today',
   overview: 'Overview',
   memory: 'Memory',
   fleet: 'Fleet',
@@ -110,7 +118,7 @@ function Sidebar({ route }: { route: Route }) {
   return (
     <header className="flex shrink-0 flex-col gap-4 border-b border-line bg-surface px-4 py-3 min-[900px]:h-screen min-[900px]:w-60 min-[900px]:border-r min-[900px]:border-b-0 min-[900px]:px-4 min-[900px]:py-5">
       <div className="flex items-center justify-between gap-3 min-[900px]:block">
-        <a href="#/" className="flex items-center gap-2 font-semibold tracking-tight">
+        <a href="#/today" className="flex items-center gap-2 font-semibold tracking-tight">
           <span aria-hidden="true" className="inline-block size-3 rounded-full bg-accent" />
           samemind
         </a>
@@ -239,6 +247,7 @@ export default function App() {
         <OfflineBanner />
         <ScreenHeader title={TITLES[route.screen]} />
         <main className={`flex-1 px-4 py-5 min-[900px]:px-6 ${offline ? 'opacity-60' : ''}`}>
+          {route.screen === 'today' && <Today />}
           {route.screen === 'overview' && <Overview />}
           {route.screen === 'memory' && <Memory id={route.id} />}
           {route.screen === 'fleet' && <Fleet />}

@@ -441,6 +441,79 @@ describe('createUiServer — GET /api/events/stream (SSE)', () => {
   });
 });
 
+// ─────────────────────────────── voice companion probe: GET /api/voice/probe ───────────────────────────────
+
+describe('createUiServer — GET /api/voice/probe', () => {
+  let dir, server, port, origHome;
+
+  // Each case gets its own bundle + server (the configured url differs). HOME is pinned to the
+  // bundle's own empty dir so the developer's real ~/.samemind can never leak a serviceUrl in, and
+  // `fetchImpl` is injected so no real network ever leaves the process.
+  async function boot(serviceUrl, fetchImpl) {
+    dir = tmp('ui-voice');
+    mkdirSync(join(dir, 'concepts'), { recursive: true });
+    writeFileSync(join(dir, 'index.md'), '# bundle\n', 'utf8');
+    mkdirSync(join(dir, '.samemind'), { recursive: true });
+    writeFileSync(join(dir, '.samemind', 'config.json'), JSON.stringify({ voice: { serviceUrl } }), 'utf8');
+    origHome = process.env.HOME;
+    process.env.HOME = dir;
+    server = await listen({ root: dir, distDir: null, fetchImpl });
+    port = server.address().port;
+  }
+  function down() {
+    if (server) server.close();
+    if (origHome !== undefined) process.env.HOME = origHome;
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  }
+
+  it('no serviceUrl → unavailable, no fetch, contract envelope', async () => {
+    let called = 0;
+    await boot(null, async () => { called++; throw new Error('no network'); });
+    try {
+      const r = await request(port, '/api/voice/probe');
+      assert.equal(r.status, 200);
+      const json = JSON.parse(r.body);
+      assert.equal(json.contract, 1);
+      assert.equal(json.kind, 'voice-probe');
+      assert.equal(json.data.state, 'unavailable');
+      assert.equal(json.data.probe, null);
+      assert.equal(called, 0, 'no serviceUrl must short-circuit before any fetch');
+    } finally { down(); }
+  });
+
+  it('configured + live probe → reachable, model reported', async () => {
+    const fetchImpl = async () => ({ ok: true, json: async () => ({ data: [{ id: 'whisper-1' }] }) });
+    await boot('http://127.0.0.1:8000', fetchImpl);
+    try {
+      const r = await request(port, '/api/voice/probe');
+      const json = JSON.parse(r.body);
+      assert.equal(json.data.state, 'reachable');
+      assert.equal(json.data.available, true);
+      assert.equal(json.data.probe.model, 'whisper-1');
+    } finally { down(); }
+  });
+
+  it('configured but unreachable → configured (NOT green), probe null', async () => {
+    const fetchImpl = async () => { throw new Error('ECONNREFUSED'); };
+    await boot('http://127.0.0.1:8000', fetchImpl);
+    try {
+      const r = await request(port, '/api/voice/probe');
+      const json = JSON.parse(r.body);
+      assert.equal(json.data.state, 'configured');
+      assert.equal(json.data.available, false);
+      assert.equal(json.data.probe, null);
+    } finally { down(); }
+  });
+
+  it('POST → 405 (the probe route stays read-only)', async () => {
+    await boot(null, async () => { throw new Error('no network'); });
+    try {
+      const r = await request(port, '/api/voice/probe', { method: 'POST' });
+      assert.equal(r.status, 405);
+    } finally { down(); }
+  });
+});
+
 // No dedicated "no leaked handles" test: it's proven by the test *process* — every `after()`
 // above calls server.close(), which (per the ui-server.mjs comment on server.close) ends every
 // open SSE stream and force-drops its socket. If a watcher, heartbeat interval, or connection

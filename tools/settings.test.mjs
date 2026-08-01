@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import net from 'node:net';
 
-import { buildSettingsModel, applySettingsPatch, validatePatch, resolveLayers } from './lib/settings.mjs';
+import { buildSettingsModel, applySettingsPatch, validatePatch, resolveLayers, assessAvailability } from './lib/settings.mjs';
 import { createUiServer } from './lib/ui-server.mjs';
 
 const tmp = (p) => mkdtempSync(join(tmpdir(), `set-${p}-`));
@@ -64,6 +64,43 @@ describe('settings — model', () => {
       buildSettingsModel(root, { globalHome: null });
       assert.equal(readFileSync(join(root, '.samemind', 'config.json'), 'utf8'), before);
     } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+});
+
+describe('settings — voice availability has three honest states', () => {
+  it('no serviceUrl → unavailable (available:false, with reason+fix)', () => {
+    const { voice } = assessAvailability({ voice: { serviceUrl: null } });
+    assert.equal(voice.state, 'unavailable');
+    assert.equal(voice.available, false);
+    assert.ok(voice.reason && voice.fix);
+  });
+
+  it('serviceUrl set, no probe → configured (NOT available — a config entry is not a connection)', () => {
+    const { voice } = assessAvailability({ voice: { serviceUrl: 'http://127.0.0.1:8000' } });
+    assert.equal(voice.state, 'configured');
+    assert.equal(voice.available, false, 'configured must not render green');
+  });
+
+  it('serviceUrl set + a probe result → reachable (available:true)', () => {
+    const probe = { url: 'http://127.0.0.1:8000', engine: 'openai-compatible', model: 'whisper-1' };
+    const { voice } = assessAvailability({ voice: { serviceUrl: 'http://127.0.0.1:8000' } }, { voiceProbe: probe });
+    assert.equal(voice.state, 'reachable');
+    assert.equal(voice.available, true);
+  });
+
+  it('buildSettingsModel makes no network calls — pure over disk (regression guard)', () => {
+    const root = bundle(tmp('pure'));
+    cfg(root, { voice: { serviceUrl: 'http://127.0.0.1:8000' } }); // configured — would tempt a render to probe
+    const orig = globalThis.fetch;
+    globalThis.fetch = () => { throw new Error('network must not happen in a render'); };
+    try {
+      const m = buildSettingsModel(root, { globalHome: null });
+      assert.equal(m.features.voice.state, 'configured', 'a render reports configured, never reaches out');
+      assert.equal(m.features.voice.available, false, 'configured is not green');
+    } finally {
+      globalThis.fetch = orig;
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -180,7 +217,7 @@ describe('POST /api/config — the only write', () => {
     assert.equal(await rawPost(port, { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}`, contentType: 'text/plain' }), 415)));
 
   it('leaves every read route method-locked', async () => withServer(async ({ port }) => {
-    for (const path of ['/api/board', '/api/settings', '/api/status', '/api/doctor']) {
+    for (const path of ['/api/board', '/api/settings', '/api/status', '/api/doctor', '/api/voice/probe']) {
       assert.equal(
         await rawPost(port, { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}`, path }),
         405, `${path} must stay read-only`,

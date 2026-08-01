@@ -26,7 +26,9 @@ import { buildCorpus, bm25Score } from './bm25.mjs';
 import { docText } from './recall.mjs';
 import { assertSafeConceptId } from '../../lib/safe-path.mjs';
 import { checkWriteRequest } from './http-guard.mjs';
-import { buildSettingsModel, applySettingsPatch } from './settings.mjs';
+import { buildSettingsModel, applySettingsPatch, assessAvailability } from './settings.mjs';
+import { readFeatureConfig } from './feature-config.mjs';
+import { probeVoiceCompanion } from './probe-voice.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(HERE, '..', '..');
@@ -76,6 +78,7 @@ const API_ENDPOINTS = [
   'GET /api/health', 'GET /api/status', 'GET /api/doctor', 'GET /api/board',
   'GET /api/handoff', 'GET /api/fleet', 'GET /api/ledger', 'GET /api/concepts',
   'GET /api/concept/<id>', 'GET /api/graph', 'GET /api/events/stream',
+  'GET /api/voice/probe',
 ];
 
 function placeholderHtml() {
@@ -184,6 +187,17 @@ function apiGraph(root) {
 
 function apiSettings(root) {
   return wrap('settings', buildSettingsModel(root));
+}
+
+/** Runs the voice-companion reachability probe on demand (the "check connection" button), never on
+ *  a render. Reads the configured serviceUrl, probes it, and folds the result back through
+ *  assessAvailability — so the same state machine that powers GET /api/settings also answers here,
+ *  only now with the `reachable` state a pure render can never produce. */
+async function apiVoiceProbe(root, fetchImpl = fetch) {
+  const values = readFeatureConfig(root);
+  const probe = await probeVoiceCompanion({ url: values.voice.serviceUrl, fetchImpl });
+  const { voice } = assessAvailability(values, { voiceProbe: probe });
+  return wrap('voice-probe', { ...voice, url: values.voice.serviceUrl, probe });
 }
 
 /** 64 KiB is far more than a settings patch needs; the cap exists so a hostile or buggy client
@@ -357,7 +371,7 @@ function serveStaticFile(res, distDir, relPath) {
  *  guard so "what can this server mutate" is one line to read, not a grep across handlers. */
 const WRITE_ROUTES = new Map([['/api/config', 'POST']]);
 
-function handleRequest(req, res, root, distDir, hub) {
+function handleRequest(req, res, root, distDir, hub, fetchImpl = fetch) {
   if (!hostAllowed(req.headers.host)) { sendJson(res, 403, { error: 'forbidden host' }); return; }
 
   // GET stays unconditionally allowed. Everything else must match WRITE_ROUTES exactly *and*
@@ -398,6 +412,14 @@ function handleRequest(req, res, root, distDir, hub) {
     handleEventsStream(req, res, root, hub);
     return;
   }
+  if (pathname === '/api/voice/probe') {
+    // On-demand only (the "check connection" button), never on a render — see apiVoiceProbe. This
+    // is the one GET that may touch the network; every other route stays pure over disk.
+    Promise.resolve(apiVoiceProbe(root, fetchImpl))
+      .then((payload) => sendJson(res, 200, payload))
+      .catch((e) => sendJson(res, 500, { error: e.message }));
+    return;
+  }
   if (Object.prototype.hasOwnProperty.call(API_ROUTES, pathname)) {
     // Handlers are usually sync; /api/doctor is async (runDoctor). Promise.resolve covers both.
     Promise.resolve(API_ROUTES[pathname](root, query))
@@ -425,12 +447,12 @@ function handleRequest(req, res, root, distDir, hub) {
 
 /** Creates the read-only dashboard HTTP server. Caller decides host/port to listen on
  *  (tools/ui.mjs binds 127.0.0.1 only, per docs/ui-spec.md §0). */
-export function createUiServer({ root, distDir = null } = {}) {
+export function createUiServer({ root, distDir = null, fetchImpl = fetch } = {}) {
   if (!root) throw new Error('createUiServer: "root" is required');
   const hub = createLedgerStreamHub(root);
   const server = http.createServer((req, res) => {
     try {
-      handleRequest(req, res, root, distDir, hub);
+      handleRequest(req, res, root, distDir, hub, fetchImpl);
     } catch (e) {
       sendJson(res, 500, { error: e.message });
     }

@@ -48,20 +48,48 @@ export function resolveLayers(root, globalHome = process.env.HOME) {
 /**
  * Is there anything that could actually perform this capability?
  *
- * Deliberately a *pure* check — no network, no spawn. A GET that probes a companion service turns
- * every dashboard poll into a connection attempt, and a slow companion into a slow dashboard.
- * "Configured but unproven" is an honest state; claiming reachability we did not test is not.
+ * Deliberately *pure and synchronous* — no network, no spawn. A GET that probes a companion turns
+ * every dashboard poll into a connection attempt, and a slow companion into a slow dashboard. So
+ * reachability is never *computed* here; it is *passed in* via `voiceProbe` — the result of
+ * probeVoiceCompanion, run only on demand by GET /api/voice/probe. The polling buildSettingsModel
+ * never passes one, which is exactly why a render can never claim "reachable". Three honest states:
+ *
+ *   unavailable — no serviceUrl; nothing to enable (with reason + fix, like before).
+ *   configured  — serviceUrl set but unproven. NOT available: a config entry is not a working
+ *                 connection (the same lie 0.15 cleaned up elsewhere), so the screen must not draw
+ *                 it green until a probe says so.
+ *   reachable   — proven live by a probe (available:true).
  */
-export function assessAvailability(cfg) {
-  const voice = cfg.voice.serviceUrl
-    ? { available: true, note: 'companion configured (reachability not probed here — see doctor)' }
-    : {
+export function assessAvailability(cfg, { voiceProbe } = {}) {
+  const url = cfg.voice.serviceUrl;
+  let voice;
+  if (!url) {
+    voice = {
+      state: 'unavailable',
       available: false,
       reason: 'voice companion is not installed',
       fix: 'install the companion, then set voice.serviceUrl',
     };
+  } else if (voiceProbe) {
+    voice = {
+      state: 'reachable',
+      available: true,
+      note: `companion reachable${voiceProbe.model ? ` (${voiceProbe.model})` : ''}`,
+    };
+  } else {
+    voice = {
+      state: 'configured',
+      available: false,
+      note: 'companion configured (reachability not probed — use "check connection")',
+    };
+  }
   // Vision ships no runner at all yet; saying "off" would imply the user turned it off.
-  const vision = { available: false, reason: 'ambient vision is not implemented yet (planned for 0.17)', fix: null };
+  const vision = {
+    state: 'unavailable',
+    available: false,
+    reason: 'ambient vision is not implemented yet (planned for 0.17)',
+    fix: null,
+  };
   return { voice, vision };
 }
 

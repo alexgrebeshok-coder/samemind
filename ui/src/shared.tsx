@@ -1,9 +1,23 @@
 // shared.tsx — pieces used by more than one screen: the kanban board (Overview + Projects) and
 // the open-failures list (Overview + Fleet).
 import { navigate } from './App';
-import type { BoardCard, Doc, LedgerEvent } from './api';
+import type { Board, BoardCard, Doc, Health, LedgerEvent } from './api';
 import { ago, cardView, docDate, idTail, snippet } from './lib';
-import { AllQuiet, Card, Empty, TypeBadge } from './ui';
+import { AllQuiet, Card, Empty, StatTile, TypeBadge } from './ui';
+
+/** KPI strip shared by Today (landing) and Overview — counts from `columnTotals`, never capped arrays. */
+export function KpiStrip({ board: b, health }: { board: Board; health?: Health | null }) {
+  const inprogTotal = b.columnTotals?.inprog ?? b.inprog.length;
+  const blockedTotal = b.columnTotals?.blocked ?? b.blocked.length;
+  return (
+    <section aria-label="Key numbers" className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <StatTile label="Concepts" value={health?.concepts ?? b.backlog.length + b.inprog.length} />
+      <StatTile label="In progress" value={inprogTotal} note={`${blockedTotal} blocked`} />
+      <StatTile label="Open failures" value={b.openFailuresTotal} alert={b.openFailuresTotal > 0} />
+      <StatTile label="Overdue engines" value={b.overdueEnginesTotal} alert={b.overdueEnginesTotal > 0} />
+    </section>
+  );
+}
 
 // `edge` is the 3px colour strip on top of each column. Existing theme tokens only, so both
 // themes follow automatically; applied as an inline style because a `border-t-*` utility would
@@ -77,16 +91,22 @@ export function Kanban({
   now,
   overflow,
   totals,
+  only,
 }: {
   columns: Record<ColumnKey, BoardCard[]>;
   now: number;
   overflow?: Partial<Record<ColumnKey, number>>;
   /** True column sizes before the cap; falls back to the rendered count when absent. */
   totals?: Partial<Record<ColumnKey, number>>;
+  /** Subset of columns (Overview keeps backlog/done after Today took in-flight + blocked). */
+  only?: readonly ColumnKey[];
 }) {
+  const visible = only ? COLUMNS.filter((c) => only.includes(c.key)) : COLUMNS;
+  const gridCols =
+    visible.length <= 2 ? 'sm:grid-cols-2' : visible.length === 3 ? 'sm:grid-cols-2 xl:grid-cols-3' : 'sm:grid-cols-2 xl:grid-cols-4';
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      {COLUMNS.map((c) => {
+    <div className={`grid gap-3 ${gridCols}`}>
+      {visible.map((c) => {
         const docs = columns[c.key] || [];
         const more = overflow?.[c.key] || 0;
         const total = totals?.[c.key] ?? docs.length;
