@@ -2,11 +2,11 @@
 
 samemind is a git-native markdown memory bundle for AI coding agents — identity, search, a work ledger, and a kanban board in one place, portable across engines like Claude Code, Cursor, and OpenClaw. No daemon or database required; BM25 search always works offline, semantic search is optional.
 
-**Latest: v0.14.0** — memory keeps itself current: `samemind serviced` re-projects into engine files on every bundle change, `serve --http` reaches the same MCP tools over local HTTP, and engines with real lifecycle hooks (Claude Code, Codex, opencode) get auto recall/persist. See [CHANGELOG.md](CHANGELOG.md).
+**Latest: v0.14.0** — memory keeps itself current: `samemind serviced` re-projects into engine files on every bundle change, `serve --http` reaches the same MCP tools over local HTTP, and engines with real lifecycle hooks (Claude Code, Codex, opencode) get auto recall/persist. See [CHANGELOG.md](https://github.com/alexgrebeshok-coder/samemind/blob/main/CHANGELOG.md).
 
 [![ci](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml/badge.svg)](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml)
 
-**Your personal universal memory for every AI agent. Switch engines. Same mind.**
+**One memory bundle. Switch engines. Same mind.**
 
 Git-native markdown bundle (no daemon or DB required): identity, search, handoff, an append-only work ledger, and a kanban board in one place. Wire-compatible with [Google OKF v0.1](docs/interop.md). Optional embeddings; **BM25 always works offline**.
 
@@ -23,7 +23,11 @@ Git-native markdown bundle (no daemon or DB required): identity, search, handoff
 | Freshness | manual copy-paste into context | opt-in daemon + [lifecycle hooks](docs/service.md), honest per-engine tier |
 | Face | raw files | `samemind ui` — local dashboard: board, graph, fleet, live feed |
 
-## First use
+## First 5 minutes
+
+**Requires Node.js ≥ 20** (`package.json` → `engines.node`).
+
+### 1. Wire the current project
 
 ```sh
 npx samemind setup
@@ -31,14 +35,99 @@ npx samemind setup
 
 Detects the agent, scaffolds a bundle if needed, wires the memory protocol into its instruction file, registers MCP, probes local embeddings (or stays on honest BM25). Interactive by default; `--yes` / `--dry-run` / `--target <dir>` available.
 
+**You should see something like** (dry-run shape; live run drops the `[dry-run]` prefix):
+
+```text
+Detected engine(s): claude-code
+OKF bundle already present — left as is.
+[dry-run] would install samemind brief into Claude Code's instruction file(s)
+
+=== samemind setup — summary ===
+Engine(s): claude-code
+Bundle:    /path/to/your/project
+MCP:       Claude Code: would add samemind to .mcp.json
+Semantic:  on   # or BM25-only if no local embeddings endpoint
+```
+
+### 2. Try search, board, brief (demo bundle)
+
 ```sh
-npx samemind init --demo          # fresh dir only
-npx samemind recall "context budget"
+npx samemind init --demo          # fresh empty dir only
+cd <that-dir>
+npx samemind recall "context budget" -k 3
 npx samemind board
 npx samemind brief --engine claude-code
 ```
 
+**`recall` — expect ranked hits** (BM25 if no embeddings; demo ids are stable):
+
+```text
+⚠ semantic off, BM25 fallback — set OKF_EMBED_URL for semantic search
+# "context budget" → top-3 [bm25, score=bm25]
+6.161  Concept    concepts/context-budget — Context budget
+4.284  Concept    concepts/retrieval-strategy — Retrieval strategy
+1.630  User       entities/alex-doe — Alex Doe
+```
+
+**`board` — expect a kanban** with demo tasks (In progress / Blocked / Done / Plans).
+
+**`brief` — expect an identity block** between `<!-- samemind:brief:start -->` markers (demo agent “Nova”).
+
 Agent self-install protocol: [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md).
+
+### 3. Continuity across engines (why the product exists)
+
+Same bundle root = same mind. Engine A writes a note; engine B (or a fresh shell) finds it.
+
+```sh
+# --- session A (any engine, or just the shell) ---
+mkdir -p inbox
+cat > inbox/note-ship-honest-docs.md <<'EOF'
+---
+type: Concept
+title: Ship honest docs before 0.15
+description: Decision from engine A
+visibility: internal
+tags: [docs]
+timestamp: 2026-08-01T12:00:00Z
+---
+
+# Ship honest docs before 0.15
+
+Recorded in session A so session B does not re-discover it.
+EOF
+
+# --- session B (different engine, same directory) ---
+npx samemind recall "honest docs" --include-inbox -k 3
+npx samemind handoff
+```
+
+**`recall --include-inbox` — expect the note near the top:**
+
+```text
+# "honest docs" → top-3 [bm25, score=bm25]
+7.997  Concept    inbox/note-ship-honest-docs — Ship honest docs before 0.15
+…
+```
+
+(`recall` skips `inbox/` unless you pass `--include-inbox` — by design: curated
+canon is the default search surface; inbox is raw until you promote it.)
+
+**`handoff` — same work state on every engine** that shares the bundle (typed
+Plan/Task/Decision/Session in the bundle; not raw inbox notes):
+
+```text
+# Handoff — work state
+## Active
+- **in-progress** Ship Lumen backlink editor — /projects/task-lumen-backlinks.md
+…
+## Last session
+**Lumen sync kickoff (2026-07-09)** (claude-code, …) — /concepts/session-2026-07-09-lumen-sync.md
+```
+
+Via MCP the same write path is `memory_write_inbox`; via hooks (Claude Code /
+Codex / opencode only) SessionStart already runs `handoff` for you after
+`samemind hooks install --agent <id>`.
 
 ## Dashboard
 
@@ -142,7 +231,7 @@ Security perimeter (secret visibility, inbox-only writes, path safety): [docs/fu
 No, to use it: it's git-native markdown, BM25 search always works offline, and semantic search is optional (needs a local/OpenAI-compatible embeddings endpoint, `OKF_EMBED_URL`). An event-driven daemon (`samemind serviced`) is available opt-in to keep engine files projected automatically — see [Keeping memory fresh](#keeping-memory-fresh).
 
 ### Which AI engines does it work with?
-`samemind install` wires the memory protocol into 12 engines (see [docs/adapters.md](docs/adapters.md)), and it exposes an MCP server (`npx samemind serve`) for engines like Claude Code.
+`samemind install` wires the memory protocol into 12 engines (see [docs/adapters.md](docs/adapters.md)), and it exposes an MCP server (`npx samemind serve`) for engines like Claude Code. Three of those 12 also get real lifecycle hooks (`claude-code`, `codex`, `opencode`); the rest stay on file projection — see Freshness tier in the matrix.
 
 ### What's new in v0.14.0?
 
@@ -152,7 +241,7 @@ tools over local HTTP, and `samemind hooks install` wires real session-lifecycle
 Claude Code/Codex/opencode — every other engine stays on file projection, stated honestly, not
 promised as auto. v0.12–0.13 built the pieces underneath: `samemind project` (curated facts →
 engine file) and `samemind service` (OS-scheduled periodic run) + `samemind status` (health
-heartbeat). Full history: [CHANGELOG.md](CHANGELOG.md).
+heartbeat). Full history: [CHANGELOG.md](https://github.com/alexgrebeshok-coder/samemind/blob/main/CHANGELOG.md).
 
 ## Tests
 

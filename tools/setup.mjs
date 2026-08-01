@@ -197,7 +197,7 @@ export async function runSetup({ target = process.cwd(), yes = false, dryRun = f
       // engine only ever returns a hint string regardless of `apply` (mcp-register.mjs), so
       // there's nothing to gate for those — no prompt.
       const applyMcp = dryRun ? false : (yes || engineId !== 'claude-code' || await ask(rl, `Register samemind as an MCP server for ${label}?`));
-      mcpLines.push(`${label}: ${ensureMcpRegistered(engineId, dir, { apply: applyMcp })}`);
+      mcpLines.push(`${label}: ${ensureMcpRegistered(engineId, dir, { apply: applyMcp, root: bundleReady ? dir : null })}`);
     }
 
     // 5. embeddings — one probe for the bundle, independent of which engine(s) got wired above
@@ -205,7 +205,25 @@ export async function runSetup({ target = process.cwd(), yes = false, dryRun = f
     const semanticLine = applyEmbedProbe(dir, probe, { dryRun });
     print(semanticLine);
 
-    // 6. status
+    // 6. VERIFY — re-read what we just claimed to write, rather than echoing our own strings.
+    //
+    // This step exists because the summary below used to be built purely from the return values
+    // of the steps above: "wrote samemind → .mcp.json" meant "we called writeFile", nothing more.
+    // A config could be written while the engine still had no working memory, and setup would
+    // report success. doctor's config-only pass (no spawn, so setup stays fast and offline)
+    // re-reads the files from disk and reports what is actually there.
+    let verification = null;
+    if (!dryRun && targetEngines.length) {
+      try {
+        const { runDoctor } = await import('./doctor.mjs');
+        verification = await runDoctor({ engines: targetEngines, target: dir, root: bundleReady ? dir : null, probe: false });
+      } catch (err) {
+        // Verification is a report, never a gate: a doctor bug must not fail a good setup.
+        verification = { unavailable: String(err?.message || err) };
+      }
+    }
+
+    // 7. status
     print('');
     print('=== samemind setup — summary ===');
     print(`Engine(s): ${targetEngines.length ? targetEngines.join(', ') : '(none)'}`);
@@ -213,7 +231,24 @@ export async function runSetup({ target = process.cwd(), yes = false, dryRun = f
     print(`MCP:       ${mcpLines.length ? mcpLines.join(' | ') : '(none)'}`);
     print(`Semantic:  ${probe ? 'on' : 'off (BM25 fallback)'}`);
 
-    return { ok: true, lines };
+    if (verification && !verification.unavailable) {
+      const rows = verification.engines.filter((e) => e.states.supported.ok);
+      const connected = rows.filter((e) => e.states.connected.ok).map((e) => e.id);
+      const notConnected = rows.filter((e) => !e.states.connected.ok && !e.states.connected.unknown).map((e) => e.id);
+      print(`Verified:  config re-read — connected: ${connected.length ? connected.join(', ') : '(none)'}${notConnected.length ? ` · NOT connected: ${notConnected.join(', ')}` : ''}`);
+      const fails = verification.findings.filter((f) => f.severity === 'fail');
+      if (fails.length) {
+        print('');
+        print(`⚠️  ${fails.length} problem(s) would stop memory from working:`);
+        for (const f of fails) print(`   • [${f.engine || 'global'}] ${f.title} → ${f.fix}`);
+      }
+      print('');
+      print('Next:      samemind doctor        # proves a real MCP call, not just a config entry');
+    } else if (verification?.unavailable) {
+      print(`Verified:  (skipped — ${verification.unavailable})`);
+    }
+
+    return { ok: true, lines, verification };
   } finally {
     rl?.close();
   }
@@ -304,6 +339,9 @@ export async function runGlobalSetup({
     const applyMcp = dryRun ? false : (yes || await ask(rl, 'Register samemind as a user-scope MCP server (Claude Code)?'));
     const mcpOpts = {
       apply: applyMcp, scope: 'user', userConfigPath: join(homeDir, '.claude.json'), allowNative,
+      // Pin the personal bundle: user scope applies in every project, so without an explicit
+      // root the server resolves one from whatever directory the engine started in.
+      root: bundleReady ? bundleDir : null,
     };
     if (spawnSyncImpl) mcpOpts.spawnSyncImpl = spawnSyncImpl;
     const mcpLine = ensureMcpRegistered('claude-code', claudeDir, mcpOpts);

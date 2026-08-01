@@ -1,7 +1,20 @@
 # Hook example — auto-write a Session stub on session end
 
-> This is **documentation only**. Nothing here is wired into the package or the
-> scaffold. Copy it into your own Claude Code settings if you want it.
+> **Wired since v0.14.** `samemind hooks install --agent claude-code` merges real
+> `SessionStart` / `SessionEnd` entries into the project's `.claude/settings.json`
+> (see `tools/lib/hooks.mjs` and `tools/lib/hook-templates/`).
+>
+> What the **package** installs by default:
+>
+> - **SessionStart** → runs `npx samemind handoff` (work-state brief into the session).
+> - **SessionEnd** → appends a short timestamped stub to `inbox/claude-code.md`
+>   (template: `tools/lib/hook-templates/session-end.json`).
+>
+> This page is a **richer manual alternative**: a full `Session` frontmatter stub
+> (Done / Decided / Next) as its own file under `inbox/`. Use it if you want a
+> proper Session document instead of the one-line package stub — copy the script
+> below and point the `SessionEnd` command at it (or keep both hooks; samemind
+> only replaces its own previous entries on reinstall).
 
 The write-discipline rule ("session ended → write a `Session` summary") is easy to
 forget. A Claude Code **SessionEnd** hook can drop a fresh `Session` stub into the
@@ -67,9 +80,18 @@ OKF_ROOT="$HOME/samemind" sh -c 'f="inbox/session-stub-$(date +%Y%m%d-%H%M%S).md
 
 ## 2. The settings.json block
 
-Add this to your Claude Code settings (`~/.claude/settings.json` or a project
-`.claude/settings.json`). The `SessionEnd` event fires once when a session ends;
-the command runs with `OKF_ROOT` exported so the script writes to your bundle.
+**Preferred (package-managed):** from the bundle root,
+
+```sh
+npx samemind hooks install --agent claude-code
+# → merges SessionStart + SessionEnd into ./.claude/settings.json
+#    (preserves foreign hooks; re-run is idempotent)
+```
+
+**Manual richer stub** (this page's script): add or replace the SessionEnd command
+in Claude Code settings (`~/.claude/settings.json` or project `.claude/settings.json`).
+The `SessionEnd` event fires once when a session ends; the command runs with
+`OKF_ROOT` exported so the script writes to your bundle.
 
 ```json
 {
@@ -91,15 +113,19 @@ the command runs with `OKF_ROOT` exported so the script writes to your bundle.
 
 ## Notes and caveats
 
-- **Example only.** Hook event names, payload shape, and matcher semantics are
-  specific to your Claude Code version — verify them against your version's
-  hooks documentation before relying on this. Treat the JSON above as a template.
-- **Stub, not a summary.** The hook writes an *empty* `Session` with the date and
-  engine filled in. Filling `## Done` / `## Decided` / `## Next` (and the
-  `relations.decided` / `relations.next` edges) is the agent's job next session —
-  that's the part that needs judgment, which is exactly why it stays manual.
-- **Inbox only.** The stub lands in `inbox/`, never in `concepts/` or `projects/`.
-  Promoting a finished session into `concepts/` is a curation step
+- **Package default vs this example.** The package SessionEnd is a short append to
+  `inbox/claude-code.md`. This page's script writes a full `Session` markdown file.
+  Both land in `inbox/` only — never in `concepts/` or `projects/`.
+- **Stub, not a summary.** Either path writes an *empty* scaffold (date + engine).
+  Filling `## Done` / `## Decided` / `## Next` (and the `relations.decided` /
+  `relations.next` edges) is the agent's job next session — that's the part that
+  needs judgment, which is exactly why it stays manual.
+- **Hook shape is Claude Code's.** Event names, payload shape, and matcher
+  semantics follow Claude Code's hooks docs for your version; verify before
+  relying on a hand-edited block. `samemind hooks install` keeps the shape in
+  lockstep with the templates shipped in the package.
+- **Inbox only.** Promoting a finished session into `concepts/` is a curation step
   (`tools/consolidate.mjs`), consistent with the memory protocol.
-- **`OKF_ROOT`.** Point it at whatever bundle you want the stubs to land in. If
-  unset, the script defaults to `$HOME/samemind`.
+- **`OKF_ROOT`.** Point it at whatever bundle you want the stubs to land in. The
+  package templates set `OKF_ROOT` to the install target root; the manual script
+  defaults to `$HOME/samemind` if unset.

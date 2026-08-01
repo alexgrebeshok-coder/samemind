@@ -7,7 +7,8 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { ensureMcpRegistered } from './lib/mcp-register.mjs';
+import { ensureMcpRegistered, MCP_SHAPES } from './lib/mcp-register.mjs';
+import { ENGINE_FILES } from './install.mjs';
 
 function tmp(prefix) {
   return mkdtempSync(join(tmpdir(), `samemind-${prefix}-`));
@@ -45,7 +46,8 @@ describe('ensureMcpRegistered — claude-code', () => {
       const file = join(dir, '.mcp.json');
       assert.ok(existsSync(file));
       const cfg = JSON.parse(readFileSync(file, 'utf8')); // throws if not valid JSON
-      assert.deepEqual(cfg.mcpServers.samemind, { command: 'npx', args: ['samemind', 'serve'] });
+      assert.deepEqual(cfg.mcpServers.samemind, { command: 'npx', args: ['samemind', 'serve'], env: { OKF_ROOT: dir } },
+        'the written entry must pin OKF_ROOT — without it the server resolves a root from cwd and can silently serve its own package dir');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -58,7 +60,8 @@ describe('ensureMcpRegistered — claude-code', () => {
       ensureMcpRegistered('claude-code', dir, { apply: true });
       const cfg = JSON.parse(readFileSync(join(dir, '.mcp.json'), 'utf8'));
       assert.deepEqual(cfg.mcpServers.other, { command: 'foo' });
-      assert.deepEqual(cfg.mcpServers.samemind, { command: 'npx', args: ['samemind', 'serve'] });
+      assert.deepEqual(cfg.mcpServers.samemind, { command: 'npx', args: ['samemind', 'serve'], env: { OKF_ROOT: dir } },
+        'the written entry must pin OKF_ROOT — without it the server resolves a root from cwd and can silently serve its own package dir');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -231,5 +234,55 @@ describe('ensureMcpRegistered — other engines', () => {
     const hint = ensureMcpRegistered('some-future-engine', '/nonexistent');
     assert.equal(typeof hint, 'string');
     assert.match(hint, /some-future-engine/);
+  });
+});
+
+describe('ENGINE_FILES MCP descriptor — anti-drift (the single source of truth)', () => {
+  it('every engine declares `mcp` (possibly null) — a 13th engine cannot slip in undecided', () => {
+    for (const [id, meta] of Object.entries(ENGINE_FILES)) {
+      assert.ok('mcp' in meta, `${id} must declare mcp (null if we never read its config)`);
+    }
+  });
+
+  it('every non-null descriptor with a shape stays within MCP_SHAPES', () => {
+    for (const [id, meta] of Object.entries(ENGINE_FILES)) {
+      if (meta.mcp && 'shape' in meta.mcp) {
+        assert.ok(MCP_SHAPES.includes(meta.mcp.shape), `${id}: shape "${meta.mcp.shape}" not in MCP_SHAPES`);
+      }
+    }
+  });
+
+  it('mcpHint is non-empty for every non-claude-code engine (descriptor or generic fallback)', () => {
+    const dir = tmp('mcp-descriptor-hints');
+    try {
+      for (const id of Object.keys(ENGINE_FILES)) {
+        if (id === 'claude-code') continue; // claude-code writes .mcp.json, it never returns a hint
+        const hint = ensureMcpRegistered(id, dir, { apply: true }); // apply is ignored for non-claude-code
+        assert.equal(typeof hint, 'string');
+        assert.ok(hint.length > 0, `${id} should yield a non-empty hint`);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Regression: opencode's descriptor originally carried only the project path, so a real,
+  // correctly-configured user-scope install (~/.config/opencode/opencode.json) read as
+  // "not connected" — the exact silent miss doctor exists to prevent. Caught by running the
+  // readers against a live machine, not by a unit test; hence this guard.
+  it('engines configured user-scope in practice declare their user path', () => {
+    const userScoped = {
+      opencode: '.config/opencode/opencode.json',
+      codex: '.codex/config.toml',
+      cursor: '.cursor/mcp.json',
+      'gemini-cli': '.gemini/settings.json',
+    };
+    for (const [id, expected] of Object.entries(userScoped)) {
+      const user = ENGINE_FILES[id]?.mcp?.user || [];
+      assert.ok(
+        user.includes(expected),
+        `${id}: mcp.user[] must list "${expected}" — otherwise a real user-scope install reads as not-connected. Got: ${JSON.stringify(user)}`,
+      );
+    }
   });
 });

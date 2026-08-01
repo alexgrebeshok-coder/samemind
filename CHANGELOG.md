@@ -3,6 +3,90 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.15.0] — 2026-08-01
+
+Honest connection. Until now a config entry counted as "connected" — samemind wrote a file and
+reported success without ever checking that an agent could reach memory. It could not: the entry
+carried no `OKF_ROOT`, so the server resolved a root from whatever directory the engine happened
+to start in, and `lib/okf.mjs` silently fell back to the installed package directory when that
+was not a bundle. Reproduced live during this work: the server answered `initialize` and
+`tools/list` with all ten tools while holding **zero facts**, and nothing anywhere reported a
+problem. This release closes that hole and makes the remaining failure modes visible.
+
+### Added
+
+- **`samemind doctor`** — inspect-first connection health across five distinct states:
+  *supported → installed → connected → verified → active*. `connected` (an entry exists in the
+  engine's config) never implies `verified` (a real JSON-RPC `initialize` + `tools/list` +
+  `memory_health` round-trip succeeded against a sane corpus). Human and `--json`
+  (`contract: 1`) output; `--engine`, `--root`, `--no-probe`, `--timeout`, `--repair`.
+  Exit 0 when nothing failed, 1 otherwise. Reads by default, writes only under `--repair`.
+- **Corpus verification** — `tools/list` answering proves the server runs, not that it found
+  your memory, so `memory_health` (which computes its answer from a real `load()` over disk)
+  gates the verdict: `serving-package-dir` catches the fallback red-handed even when no root was
+  configured to compare against; `empty-corpus` catches a bundle with no readable facts;
+  `root-mismatch` applies `realpath` to **both** sides so a symlinked bundle
+  (`~/.samemind/bundle`) is not a false alarm; a count gap is a FAIL at equal versions and a WARN
+  across versions, since a different release may walk differently.
+- **Cross-engine consistency** — groups engines by resolved root and server version, and says
+  plainly when your engines are not sharing one memory.
+- **`tools/lib/mcp-probe.mjs`** — bounded JSON-RPC probe distinguishing eight outcomes rather
+  than "it failed": `spawn-failed`, `crashed`, `not-jsonrpc`, `timeout`, `handshake-error`,
+  `not-samemind`, `no-tools`, `ok`. Separating *stdout arrived but no parseable frame* from
+  *no stdout at all* turns "it hangs" into "your launcher prints a banner on stdout". Children
+  are spawned into their own process group and killed as a tree, because `npx samemind serve`
+  makes node a grandchild holding the pipes; an `exit` hook guarantees no orphaned server
+  survives a crash or Ctrl-C.
+- **`tools/lib/engine-mcp.mjs`** — reads the five real config shapes (`mcpServers`,
+  `mcpServers-nested`, `vscode-servers`, `opencode`'s array-`command`/`environment`, and Codex
+  TOML) with `home`/`target` always explicit so tests never touch a real config. The TOML reader
+  is a deliberate subset scanner: when a `[mcp_servers.samemind]` header is present but
+  unreadable it reports UNKNOWN rather than "not configured" — a parser that degrades to silence
+  is a lie shaped like a diagnosis. Secret redaction is allowlist-based (keys always shown,
+  values only for known-safe keys, `*_URL` reduced to `scheme://host:port` because tokens hide
+  in query strings), applied structurally so `--json` is safe to paste into an issue.
+- **`scripts/clean-room.sh`** — installs the packed tarball into an isolated environment, drives
+  real JSON-RPC against the packaged server, then recall/handoff/doctor. Runs against a fixture
+  HOME and asserts no real engine config was read.
+- **Engine MCP descriptor** — `ENGINE_FILES[id].mcp` is now the single source for config shape
+  and paths. `ENGINE_MCP_HINTS` was **deleted**; hints are generated from the descriptor, so the
+  hint and what doctor reads cannot drift. `mcp: null` is explicit, and a test forbids adding a
+  13th engine without deciding.
+
+### Fixed
+
+- **MCP registration pins `OKF_ROOT`** (`tools/lib/mcp-register.mjs`) — the root cause above.
+  Project scope pins the project bundle; `setup --global` pins the personal bundle for both the
+  JSON-merge fallback and native `claude mcp add` (via `-e`).
+- **`setup` verifies instead of asserting** — the closing summary used to be assembled from the
+  return strings of earlier steps ("wrote samemind → .mcp.json" meant *we called writeFile*).
+  It now re-reads the files from disk through doctor's config-only pass and reports what is
+  actually there, naming any problem that would stop memory from working, plus the exact next
+  command. Verification is a report, never a gate: a doctor bug cannot fail a good setup.
+- **`opencode` descriptor was missing its user-scope path** — a correctly configured
+  `~/.config/opencode/opencode.json` read as "not connected". Found by running the readers
+  against a real machine; guarded by a test over every user-scoped engine.
+- Docs tell one story: `docs/adapters.md` carries the auto/projection freshness tier,
+  `docs/hooks/` no longer claims nothing is wired, the README states Node ≥ 20 and drops the
+  "every AI agent" claim its own 12-engine matrix contradicted.
+
+### Changed
+
+- `prepublishOnly` runs the UI build and the suite — every release guarantee lived only in CI, so
+  a manual `npm publish` shipped whatever stale `dist/` was on disk.
+- `CHANGELOG.md` now ships in the tarball; the README linked it three times and it was excluded.
+- `scripts/smoke-tarball.sh` asserts the packaged `doctor` routes and emits `contract: 1`.
+- `samemind project` gained independent `maxFactChars` / `maxBlockChars` budgets (previously one
+  `--budget` drove both the per-fact clamp and the whole-block cap). Both optional and
+  back-compatible.
+
+### Specs (no code)
+
+`docs/spec/voice.md`, `docs/spec/control-center.md`, `docs/spec/ambient-vision.md` — the 0.16
+surface, written while the reasoning is fresh. Ambient sensing is specified as opt-in with camera
+and microphone off by default, no identity or emotion inference, suggestion-only authority, and
+interruptibility as release criteria rather than polish.
+
 ## [0.14.0] — 2026-07-27
 
 Phase 4: the memory keeps itself current, live. An event-driven daemon re-projects on change,

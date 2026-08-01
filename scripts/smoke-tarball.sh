@@ -105,5 +105,15 @@ echo "$RECALL_OUT"
 echo "$RECALL_OUT" | grep -q 'global:concepts/smoke-global-note' \
   || { echo "multi-root recall did not surface the global: prefix — regression" >&2; exit 1; }
 
+step "samemind doctor --json --no-probe (the packaged CLI must route and emit contract:1)"
+# --no-probe keeps this offline and spawn-free: the packaging question is "does the shipped
+# doctor run and answer", not "is this CI box's MCP wiring healthy".
+DOCTOR_OUT="$(cd "$BUNDLE" && "$SAMEMIND" doctor --json --no-probe --root "$BUNDLE")" || {
+  echo "doctor exited non-zero on a freshly-initialised bundle — packaging or routing regression" >&2; exit 1; }
+echo "$DOCTOR_OUT" | grep -q '"kind": *"doctor"' \
+  || { echo "doctor --json did not emit kind:doctor — contract regression" >&2; exit 1; }
+echo "$DOCTOR_OUT" | grep -q '"contract": *1' \
+  || { echo "doctor --json did not emit contract:1 — contract regression" >&2; exit 1; }
+
 echo
 echo "SMOKE OK — tarball installs and runs standalone."

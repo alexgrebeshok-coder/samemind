@@ -1,6 +1,6 @@
 {
   "name": "samemind",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "OKF-compatible memory for AI coding agents — identity, work-ledger and kanban in one plain-markdown bundle, git-native, zero-infra.",
   "license": "MIT",
   "type": "module",
@@ -22,7 +22,8 @@
     "test": "node --test tools/*.test.mjs",
     "validate": "node tools/okf-query.mjs validate",
     "validate:demo": "OKF_ROOT=demo node tools/okf-query.mjs validate",
-    "build:ui": "cd ui && npm install && npm run build"
+    "build:ui": "cd ui && npm install && npm run build",
+    "prepublishOnly": "npm run build:ui && npm test"
   },
   "keywords": [
     "memory",
@@ -44,6 +45,7 @@
     "lib/",
     "tools/",
     "dist/",
+    "CHANGELOG.md",
     "demo/",
     "docs/",
     "README.md",
