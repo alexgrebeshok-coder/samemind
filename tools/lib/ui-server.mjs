@@ -359,8 +359,12 @@ function handleEventsStream(req, res, root, hub) {
     'Cache-Control': 'no-cache',
     'Connection': 'keep-alive',
   });
-  const events = readEvents(root).slice(-50);
-  res.write(`event: snapshot\ndata: ${JSON.stringify(wrap('ledger-snapshot', { events }))}\n\n`);
+  const all = readEvents(root);
+  // `total` next to the sliced `events` so a consumer can tell this is a tail, not the whole —
+  // same honesty rule as summarizeLedger's count vs evs. Without it the snapshot silently lies
+  // by omission once the ledger crosses 50 events.
+  const events = all.slice(-50);
+  res.write(`event: snapshot\ndata: ${JSON.stringify(wrap('ledger-snapshot', { events, total: all.length }))}\n\n`);
   const client = hub.addClient(res);
   req.on('close', () => hub.removeClient(client));
 }

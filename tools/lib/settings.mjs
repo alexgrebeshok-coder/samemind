@@ -54,11 +54,15 @@ export function resolveLayers(root, globalHome = process.env.HOME) {
  * probeVoiceCompanion, run only on demand by GET /api/voice/probe. The polling buildSettingsModel
  * never passes one, which is exactly why a render can never claim "reachable". Three honest states:
  *
- *   unavailable — no serviceUrl; nothing to enable (with reason + fix, like before).
+ *   unavailable — no serviceUrl; nothing to enable (reason + fix populated, note null).
  *   configured  — serviceUrl set but unproven. NOT available: a config entry is not a working
  *                 connection (the same lie 0.15 cleaned up elsewhere), so the screen must not draw
  *                 it green until a probe says so.
  *   reachable   — proven live by a probe (available:true).
+ *
+ * Every branch returns the SAME key set — { state, available, reason, note, fix } — with absence
+ * expressed as `null`, never a missing key. A consumer must not have to guess whether to check
+ * `undefined` or `null`; that ambiguity is exactly what froze badly elsewhere.
  */
 export function assessAvailability(cfg, { voiceProbe } = {}) {
   const url = cfg.voice.serviceUrl;
@@ -68,19 +72,24 @@ export function assessAvailability(cfg, { voiceProbe } = {}) {
       state: 'unavailable',
       available: false,
       reason: 'voice companion is not installed',
+      note: null,
       fix: 'install the companion, then set voice.serviceUrl',
     };
   } else if (voiceProbe) {
     voice = {
       state: 'reachable',
       available: true,
+      reason: null,
       note: `companion reachable${voiceProbe.model ? ` (${voiceProbe.model})` : ''}`,
+      fix: null,
     };
   } else {
     voice = {
       state: 'configured',
       available: false,
+      reason: null,
       note: 'companion configured (reachability not probed — use "check connection")',
+      fix: null,
     };
   }
   // Vision ships no runner at all yet; saying "off" would imply the user turned it off.
@@ -88,6 +97,7 @@ export function assessAvailability(cfg, { voiceProbe } = {}) {
     state: 'unavailable',
     available: false,
     reason: 'ambient vision is not implemented yet (planned for 0.17)',
+    note: null,
     fix: null,
   };
   return { voice, vision };

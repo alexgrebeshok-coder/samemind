@@ -19,6 +19,14 @@ import { scanForInjection } from './injection.mjs';
 export const LEDGER_DIR_NAME = 'ledger';
 export const LEDGER_FILE_NAME = 'events.jsonl';
 
+// ponytail: per-topic event tail in summarizeLedger. The dashboard polls /api/ledger every tick,
+// and a long-lived topic dragged its whole history into every response — multi-MB on a live
+// bundle. `count` stays the real total so a consumer can tell a bounded tail from the whole (the
+// same class of lie columnTotals exists to prevent); `evs` is just the freshest slice. Full
+// per-topic history is `ledger read --topic`, not this overview. Raise if a dashboard surface
+// genuinely needs more recent context per topic.
+export const LEDGER_TOPIC_TAIL = 50;
+
 // Lifecycle phase and outcome status dictionaries. Unlike ~/.claude/memory-bridge/journal.mjs
 // (the prior art this issue names), invalid values are REJECTED, not silently coerced to a
 // fallback — samemind's own validate-not-coerce convention (see disciplineChecks/knowledgeChecks
@@ -126,6 +134,8 @@ export function readEvents(root) {
 /**
  * Groups events by topic → { topics, openFailures }.
  *   - `topics`: one entry per topic, newest-last-event first: { topic, last, count, openFail, evs }.
+ *     `count` is the topic's total event count; `evs` is the freshest LEDGER_TOPIC_TAIL of them
+ *     (a tail, not the whole — `count` is how a consumer tells the difference).
  *   - `openFailures`: the last fail/block-phase event of each topic that has NOT since been
  *     closed by a later closing event of the same topic, newest first.
  *
@@ -151,7 +161,7 @@ export function summarizeLedger(events) {
     const lastFail = failEvs.length ? failEvs[failEvs.length - 1] : null;
     const openFail = (lastFail && String(lastFail.ts) >= String(lastClosingTs)) ? lastFail : null;
     if (openFail) openFailures.push({ ...openFail, topic });
-    topics.push({ topic, last, count: evs.length, openFail, evs });
+    topics.push({ topic, last, count: evs.length, openFail, evs: evs.slice(-LEDGER_TOPIC_TAIL) });
   }
   topics.sort((x, y) => String(y.last.ts).localeCompare(String(x.last.ts)));
   openFailures.sort((x, y) => String(y.ts).localeCompare(String(x.ts)));

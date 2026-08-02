@@ -23,7 +23,7 @@ import { runInit } from './init.mjs';
 import { DEFAULT_PROTOCOL_VERSION } from './lib/mcp.mjs';
 import {
   buildEvent, appendEvent, readEvents, summarizeLedger, readTopic,
-  ledgerFile, PHASES, STATUSES,
+  ledgerFile, PHASES, STATUSES, LEDGER_TOPIC_TAIL,
 } from './lib/ledger.mjs';
 import { buildBoard, buildBoardModel, OPEN_FAILURES_LIMIT } from './board.mjs';
 
@@ -259,6 +259,30 @@ describe('summarizeLedger — open failures (unit, pure)', () => {
 
   it('empty input → empty output, never throws', () => {
     assert.deepEqual(summarizeLedger([]), { topics: [], openFailures: [] });
+  });
+
+  it('caps each topic\'s evs at LEDGER_TOPIC_TAIL, but count reports the real total — a consumer can tell tail from whole', () => {
+    const n = LEDGER_TOPIC_TAIL + 10;
+    const many = Array.from({ length: n }, (_, i) =>
+      ev('big', 'step', 'ok', `2026-01-${String(i + 1).padStart(2, '0')}T00:00:00Z`));
+    const { topics } = summarizeLedger(many);
+    const t = topics[0];
+    assert.equal(t.topic, 'big');
+    assert.equal(t.count, n, 'count is the full total, NOT the tail length');
+    assert.equal(t.evs.length, LEDGER_TOPIC_TAIL, 'evs is bounded to the tail');
+    assert.ok(t.count > t.evs.length, 'count must exceed evs.length once truncated — or the total is lost');
+    assert.equal(t.last.action, many[n - 1].action, 'last is the true newest event, not a truncated one');
+    assert.equal(t.evs[t.evs.length - 1].action, many[n - 1].action, 'tail ends at the newest event');
+  });
+
+  it('does not truncate a topic with few events — evs == all, count == evs.length', () => {
+    const { topics } = summarizeLedger([
+      ev('small', 'start', 'ok', '2026-01-01T00:00:00Z'),
+      ev('small', 'step', 'ok', '2026-01-02T00:00:00Z'),
+    ]);
+    assert.equal(topics[0].count, 2);
+    assert.equal(topics[0].evs.length, 2);
+    assert.equal(topics[0].count, topics[0].evs.length, 'no truncation below the tail');
   });
 });
 

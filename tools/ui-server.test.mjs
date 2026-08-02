@@ -415,6 +415,9 @@ describe('createUiServer — GET /api/events/stream (SSE)', () => {
     assert.equal(snap.data.kind, 'ledger-snapshot');
     assert.ok(Array.isArray(snap.data.data.events));
     assert.ok(snap.data.data.events.some((e) => e.topic === 'sse-fixture'));
+    // the snapshot is a sliced tail (last 50); `total` next to it lets a consumer tell tail from
+    // whole — without it the snapshot silently lies by omission past 50 events.
+    assert.equal(snap.data.data.total, 1, 'total is the full event count, beside the sliced events');
 
     appendFileSync(join(dir, 'ledger', 'events.jsonl'), JSON.stringify({
       ts: '2026-07-26T00:01:00.000Z', actor: 'test', topic: 'sse-live', phase: 'step',

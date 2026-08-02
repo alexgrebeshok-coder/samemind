@@ -197,3 +197,60 @@ describe('doctor — contract', () => {
     } finally { rmSync(home, { recursive: true, force: true }); rmSync(proj, { recursive: true, force: true }); }
   });
 });
+
+describe('doctor — contract: stable key sets across all branches', () => {
+  // Before 1.0 freezes the JSON shape, a consumer must never see a key appear or disappear
+  // depending on which code path produced it. Three branches had different shapes: skipped
+  // verified (2 keys), probe-skipped (3 keys), probed (11+ keys). active lost three keys when
+  // there was no root. Both must now be one shape each.
+
+  it('verified has a single key set for every engine, skipped or not', async () => {
+    const home = tmp('keys');
+    const target = tmp('keys-target');
+    try {
+      // No real MCP server, probe:false — every engine's verified will be skipped or probe-skipped.
+      const r = await runDoctor({ home, target, probe: false });
+      const shapes = new Set();
+      for (const e of r.engines) {
+        if (!e.states.supported.ok) continue; // unsupported engines skip verified entirely
+        const keys = Object.keys(e.states.verified).sort().join(',');
+        shapes.add(keys);
+      }
+      assert.equal(shapes.size, 1, `verified must have one shape, got ${shapes.size}:\n${[...shapes].join('\n')}`);
+    } finally { rmSync(home, { recursive: true, force: true }); rmSync(target, { recursive: true, force: true }); }
+  });
+
+  it('active has the same key set whether or not a root was resolved', async () => {
+    const home = tmp('active');
+    const targetNoBundle = tmp('active-nobundle');   // not a bundle → resolvedRoot is null
+    const targetBundle = bundle(tmp('active-bundle'));
+    writeFileSync(join(targetBundle, 'concepts', 'c.md'), '---\ntype: Concept\n---\nbody\n', 'utf8');
+    try {
+      const noRoot = await runDoctor({ home, target: targetNoBundle, probe: false });
+      const withRoot = await runDoctor({ home, target: targetBundle, probe: false });
+      const keysNoRoot = Object.keys(noRoot.active).sort().join(',');
+      const keysWithRoot = Object.keys(withRoot.active).sort().join(',');
+      assert.equal(keysNoRoot, keysWithRoot,
+        `active shape must not depend on root resolution:\n no-root: ${keysNoRoot}\n with-root: ${keysWithRoot}`);
+      // Must include the three keys that used to be dropped:
+      for (const k of ['intervalSec', 'lastError', 'targets']) {
+        assert.ok(k in noRoot.active, `active must always include ${k}`);
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(targetNoBundle, { recursive: true, force: true });
+      rmSync(targetBundle, { recursive: true, force: true });
+    }
+  });
+
+  it('node and platform are NOT in the report (machine-specific, not contract)', async () => {
+    const home = tmp('np');
+    const target = tmp('np-target');
+    try {
+      const r = await runDoctor({ home, target, probe: false });
+      assert.ok(!('node' in r), 'node must not be in the doctor report');
+      assert.ok(!('platform' in r), 'platform must not be in the doctor report');
+      assert.ok('version' in r, 'samemind version stays — it is the contract');
+    } finally { rmSync(home, { recursive: true, force: true }); rmSync(target, { recursive: true, force: true }); }
+  });
+});

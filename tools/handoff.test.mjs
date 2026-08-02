@@ -13,7 +13,7 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
 import {
-  buildHandoff, normalizeProjectKey, DEFAULT_DAYS,
+  buildHandoff, buildHandoffModel, projectHandoffJson, thinDoc, normalizeProjectKey, DEFAULT_DAYS,
 } from './handoff.mjs';
 import { runInit } from './init.mjs';
 import { DEFAULT_PROTOCOL_VERSION } from './lib/mcp.mjs';
@@ -433,5 +433,71 @@ ${TOP_SECRET_MARKER} — this body must never reach any MCP response.
     } finally {
       await client.close();
     }
+  });
+});
+
+describe('--json payload: document bodies must not be shipped', () => {
+  it('thinDoc drops body, file, and internal glue; keeps id, fm, relations', () => {
+    const full = {
+      id: 'projects/task-x',
+      file: '/home/user/bundle/projects/task-x.md',
+      base: 'task-x.md',
+      reserved: false,
+      hasFM: true,
+      fm: { type: 'Task', title: 'X', status: 'in-progress' },
+      body: '## Detail\nlong body ' + 'y'.repeat(2000),
+      links: [],
+      relations: {},
+      supersedes: [],
+      supersededBy: [],
+    };
+    const thin = thinDoc(full);
+    assert.deepEqual(Object.keys(thin).sort(), ['fm', 'id', 'relations']);
+    assert.equal(thin.body, undefined);
+    assert.equal(thin.file, undefined);
+  });
+
+  it('projectHandoffJson strips every doc in the handoff model', () => {
+    const docs = [
+      doc({ id: 'projects/task-a', type: 'Task', title: 'A', status: 'in-progress', timestamp: '2026-07-01T00:00:00Z' }),
+      doc({ id: 'projects/decide-b', type: 'Decision', title: 'B', date: '2026-07-01' }),
+    ];
+    const model = buildHandoffModel(docs, {});
+    const projected = projectHandoffJson(model);
+    for (const d of projected.active) {
+      assert.equal(d.body, undefined, 'active: body not shipped');
+      assert.equal(d.file, undefined, 'active: file not shipped');
+    }
+    for (const { d } of projected.recentDecisions) {
+      assert.equal(d.body, undefined, 'recentDecisions: body not shipped');
+    }
+    if (projected.lastSession) {
+      assert.equal(projected.lastSession.body, undefined, 'lastSession: body not shipped');
+    }
+  });
+});
+
+describe('sessionNext: capped array reports its true total', () => {
+  it('sessionNext is capped at 5 but sessionNextTotal reflects all bullets', () => {
+    const bullets = Array.from({ length: 8 }, (_, i) => `- bullet ${i + 1}`).join('\n');
+    const docs = [
+      doc({
+        id: 'concepts/sess-1',
+        type: 'Session',
+        title: 'S1',
+        date: '2026-07-09',
+        timestamp: '2026-07-09T10:00:00Z',
+        body: `## Next\n${bullets}`,
+      }),
+    ];
+    const model = buildHandoffModel(docs, { now: new Date('2026-07-10T12:00:00Z') });
+    assert.ok(model.sessionNext.length <= 5, 'sessionNext is capped');
+    assert.equal(model.sessionNextTotal, 8, 'sessionNextTotal reflects all bullets');
+  });
+
+  it('sessionNextTotal is 0 when there is no last session', () => {
+    const model = buildHandoffModel([], {});
+    assert.equal(model.sessionNextTotal, 0);
+    assert.deepEqual(model.sessionNext, []);
   });
 });

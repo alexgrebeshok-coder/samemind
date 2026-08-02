@@ -83,7 +83,7 @@ export function cmdStatus(a = {}) {
     const data = registry
       ? { engines: heartbeat(registry.engines, readEvents(ROOT), Date.now()), stopPoints: registry.stopPoints }
       : { engines: [], stopPoints: [] };
-    console.log(JSON.stringify({ contract: 1, kind: 'fleet', data }));
+    console.log(JSON.stringify({ contract: 1, kind: 'fleet', generatedAt: new Date().toISOString(), data }));
     return;
   }
   if (!registry) {

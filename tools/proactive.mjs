@@ -97,7 +97,9 @@ async function main() {
   }
 
   if (json) {
-    console.log(JSON.stringify(result, null, 2));
+    console.log(JSON.stringify({
+      contract: 1, kind: 'proactive', generatedAt: new Date().toISOString(), data: result,
+    }));
     return;
   }
   if (packOnly) {
