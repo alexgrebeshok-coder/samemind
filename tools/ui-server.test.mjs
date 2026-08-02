@@ -54,6 +54,8 @@ describe('createUiServer — demo bundle endpoints', () => {
 
   const cases = [
     ['/api/health', 'health'],
+    ['/api/status', 'status'],
+    ['/api/doctor', 'doctor'],
     ['/api/board', 'board'],
     ['/api/handoff', 'handoff'],
     ['/api/fleet', 'fleet'],
@@ -99,6 +101,67 @@ describe('createUiServer — demo bundle endpoints', () => {
     const { data } = JSON.parse(r.body);
     assert.ok(data.openFailuresTotal >= 1);
     assert.ok(Array.isArray(data.overdueEnginesShown));
+  });
+
+  it('GET /api/board omits byId (Map would JSON as {} and mislead consumers)', async () => {
+    const r = await request(port, '/api/board');
+    const { data } = JSON.parse(r.body);
+    assert.ok(!('byId' in data), 'byId must not appear in the JSON board model');
+  });
+
+  it('GET /api/status → contract:1 kind:status with display-folded state fields', async () => {
+    const r = await request(port, '/api/status');
+    assert.equal(r.status, 200);
+    const json = JSON.parse(r.body);
+    assert.equal(json.contract, 1);
+    assert.equal(json.kind, 'status');
+    assert.ok(json.data);
+    // Same keys as samemind status --json; state is displayState (ok|failed|stale|unknown).
+    for (const k of ['state', 'liveness', 'ageSec', 'ok', 'lastError', 'targets', 'version', 'ts']) {
+      assert.ok(k in json.data, `status data missing ${k}`);
+    }
+    assert.ok(['ok', 'failed', 'stale', 'unknown'].includes(json.data.state));
+  });
+
+  it('GET /api/doctor → contract:1 kind:doctor, env values stay redacted', async () => {
+    const r = await request(port, '/api/doctor');
+    assert.equal(r.status, 200);
+    const json = JSON.parse(r.body);
+    assert.equal(json.contract, 1);
+    assert.equal(json.kind, 'doctor');
+    assert.ok(json.data);
+    assert.ok(Array.isArray(json.data.engines));
+    // Secret env values must never appear as plain strings: redactEnv turns non-allowlisted
+    // values into `<set:N>` / `<empty>` / host-only URL forms (tools/lib/engine-mcp.mjs).
+    const body = r.body;
+    // If any location.env exists, every value is either an allowlisted path-ish string or a redact marker.
+    for (const eng of json.data.engines) {
+      for (const loc of eng.states?.connected?.locations || []) {
+        if (!loc.env || typeof loc.env !== 'object') continue;
+        for (const [key, val] of Object.entries(loc.env)) {
+          if (key === 'OKF_ROOT' || key === 'OKF_GLOBAL_ROOT' || key === 'OKF_EMBED_MODEL'
+              || key === 'OKF_INDEX_BACKEND' || key === 'SAMEMIND_AGENT' || key === 'NODE_ENV') {
+            continue; // allowlisted — shown in clear (paths/flags, not secrets)
+          }
+          const s = String(val);
+          assert.ok(
+            s.startsWith('<set:') || s === '<empty>' || s === '<url>' || s.startsWith('http://') || s.startsWith('https://'),
+            `env ${key} leaked a raw secret value: ${s}`,
+          );
+        }
+      }
+    }
+    // Belt-and-braces: common secret shapes must not appear in the whole body.
+    assert.ok(!/sk-[a-zA-Z0-9]{10,}/.test(body), 'body must not contain sk-… API key material');
+    assert.ok(!/api[_-]?key["\s:=]+[a-zA-Z0-9_-]{16,}/i.test(body), 'body must not contain raw api_key assignments');
+    void body;
+  });
+
+  it('POST /api/status and /api/doctor → 405 (read-only intact)', async () => {
+    const status = await request(port, '/api/status', { method: 'POST' });
+    const doctor = await request(port, '/api/doctor', { method: 'POST' });
+    assert.equal(status.status, 405);
+    assert.equal(doctor.status, 405);
   });
 
   it('GET /api/concepts?q= ranks via BM25 and returns the documented shape', async () => {
@@ -375,6 +438,79 @@ describe('createUiServer — GET /api/events/stream (SSE)', () => {
   it('POST /api/events/stream → 405', async () => {
     const r = await request(port, '/api/events/stream', { method: 'POST' });
     assert.equal(r.status, 405);
+  });
+});
+
+// ─────────────────────────────── voice companion probe: GET /api/voice/probe ───────────────────────────────
+
+describe('createUiServer — GET /api/voice/probe', () => {
+  let dir, server, port, origHome;
+
+  // Each case gets its own bundle + server (the configured url differs). HOME is pinned to the
+  // bundle's own empty dir so the developer's real ~/.samemind can never leak a serviceUrl in, and
+  // `fetchImpl` is injected so no real network ever leaves the process.
+  async function boot(serviceUrl, fetchImpl) {
+    dir = tmp('ui-voice');
+    mkdirSync(join(dir, 'concepts'), { recursive: true });
+    writeFileSync(join(dir, 'index.md'), '# bundle\n', 'utf8');
+    mkdirSync(join(dir, '.samemind'), { recursive: true });
+    writeFileSync(join(dir, '.samemind', 'config.json'), JSON.stringify({ voice: { serviceUrl } }), 'utf8');
+    origHome = process.env.HOME;
+    process.env.HOME = dir;
+    server = await listen({ root: dir, distDir: null, fetchImpl });
+    port = server.address().port;
+  }
+  function down() {
+    if (server) server.close();
+    if (origHome !== undefined) process.env.HOME = origHome;
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  }
+
+  it('no serviceUrl → unavailable, no fetch, contract envelope', async () => {
+    let called = 0;
+    await boot(null, async () => { called++; throw new Error('no network'); });
+    try {
+      const r = await request(port, '/api/voice/probe');
+      assert.equal(r.status, 200);
+      const json = JSON.parse(r.body);
+      assert.equal(json.contract, 1);
+      assert.equal(json.kind, 'voice-probe');
+      assert.equal(json.data.state, 'unavailable');
+      assert.equal(json.data.probe, null);
+      assert.equal(called, 0, 'no serviceUrl must short-circuit before any fetch');
+    } finally { down(); }
+  });
+
+  it('configured + live probe → reachable, model reported', async () => {
+    const fetchImpl = async () => ({ ok: true, json: async () => ({ data: [{ id: 'whisper-1' }] }) });
+    await boot('http://127.0.0.1:8000', fetchImpl);
+    try {
+      const r = await request(port, '/api/voice/probe');
+      const json = JSON.parse(r.body);
+      assert.equal(json.data.state, 'reachable');
+      assert.equal(json.data.available, true);
+      assert.equal(json.data.probe.model, 'whisper-1');
+    } finally { down(); }
+  });
+
+  it('configured but unreachable → configured (NOT green), probe null', async () => {
+    const fetchImpl = async () => { throw new Error('ECONNREFUSED'); };
+    await boot('http://127.0.0.1:8000', fetchImpl);
+    try {
+      const r = await request(port, '/api/voice/probe');
+      const json = JSON.parse(r.body);
+      assert.equal(json.data.state, 'configured');
+      assert.equal(json.data.available, false);
+      assert.equal(json.data.probe, null);
+    } finally { down(); }
+  });
+
+  it('POST → 405 (the probe route stays read-only)', async () => {
+    await boot(null, async () => { throw new Error('no network'); });
+    try {
+      const r = await request(port, '/api/voice/probe', { method: 'POST' });
+      assert.equal(r.status, 405);
+    } finally { down(); }
   });
 });
 

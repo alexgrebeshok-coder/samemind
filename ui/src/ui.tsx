@@ -1,5 +1,6 @@
 // ui.tsx — the whole component vocabulary: cards, badges, chips, stat tiles, empty states.
 // Hand-rolled on purpose (spec §0: no component library).
+import { useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { SILENCE_COLOR, dur, silenceTone, typeBadgeClass } from './lib';
 
@@ -106,16 +107,44 @@ export function Chip({
   );
 }
 
+/**
+ * A command the user is meant to run, with one-click copy.
+ *
+ * The dashboard shows commands; it never runs them. That boundary is the reason recovery
+ * affordances are safe to put on a read-only screen at all — so this copies to the clipboard
+ * and nothing else. `navigator.clipboard` needs a secure context, which 127.0.0.1 satisfies
+ * even over plain http; anywhere it is unavailable the text stays selectable, which is exactly
+ * what this looked like before.
+ */
+export function Cmd({ children }: { children: string }) {
+  const [copied, setCopied] = useState(false);
+  const canCopy = typeof navigator !== 'undefined' && !!navigator.clipboard;
+  const cls = 'mt-2 inline-block rounded-md bg-surface-2 px-2 py-1 font-mono text-xs text-ink';
+  if (!canCopy) return <code className={cls}>{children}</code>;
+  return (
+    <button
+      type="button"
+      className={`${cls} cursor-pointer hover:bg-line`}
+      title="Copy to clipboard"
+      onClick={() => {
+        navigator.clipboard.writeText(children).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        }, () => { /* denied — leave the text on screen, it is still selectable */ });
+      }}
+    >
+      {children}
+      <span className="ml-2 text-muted">{copied ? 'copied' : 'copy'}</span>
+    </button>
+  );
+}
+
 /** Designed empty state (spec §5) — a sentence plus the command that fixes it. */
 export function Empty({ text, cmd }: { text: string; cmd?: string }) {
   return (
     <div className="rounded-[12px] border border-dashed border-line px-4 py-6 text-center">
       <p className="text-sm text-muted">{text}</p>
-      {cmd ? (
-        <code className="mt-2 inline-block rounded-md bg-surface-2 px-2 py-1 font-mono text-xs text-ink">
-          {cmd}
-        </code>
-      ) : null}
+      {cmd ? <Cmd>{cmd}</Cmd> : null}
     </div>
   );
 }

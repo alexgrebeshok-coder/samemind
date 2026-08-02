@@ -268,6 +268,18 @@ relations:
     assert.ok(Array.isArray(payload.data.inprog));
     assert.ok(payload.data.inprog.some(d => d.fm.title === 'CLI task'), 'data is the real buildBoardModel() output');
     assert.ok(Array.isArray(payload.data.backlog) && Array.isArray(payload.data.blocked) && Array.isArray(payload.data.plans));
+    // byId is a Map for in-process renderers; it must not appear as empty {} in JSON.
+    assert.ok(!('byId' in payload.data), 'byId must be omitted from JSON (Map would serialize as {})');
+  });
+
+  it('buildBoardModel.byId stays a live Map in-process but omits itself from JSON.stringify', () => {
+    const model = buildBoardModel([
+      { id: 'concepts/x', reserved: false, fm: { type: 'Concept', title: 'X' }, body: '', base: 'concepts' },
+    ], { now: NOW });
+    assert.ok(model.byId instanceof Map);
+    assert.equal(model.byId.has('concepts/x'), true);
+    const wire = JSON.parse(JSON.stringify(model));
+    assert.ok(!('byId' in wire), 'JSON wire format must not carry byId');
   });
 
   it('--json rejects --write (one projection at a time)', () => {

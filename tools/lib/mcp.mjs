@@ -160,7 +160,7 @@ export const TOOLS = [
   },
   {
     name: 'memory_fleet_assign',
-    description: 'Declare an assignment to one engine already in the fleet registry (fleet/registry.json) and log it as a `start` event in the event ledger (ledger/events.jsonl) — same storage memory_ledger_append uses, no second format. `verify` is required: an assignment without a verification step is a wish, not a task. Fails hard — does not silently fall back — when the registry is missing, the engine is unknown, or the engine is not `active`. The combined action text runs through the same prompt-injection scan every write path in this project uses (never dropped, only flagged quarantine:true). See docs/fleet.md.',
+    description: 'Declare an assignment to one engine already in the fleet registry (fleet/registry.json) and log it as a `start` event in the event ledger (ledger/events.jsonl) — same storage memory_ledger_append uses, no second format. `verify` is required: an assignment without a verification step is a wish, not a task. Fails hard — does not silently fall back — when the registry is missing, the engine is unknown, or the engine is not `active`. The combined action text runs through the same prompt-injection scan every write path in this project uses (never dropped, only flagged quarantine:true). Pass `ref` (a client-side idempotency key, e.g. the voice utterance id) to dedup: a second assign with a `ref` already in the ledger is a no-op that returns {deduped:true} instead of writing a duplicate assignment. See docs/fleet.md.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -170,6 +170,7 @@ export const TOOLS = [
         verify: { type: 'string', description: 'How the result will be verified — required' },
         boundaries: { type: 'array', items: { type: 'string' }, description: 'Optional path/scope boundaries' },
         stopPoints: { type: 'array', items: { type: 'string' }, description: "Optional override of stop-points (default: the registry's own stopPoints)" },
+        ref: { type: 'string', description: 'Optional idempotency key / external reference (e.g. voice utterance id, issue id). A second assign with the same ref is deduped — no duplicate assignment event is written. The actor stays the target engine (so heartbeat still counts it alive); the issuer (SAMEMIND_AGENT env, sanitized) is recorded in the event action so the ledger is attributable.' },
       },
       required: ['engine', 'topic', 'goal', 'verify'],
     },
@@ -430,7 +431,7 @@ async function memoryFleetStatus() {
 }
 
 async function memoryFleetAssign({
-  engine, topic, goal, verify, boundaries, stopPoints,
+  engine, topic, goal, verify, boundaries, stopPoints, ref,
 } = {}) {
   const registry = readRegistry(ROOT);
   if (!registry) {
@@ -453,14 +454,36 @@ async function memoryFleetAssign({
   const assignment = buildAssignment({
     engine, topic, goal, verify, boundaries, stopPoints: effectiveStopPoints,
   });
+  // Атрибуция выдавшего: SAMEMIND_AGENT окружения, через тот же sanitizeAgentName, что write_inbox
+  // и ledger_append. Актор остаётся целевым движком (heartbeat считает «последний раз видели» по
+  // актору — не ломаем); выдавший попадает в текст action через парсимый маркер `[by <issuer>]`,
+  // чтобы летопись была атрибутируемой без нового поля и без изменений существующих читателей
+  // (доска парсит action как свободный текст; artifact остаётся чистым носителем boundaries).
+  const issuer = sanitizeAgentName(process.env.SAMEMIND_AGENT);
+  const baseAction = `assigned: ${assignment.goal} — verify: ${assignment.verify}`;
+  const action = issuer && issuer !== assignment.engine
+    ? `${baseAction} [by ${issuer}]`
+    : baseAction;
   const rec = appendEvent(ROOT, {
     actor: assignment.engine,
     topic: assignment.topic,
     phase: 'start',
     status: 'ok',
-    action: `assigned: ${assignment.goal} — verify: ${assignment.verify}`,
+    action,
     artifact: assignment.boundaries.join('; ') || null,
+    ref,
   });
+  if (rec.deduped) {
+    return {
+      ok: true,
+      deduped: true,
+      engine: assignment.engine,
+      topic: assignment.topic,
+      ref: rec.event.ref || null,
+      quarantine: rec.event.quarantine,
+      matches: rec.event.matches,
+    };
+  }
   return {
     ok: true,
     engine: assignment.engine,

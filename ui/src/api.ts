@@ -1,3 +1,4 @@
+import type { VoiceRoute } from './voice-types.ts';
 // api.ts — same-origin `/api/*` access. Types mirror the actual payloads served by
 // tools/lib/ui-server.mjs (fetched and read off the wire, not copied from the spec table).
 import { useEffect, useState, useSyncExternalStore } from 'react';
@@ -106,6 +107,21 @@ export type Board = {
   columnTotals?: Partial<Record<'backlog' | 'inprog' | 'blocked' | 'done', number>>;
 };
 
+/** `/api/handoff` — work-state slice; board covers kanban; handoff fills session + decisions. */
+export type HandoffDecision = { d: Doc; date: string | null; age: number };
+
+export type Handoff = {
+  projectKey: string | null;
+  dayWindow: number;
+  active: Doc[];
+  recentDecisions: HandoffDecision[];
+  plansInForce: Doc[];
+  lastSession: Doc | null;
+  blocked: Doc[];
+  sessionNext: string[];
+  nowMs: number;
+};
+
 export type Fleet = { engines: Engine[]; stopPoints: string[] };
 
 export type LedgerTopic = {
@@ -141,6 +157,111 @@ export type Graph = {
   supersedeCount: number;
   totalEdges: number;
 };
+
+export type ConfigLayer = 'default' | 'global' | 'project';
+
+export type VoiceConfig = {
+  enabled: boolean;
+  trigger: 'hotkey' | 'wake-word';
+  wakeWord: boolean;
+  storeTranscripts: boolean;
+  transcriptRetentionDays: number;
+  sendTextToLlm: boolean;
+  confidenceThreshold: number;
+  serviceUrl: string | null;
+};
+
+export type VisionConfig = {
+  enabled: boolean;
+  mode: 'off' | 'manual' | 'presence' | 'proactive';
+  camera: boolean;
+  microphone: boolean;
+  retentionDays: number;
+  proactivePrompts: boolean;
+};
+
+export type VoiceCompanionState = 'unavailable' | 'configured' | 'reachable';
+
+export type VoiceFeatureFields = {
+  state: VoiceCompanionState;
+  available: boolean;
+  reason?: string;
+  fix?: string | null;
+  note?: string;
+};
+
+export type SettingsFeature<T extends Record<string, unknown>> = {
+  values: T;
+  layers: { [K in keyof T]: ConfigLayer };
+} & (T extends VoiceConfig ? VoiceFeatureFields : { state: 'unavailable'; available: false; reason: string; fix: string | null });
+
+export type VoiceProbe = {
+  state: VoiceCompanionState;
+  available: boolean;
+  url: string | null;
+  reason?: string;
+  fix?: string | null;
+  note?: string;
+  probe: { url?: string; engine?: string; model?: string } | null;
+};
+
+export type Settings = {
+  root: string;
+  configPath: string;
+  globalConfigPath: string | null;
+  features: {
+    voice: SettingsFeature<VoiceConfig>;
+    vision: SettingsFeature<VisionConfig>;
+  };
+};
+
+export type ConfigPatch = { voice?: Partial<VoiceConfig>; vision?: Partial<VisionConfig> };
+
+export type PostConfigResult =
+  | { ok: true; data: Settings; generatedAt: string }
+  | { ok: false; status: number; errors?: string[]; message: string };
+
+/** POST /api/config — returns the settings envelope re-read from disk (no optimistic merge). */
+/** GET /api/voice/probe — on-demand companion check (never on render / poll). */
+export async function fetchVoiceProbe(): Promise<
+  { ok: true; data: VoiceProbe; generatedAt: string } | { ok: false; message: string }
+> {
+  try {
+    const env = await getJson<VoiceProbe>('/api/voice/probe');
+    set({ generatedAt: env.generatedAt, offline: false });
+    return { ok: true, data: env.data, generatedAt: env.generatedAt };
+  } catch (err: unknown) {
+    set({ offline: true });
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, message };
+  }
+}
+
+export async function postConfig(patch: ConfigPatch): Promise<PostConfigResult> {
+  const res = await fetch('/api/config', {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  let json: unknown;
+  try {
+    json = await res.json();
+  } catch {
+    return { ok: false, status: res.status, message: `POST /api/config → unreadable body` };
+  }
+  if (res.ok) {
+    const env = json as Envelope<Settings>;
+    if (!env?.data?.features) return { ok: false, status: res.status, message: 'POST /api/config → bad payload' };
+    set({ generatedAt: env.generatedAt, offline: false });
+    return { ok: true, data: env.data, generatedAt: env.generatedAt };
+  }
+  const body = json as { error?: string; errors?: string[]; message?: string };
+  if (res.status === 400 && body.error === 'rejected' && Array.isArray(body.errors)) {
+    return { ok: false, status: 400, errors: body.errors, message: 'rejected' };
+  }
+  const message = body.message || body.error || `POST /api/config → HTTP ${res.status}`;
+  return { ok: false, status: res.status, errors: body.errors, message };
+}
 
 // --- shared refresh clock + reachability, so every screen agrees on "fresh" and "offline" ----
 
@@ -327,4 +448,20 @@ export function useConceptMap(ids: string[]): Map<string, Frontmatter> {
   }, [key]);
 
   return map;
+}
+
+/** The intent gate, fetched from the core. The panel never routes locally: a mirrored gate in
+ *  the browser would drift from tools/lib/voice-intent.mjs, and the copy is what a person sees. */
+export async function routeVoice(text: string, confidence: number): Promise<VoiceRoute | null> {
+  try {
+    const r = await fetch(
+      `/api/voice/route?text=${encodeURIComponent(text)}&confidence=${encodeURIComponent(String(confidence))}`,
+      { headers: { accept: 'application/json' } },
+    );
+    if (!r.ok) return null;
+    const body = await r.json();
+    return body?.data ?? null;
+  } catch {
+    return null;
+  }
 }

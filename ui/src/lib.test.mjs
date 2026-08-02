@@ -180,12 +180,17 @@ test('cardView survives the malformed cards that blanked the SPA', () => {
 
 test('board counts are read from the model, never recounted from the capped arrays', () => {
   // guards the release-blocker: "In progress 8" on a bundle with 93 in-flight topics
-  const overview = readFileSync(join(SRC, 'screens', 'Overview.tsx'), 'utf8');
-  assert.match(overview, /columnTotals\?\.inprog \?\? b\.inprog\.length/, 'KPI prefers the model total');
-  assert.match(overview, /columnTotals\?\.blocked \?\? b\.blocked\.length/, 'so does the blocked annotation');
-  assert.doesNotMatch(overview, /value=\{b\.inprog\.length\}/, 'no bare capped-array count in a KPI tile');
-  assert.doesNotMatch(overview, /\.filter\([^)]*source/, 'never filters derived cards out client-side');
   const shared = readFileSync(join(SRC, 'shared.tsx'), 'utf8');
+  assert.match(shared, /columnTotals\?\.inprog \?\? b\.inprog\.length/, 'KPI prefers the model total');
+  assert.match(shared, /columnTotals\?\.blocked \?\? b\.blocked\.length/, 'so does the blocked annotation');
+  assert.doesNotMatch(shared, /value=\{b\.inprog\.length\}/, 'no bare capped-array count in a KPI tile');
+  const today = readFileSync(join(SRC, 'screens', 'Today.tsx'), 'utf8');
+  assert.match(today, /columnTotals\?\.inprog/, 'Today column headings use model totals');
+  assert.match(today, /columnTotals\?\.blocked/, 'Today blocked column uses model totals');
+  assert.doesNotMatch(today, /value=\{b\.inprog\.length\}/, 'no bare inprog.length as a heading total');
+  assert.doesNotMatch(today, /value=\{b\.blocked\.length\}/, 'no bare blocked.length as a heading total');
+  const overview = readFileSync(join(SRC, 'screens', 'Overview.tsx'), 'utf8');
+  assert.doesNotMatch(overview, /\.filter\([^)]*source/, 'never filters derived cards out client-side');
   assert.match(shared, /totals\?\.\[c\.key\] \?\? docs\.length/, 'column heading prefers the model total');
 });
 

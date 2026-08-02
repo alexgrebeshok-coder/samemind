@@ -336,7 +336,12 @@ export function buildBoardModel(docs, {
   const ideaSpark = ideasAll.filter(d => statusOf(d) === 'spark').sort(byTsDesc);
   const ideaAdopted = ideasAll.filter(d => statusOf(d) === 'adopted').sort(byTsDesc);
   const ideasVisible = [...ideaIncubating, ...ideaSpark];
+  // In-process index for markdown/html renderers (Map.get/has). JSON.stringify(Map) is `{}`,
+  // which would ship a false empty object on every /api/board and `board --json` response and
+  // mislead any consumer that trusted the key. Omit from JSON entirely (toJSON → undefined):
+  // columns already carry the docs the UI needs; this index is render-only internal glue.
   const byId = new Map(cs.map(d => [d.id, d]));
+  byId.toJSON = () => undefined;
 
   const recentCutoff = nowMs - recentDays * DAY_MS;
   const recent = cs.filter(d => {

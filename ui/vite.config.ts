@@ -8,5 +8,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   base: './',
   build: { outDir: '../dist', emptyOutDir: true },
-  server: { proxy: { '/api': 'http://127.0.0.1:7804' } },
+  // tools/ui.mjs DEFAULT_PORT is 7787 — keep the vite /api proxy on the same port so
+  // `npm run dev` (ui/) talks to a running `samemind ui` without a second listener.
+  server: { proxy: { '/api': 'http://127.0.0.1:7787' } },
 });

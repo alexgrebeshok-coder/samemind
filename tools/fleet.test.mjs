@@ -502,8 +502,14 @@ describe('MCP — memory_fleet_status / memory_fleet_assign', () => {
   after(() => { rmSync(BUNDLE_DIR, { recursive: true, force: true }); });
 
   function startMcpClient(extraEnv = {}) {
+    return startMcpClientFor(BUNDLE_DIR, extraEnv);
+  }
+
+  // Parameterized variant for tests that need their own bundle root (e.g. an isolated heartbeat
+  // regression on a fresh registry), not the shared BUNDLE_DIR.
+  function startMcpClientFor(root, extraEnv = {}) {
     const proc = spawn(process.execPath, [MCP_SERVER], {
-      env: { ...process.env, OKF_ROOT: BUNDLE_DIR, OKF_EMBED_URL: '', ...extraEnv },
+      env: { ...process.env, OKF_ROOT: root, OKF_EMBED_URL: '', ...extraEnv },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     const pending = new Map();
@@ -704,6 +710,136 @@ describe('MCP — memory_fleet_status / memory_fleet_assign', () => {
       assert.ok(payload.matches.length > 0);
       const events = readEvents(BUNDLE_DIR).filter((e) => e.topic === 'fleet-injection');
       assert.ok(events.some((e) => e.action.includes(injected))); // preserved verbatim, not dropped
+    } finally {
+      await client.close();
+    }
+  });
+
+  // ─── R: idempotency by ref + issuer attribution (voice contour) ───
+  // A mis-heard voice replica ("assign to cursor") recognized twice must create ONE assignment,
+  // not two. memory_fleet_assign now threads `ref` into appendEvent, which already dedupes by ref.
+
+  it('R: the same ref twice → ONE event, second call returns deduped:true', async () => {
+    const client = startMcpClient({ SAMEMIND_AGENT: 'director-voice' });
+    try {
+      await mcpInit(client);
+      const args = {
+        engine: 'cursor', topic: 'r-voice-dedup', goal: 'ship it', verify: 'tests green',
+        ref: 'voice-utterance-42',
+      };
+      const before_ = readEvents(BUNDLE_DIR).filter((e) => e.ref === 'voice-utterance-42').length;
+      const first = await client.request('tools/call', { name: 'memory_fleet_assign', arguments: args });
+      const firstPayload = toolPayload(first);
+      assert.equal(firstPayload.ok, true);
+      assert.ok(!firstPayload.deduped, 'first call must not be deduped');
+
+      const second = await client.request('tools/call', { name: 'memory_fleet_assign', arguments: args });
+      const secondPayload = toolPayload(second);
+      assert.equal(secondPayload.ok, true);
+      assert.equal(secondPayload.deduped, true, 'second call with same ref must be deduped');
+
+      const withRef = readEvents(BUNDLE_DIR).filter((e) => e.ref === 'voice-utterance-42');
+      assert.equal(withRef.length, before_ + 1, 'exactly one event for this ref — no duplicate assignment');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('R: a different ref does NOT dedupe — both assignments are written', async () => {
+    const client = startMcpClient();
+    try {
+      await mcpInit(client);
+      await client.request('tools/call', {
+        name: 'memory_fleet_assign',
+        arguments: { engine: 'cursor', topic: 'r-voice-nodedup', goal: 'g', verify: 'v', ref: 'ref-X' },
+      });
+      await client.request('tools/call', {
+        name: 'memory_fleet_assign',
+        arguments: { engine: 'cursor', topic: 'r-voice-nodedup', goal: 'g', verify: 'v', ref: 'ref-Y' },
+      });
+      const evs = readEvents(BUNDLE_DIR).filter((e) => e.topic === 'r-voice-nodedup');
+      assert.equal(evs.length, 2, 'two different refs → two events');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('R: without ref, repeated identical assigns are NOT deduped (existing behavior preserved)', async () => {
+    const client = startMcpClient();
+    try {
+      await mcpInit(client);
+      const args = { engine: 'cursor', topic: 'r-voice-no-ref', goal: 'g', verify: 'v' };
+      await client.request('tools/call', { name: 'memory_fleet_assign', arguments: args });
+      const res2 = await client.request('tools/call', { name: 'memory_fleet_assign', arguments: args });
+      const payload2 = toolPayload(res2);
+      assert.ok(!payload2.deduped, 'no ref → never deduped, same as before');
+      const evs = readEvents(BUNDLE_DIR).filter((e) => e.topic === 'r-voice-no-ref');
+      assert.equal(evs.length, 2, 'no ref → two separate assignments (byte-for-byte prior behavior)');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('R: the issuer (SAMEMIND_AGENT) is visible in the event action, attributed as [by <issuer>]', async () => {
+    const client = startMcpClient({ SAMEMIND_AGENT: 'claude-glm' });
+    try {
+      await mcpInit(client);
+      await client.request('tools/call', {
+        name: 'memory_fleet_assign',
+        arguments: { engine: 'cursor', topic: 'r-attribution', goal: 'do work', verify: 'v' },
+      });
+      const evs = readEvents(BUNDLE_DIR).filter((e) => e.topic === 'r-attribution');
+      assert.equal(evs.length, 1);
+      assert.match(evs[0].action, /\[by claude-glm\]/, 'issuer recorded in action');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('R: actor stays the target engine; heartbeat counts it alive (regression on heartbeat)', async () => {
+    // The actor MUST remain the assigned engine so fleet heartbeat still treats a fresh assignment
+    // as "engine seen recently". If the issuer leaked into actor, a silent engine would look alive.
+    const root = mkdtempSync(join(tmpdir(), 'samemind-r-heartbeat-'));
+    try {
+      runInit({ targetDir: root });
+      writeRegistry(root, buildRegistry({
+        engines: [{ id: 'cursor', role: 'executor', heartbeatSec: 3600 }],
+      }));
+      const client = startMcpClientFor(root, { SAMEMIND_AGENT: 'director-claude' });
+      try {
+        await mcpInit(client);
+        await client.request('tools/call', {
+          name: 'memory_fleet_assign',
+          arguments: { engine: 'cursor', topic: 'r-heartbeat', goal: 'g', verify: 'v' },
+        });
+      } finally {
+        await client.close();
+      }
+      const evs = readEvents(root).filter((e) => e.topic === 'r-heartbeat');
+      assert.equal(evs.length, 1);
+      assert.equal(evs[0].actor, 'cursor', 'actor is the target engine, NOT the issuer');
+      assert.match(evs[0].action, /\[by director-claude\]/, 'issuer in action, not in actor');
+      // heartbeat: cursor was just seen via its assignment event → NOT overdue
+      const rows = heartbeat(readRegistry(root).engines, readEvents(root), Date.now());
+      const cursorRow = rows.find((r) => r.id === 'cursor');
+      assert.equal(cursorRow.overdue, false, 'engine that just received an assignment is alive');
+      assert.ok(cursorRow.lastSeen, 'lastSeen is set from the assignment event');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('R: when issuer === engine, the [by X] marker is omitted (no self-attribution noise)', async () => {
+    const client = startMcpClient({ SAMEMIND_AGENT: 'cursor' });
+    try {
+      await mcpInit(client);
+      await client.request('tools/call', {
+        name: 'memory_fleet_assign',
+        arguments: { engine: 'cursor', topic: 'r-self-assign', goal: 'g', verify: 'v' },
+      });
+      const evs = readEvents(BUNDLE_DIR).filter((e) => e.topic === 'r-self-assign');
+      assert.equal(evs.length, 1);
+      assert.doesNotMatch(evs[0].action, /\[by /, 'no [by] marker when issuer is the engine itself');
     } finally {
       await client.close();
     }
