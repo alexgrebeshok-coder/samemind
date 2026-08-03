@@ -7,7 +7,7 @@ Zero-dependency Node.js project. If you can run `node`, you can dev on this.
 ```sh
 git clone https://github.com/alexgrebeshok-coder/samemind.git
 cd samemind
-node --test tools/*.test.mjs        # 265+ tests, no install step — there's nothing to install
+node --test tools/*.test.mjs        # 1100+ tests, no install step — there's nothing to install
 ```
 
 Node ≥20 (CI matrix: 20 + 22 — see `.github/workflows/ci.yml`). No `npm install`,

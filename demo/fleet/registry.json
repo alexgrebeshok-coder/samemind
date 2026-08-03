@@ -25,6 +25,14 @@
       "heartbeatSec": 3600,
       "status": "reserve",
       "zone": "research, backup executor"
+    },
+    {
+      "id": "samemind",
+      "role": "executor",
+      "chain": false,
+      "heartbeatSec": 604800,
+      "status": "active",
+      "zone": "product self-health (projection)"
     }
   ]
 }

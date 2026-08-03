@@ -29,6 +29,23 @@ export const STATUSES = new Set(['active', 'reserve', 'dead']);
 // catch an engine that quietly dropped out of rotation.
 export const DEFAULT_HEARTBEAT_SEC = 86_400;
 
+// Product self-health entry seeded by `fleet init` (and present in demo/fleet/registry.json).
+// Not an agent working *on* the bundle — the product itself, so silence (no ledger events as
+// actor `samemind`) can surface on `fleet status`. heartbeat() still keys lastSeen by event
+// `actor` only; this id must match HEALTH_ACTOR in tools/lib/health.mjs. Heartbeat window is
+// a week: health ledger events fire only on state change, so a clean multi-day streak is
+// expected silence, not a fault.
+export const PRODUCT_ENGINE_ID = 'samemind';
+export const PRODUCT_HEARTBEAT_SEC = 604_800; // 7 days
+export const DEFAULT_PRODUCT_ENGINE = {
+  id: PRODUCT_ENGINE_ID,
+  role: 'executor',
+  chain: false,
+  heartbeatSec: PRODUCT_HEARTBEAT_SEC,
+  status: 'active',
+  zone: 'product self-health (projection)',
+};
+
 // Generic stop-points a fleet registry starts with (`fleet init`) — the categories of action
 // that should halt any multi-agent pipeline for an explicit human go-ahead, independent of
 // this project's own vocabulary. See docs/fleet.md.

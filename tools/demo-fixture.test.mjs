@@ -3,10 +3,11 @@
 //   1. `samemind init` scaffolds all 7 tiers (concepts/entities/projects/inbox/secret/ledger/fleet);
 //      ledger/.gitkeep and fleet/.gitkeep are never walked as OKF concepts.
 //   2. demo/fleet/registry.json + demo/ledger/events.jsonl: a realistic fixture where cursor is
-//      silent past its heartbeat, claude-code is healthy, grok (reserve) is never flagged, and
-//      atlas-retrieval has one still-open failure — so `samemind board`/`samemind fleet status`
-//      have something non-empty to show out of the box. `now` is injected (not Date.now()) so
-//      this stays green regardless of when the suite actually runs — see docs/fleet.md.
+//      silent past its heartbeat, claude-code is healthy, grok (reserve) is never flagged,
+//      samemind (product self-health) has a recent health event, and atlas-retrieval has one
+//      still-open failure — so `samemind board`/`samemind fleet status` have something non-empty
+//      to show out of the box. `now` is injected (not Date.now()) so this stays green regardless
+//      of when the suite actually runs — see docs/fleet.md.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, existsSync, rmSync, writeFileSync } from 'node:fs';
@@ -52,10 +53,10 @@ describe('init — scaffolds all 7 tiers, including ledger/ and fleet/', () => {
 });
 
 describe('demo — fleet/registry.json fixture', () => {
-  it('declares 3 engines: claude-code (director, active), cursor (executor, active), grok (executor, reserve)', () => {
+  it('declares 4 engines: claude-code, cursor, grok, samemind (product self-health)', () => {
     const registry = readRegistry(DEMO);
     assert.ok(registry, 'registry present at demo/fleet/registry.json');
-    assert.equal(registry.engines.length, 3);
+    assert.equal(registry.engines.length, 4);
     const byId = Object.fromEntries(registry.engines.map(e => [e.id, e]));
     assert.equal(byId['claude-code'].role, 'director');
     assert.equal(byId['claude-code'].status, 'active');
@@ -64,15 +65,18 @@ describe('demo — fleet/registry.json fixture', () => {
     assert.equal(byId.cursor.status, 'active');
     assert.equal(byId.cursor.heartbeatSec, 3600);
     assert.equal(byId.grok.status, 'reserve');
+    assert.equal(byId.samemind.status, 'active');
+    assert.equal(byId.samemind.heartbeatSec, 604800);
   });
 
-  it('heartbeat: cursor overdue (silent past its 3600s limit), claude-code healthy, grok never flagged', () => {
+  it('heartbeat: cursor overdue (silent past its 3600s limit), claude-code + samemind healthy, grok never flagged', () => {
     const registry = readRegistry(DEMO);
     const rows = heartbeat(registry.engines, readEvents(DEMO), NOW);
     const byId = Object.fromEntries(rows.map(r => [r.id, r]));
     assert.equal(byId.cursor.overdue, true, 'cursor silent well past its 3600s heartbeat');
     assert.equal(byId['claude-code'].overdue, false, 'claude-code checked in within its 86400s heartbeat');
     assert.equal(byId.grok.overdue, false, 'reserve engines are never flagged, regardless of silence');
+    assert.equal(byId.samemind.overdue, false, 'product self-health checked in within its 7d heartbeat');
   });
 });
 
@@ -135,15 +139,17 @@ describe('demo — derived-канбан: ledger topics synthesize kanban cards (
 
     // Each column also still holds its real Task doc (demo/projects/task-*.md) — none of their
     // ids/titles literally match the ledger topic strings, so canon does not suppress here;
-    // counts include both the doc card and the derived card (contract point 6).
+    // counts include both the doc card and the derived card (contract point 6). Product
+    // self-health (samemind-health, last phase done) adds a third Done derived card.
     assert.equal(model.inprog.length, 2, 'Ship Lumen backlink editor (doc) + lumen-sync (ledger)');
-    assert.equal(model.done.length, 2, 'Iris UX review (doc) + iris-ux-review (ledger)');
+    assert.equal(model.done.length, 3, 'Iris UX review (doc) + iris-ux-review + samemind-health (ledger)');
     assert.equal(model.blocked.length, 2, 'Wire retrieval strategy (doc) + atlas-retrieval (ledger)');
+    assert.ok(model.done.some(c => c.id === 'ledger:samemind-health'), 'product self-health on Done');
 
     const md = buildBoard(docs, { now: NOW, ledgerTopics: topics });
     assert.match(md, /## 🔧 In progress \(2\)/);
     assert.match(md, /## 🔴 Blocked \(2\)/);
-    assert.match(md, /## ✅ Done · last 10 \(2\)/);
+    assert.match(md, /## ✅ Done · last 10 \(3\)/);
     assert.ok(md.includes('_(ledger)_'), 'markdown marks derived cards');
   });
 });

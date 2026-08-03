@@ -19,6 +19,7 @@
 //   npx samemind fleet <cmd> ...         → tools/fleet.mjs       (engine registry: init|status|assign|set)
 //   npx samemind service <cmd> ...       → tools/service.mjs     (install|status|uninstall periodic `project`, or --daemon `serviced`, as an OS user-unit)
 //   npx samemind serviced [...]          → tools/serviced.mjs    (long-lived event-driven projection daemon; run under an OS supervisor)
+//   npx samemind dogfood [...]           → tools/dogfood.mjs     (days without open own failure — ledger topic samemind-health)
 //   npx samemind hooks <cmd> ...         → tools/hooks.mjs       (list | install --agent <id>: engine lifecycle-hook wiring)
 //   npx samemind serve [--http]          → tools/mcp-server.mjs  (MCP server: memory_* tools; stdio default, --http = Streamable HTTP on loopback)
 //
@@ -55,6 +56,7 @@ const ROUTES = {
   fleet: 'tools/fleet.mjs',
   service: 'tools/service.mjs',
   serviced: 'tools/serviced.mjs',
+  dogfood: 'tools/dogfood.mjs',
   hooks: 'tools/hooks.mjs',
   ui: 'tools/ui.mjs',
   serve: 'tools/mcp-server.mjs',
@@ -86,6 +88,7 @@ function usage() {
   console.log('  fleet <cmd> ...       engine registry: init [--target <dir>] | status [--json] | assign --engine <id> --topic <t> --goal ".." --verify ".." | set --engine <id> --status active|reserve|dead [--role r] [--heartbeat N] [--zone ".."] — see docs/fleet.md');
   console.log('  service <cmd> ...     install|status|uninstall an OS unit: default periodic `samemind project`; --daemon → long-lived `samemind serviced` (mac LaunchAgent / linux systemd --user / win Scheduled Task); no sudo, no network — explicit command only (never postinstall)');
   console.log('  serviced [...]        long-lived event-driven projection daemon (run under an OS supervisor — see `service install --daemon`): --root <dir> --interval <sec>');
+  console.log('  dogfood [...]         days without an open own failure (ledger topic samemind-health); empty history → not measurable, not “0 failures” (--root <dir>, --json)');
   console.log('  hooks <cmd> ...       lifecycle-hook wiring: list (hook tier per engine) | install --agent <id> [--target <dir>] (auto-tier engines only) — see docs/hooks/');
   console.log('  ui [...]              local read-only dashboard over the bundle, GET /api/* (--port N default 7787, --root <dir>, --open) — see docs/ui-spec.md');
   console.log('  serve [--http [--port N]]  MCP server (memory_search/get/list/write_inbox/handoff/health/ledger_append/ledger_status): stdio by default; --http → Streamable HTTP on 127.0.0.1 (--port 0 = ephemeral)');

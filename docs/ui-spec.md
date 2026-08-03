@@ -1,6 +1,6 @@
 # samemind ui — dashboard specification (v1)
 
-Local, read-only web dashboard over one samemind bundle: what the memory knows, what work is
+Local web dashboard over one samemind bundle: what the memory knows, what work is
 in flight, which engines are alive, and how concepts connect. Served by `samemind ui`
 (node:http, 127.0.0.1 only), SPA lives in `dist/`. This file is the build contract for the
 frontend: every section below is REQUIRED unless marked optional — see the acceptance
@@ -8,7 +8,10 @@ checklist at the end.
 
 ## 0. Hard constraints
 
-- **Read-only.** The UI never mutates the bundle. No write endpoints exist.
+- **Memory read-only.** The UI never mutates the OKF bundle (no inbox, ledger, fleet dispatch, or
+  canon promotion). **Settings writes are allowed:** exactly one route, `POST /api/config`, updates
+  `voice` / `vision` in `.samemind/config.json` (see `WRITE_ROUTES` in `tools/lib/ui-server.mjs`,
+  guarded by `tools/lib/http-guard.mjs`). Consequential commands are shown for copy only.
 - **Self-contained.** No CDN, no external fonts, no network calls other than same-origin
   `/api/*`. Everything ships in `dist/`.
 - **Stack:** Vite + React + TypeScript + Tailwind. No component libraries (no MUI/antd);
@@ -39,6 +42,13 @@ non-empty fleet, ledger, failures and overdue sections.
 | `/api/concepts?type=&tag=&q=` | concepts | list: id, title, type, tags, status, date |
 | `/api/concept/<id>` | concept | frontmatter + raw markdown body |
 | `/api/graph` | links | nodes {id,title,type}, edges {from,to,kind:relation\|link, rel?}, orphans, broken |
+| `/api/settings` | settings | root, config paths, `features.voice` / `features.vision` (values + layers + availability) |
+| `/api/status` | status | projection liveness (same keys as `samemind status --json`) |
+| `/api/doctor` | doctor | connection report (`probe: false` — no spawn on dashboard GET) |
+| `GET /api/voice/probe` | voice-probe | on-demand companion reachability |
+| `GET /api/voice/route` | voice-route | read-only intent gate |
+| `POST /api/config` | settings | validated patch → re-read settings (sole write) |
+| `GET /api/events/stream` | SSE | ledger events (`kind: ledger-event` per event) |
 
 Field names are authoritative in the endpoint responses, not in this table — fetch once,
 type from the actual payload. `score`-like fields are display-only, never re-sorted client-side.
@@ -46,13 +56,19 @@ type from the actual payload. `score`-like fields are display-only, never re-sor
 ## 2. Layout shell
 
 - Left sidebar (collapsible at <900px into a top bar): product mark "samemind", nav items
-  **Overview · Memory · Fleet · Projects**, theme toggle, and a footer chip with bundle root
+  **Today · Overview · Memory · Fleet · Projects · Voice · Settings**, theme toggle, and a footer chip with bundle root
   path + version from `/api/health`.
 - Content area with a slim header: current screen title + `generatedAt` freshness stamp
   ("updated 12s ago", auto-refresh every 30s, manual refresh button).
 - Responsive: usable at 1280px (primary), degrades gracefully to 768px (single column).
 
 ## 3. Screens
+
+### 3.0 Today  (`/today`)
+
+1. **Work now** — in-flight and blocked counts from `/api/board` `columnTotals` (not raw array lengths).
+2. **Recovery** — cards with the exact CLI command and one-click copy (`Cmd`); never auto-run.
+3. **Recent decisions** — from board/handoff-shaped data where present.
 
 ### 3.1 Overview  (`/`)
 
@@ -115,6 +131,18 @@ tasks). Task counts alone therefore say nothing — a card must stand on the doc
    (graph neighbours, labelled with node titles, click → concept view), and the filtered board —
    again only when the project has cards, else one muted line.
 
+### 3.5 Voice  (`/voice`)
+
+1. **Companion state** — unavailable / configured / reachable (probe via `/api/voice/probe` only).
+2. **Intent preview** — `/api/voice/route` gate; microphone capture is out of scope for core UI.
+3. **Consent copy** — three separate voice consents reflected in settings model.
+
+### 3.6 Settings  (`/settings`)
+
+1. **Voice + vision toggles** — effective values with layer chips (default / global / project).
+2. **Save** — `POST /api/config`; on success, re-fetch server state (not optimistic-only).
+3. **Unavailable capabilities** — render as unavailable, not a silent unchecked box.
+
 ## 4. Design tokens
 
 - Type: system font stack (`ui-sans-serif, -apple-system, …`); numbers in stat tiles bold,
@@ -138,7 +166,7 @@ tasks). Task counts alone therefore say nothing — a card must stand on the doc
 
 ## 6. Acceptance checklist (verified in review, both themes)
 
-- [ ] 4 screens, every numbered item above present
+- [ ] 7 screens (Today, Overview, Memory, Fleet, Projects, Voice, Settings), every numbered item above present
 - [ ] both themes pass contrast; toggle persists
 - [ ] demo fixture renders non-empty failures + overdue + timeline
 - [ ] live bundle (123 concepts) renders <1s after load; list virtualization holds
