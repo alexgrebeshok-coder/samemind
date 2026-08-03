@@ -25,7 +25,7 @@ import { detectEngines } from './lib/detect-engines.mjs';
 import { readEvents, appendEvent } from './lib/ledger.mjs';
 import {
   buildEngine, buildRegistry, buildAssignment, readRegistry, writeRegistry, registryFile,
-  heartbeat, findEngine, DEFAULT_STOP_POINTS,
+  heartbeat, findEngine, DEFAULT_STOP_POINTS, DEFAULT_PRODUCT_ENGINE,
 } from './lib/fleet.mjs';
 
 function usage() {
@@ -57,6 +57,12 @@ export function cmdInit(a) {
   const existedBefore = existsSync(registryFile(ROOT));
   const byId = new Map((existing?.engines || []).map((e) => [e.id, e]));
   const added = [];
+  // Product self-health engine: always present after init so silence can signal. Additive only —
+  // never overwrites an existing hand-tuned samemind entry (same rule as detected engines).
+  if (!byId.has(DEFAULT_PRODUCT_ENGINE.id)) {
+    byId.set(DEFAULT_PRODUCT_ENGINE.id, buildEngine(DEFAULT_PRODUCT_ENGINE));
+    added.push(DEFAULT_PRODUCT_ENGINE.id);
+  }
   for (const id of detected) {
     if (!byId.has(id)) {
       byId.set(id, buildEngine({ id }));
@@ -83,7 +89,7 @@ export function cmdStatus(a = {}) {
     const data = registry
       ? { engines: heartbeat(registry.engines, readEvents(ROOT), Date.now()), stopPoints: registry.stopPoints }
       : { engines: [], stopPoints: [] };
-    console.log(JSON.stringify({ contract: 1, kind: 'fleet', data }));
+    console.log(JSON.stringify({ contract: 1, kind: 'fleet', generatedAt: new Date().toISOString(), data }));
     return;
   }
   if (!registry) {

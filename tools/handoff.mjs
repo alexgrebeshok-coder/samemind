@@ -233,11 +233,39 @@ export function buildHandoffModel(docs, {
 
   // --- Open questions: blocked tasks + ## Next bullets from last session ---
   const blocked = tasks.filter(d => statusOf(d) === 'blocked');
-  const sessionNext = lastSession
-    ? firstBullets(extractSection(lastSession.body, /^next$/i), 5)
+  const sessionNextAll = lastSession
+    ? firstBullets(extractSection(lastSession.body, /^next$/i), Infinity)
     : [];
+  const sessionNext = sessionNextAll.slice(0, 5);
 
-  return { projectKey, dayWindow, active, recentDecisions, plansInForce, lastSession, blocked, sessionNext, nowMs: now.getTime() };
+  return {
+    projectKey, dayWindow, active, recentDecisions, plansInForce, lastSession, blocked,
+    sessionNext, sessionNextTotal: sessionNextAll.length, nowMs: now.getTime(),
+  };
+}
+
+/**
+ * Thin projection of a full doc for the `--json` payload: keeps only `id`, `fm`, `relations`.
+ * The markdown/HTML renderers still get full docs (they read `body` for sections, citations);
+ * this projection is for the wire, so `handoff --json` does not ship whole documents an interface
+ * only reads by the field (title/type/dates from `fm`), never by the body.
+ */
+export function thinDoc(d) {
+  if (!d) return d;
+  return { id: d.id, fm: d.fm || {}, relations: d.relations || {} };
+}
+
+/** Apply `thinDoc` to every doc-carrying array/object in a handoff model (for the `--json` wire). */
+export function projectHandoffJson(model) {
+  const thin = arr => (arr || []).map(thinDoc);
+  return {
+    ...model,
+    active: thin(model.active),
+    recentDecisions: (model.recentDecisions || []).map(x => ({ ...x, d: thinDoc(x.d) })),
+    plansInForce: thin(model.plansInForce),
+    lastSession: model.lastSession ? thinDoc(model.lastSession) : null,
+    blocked: thin(model.blocked),
+  };
 }
 
 /**
@@ -422,7 +450,7 @@ async function main() {
     const now = new Date();
     const model = buildHandoffModel(docs, { project: opts.project, days: opts.days, now });
     console.log(JSON.stringify({
-      contract: 1, kind: 'handoff', generatedAt: now.toISOString(), data: model,
+      contract: 1, kind: 'handoff', generatedAt: now.toISOString(), data: projectHandoffJson(model),
     }));
     return;
   }

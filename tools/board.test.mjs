@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import http from 'node:http';
-import { buildBoard, buildBoardModel, OVERDUE_ENGINES_LIMIT, LEDGER_DERIVED_CAP } from './board.mjs';
+import { buildBoard, buildBoardModel, projectBoardJson, thinDoc, OVERDUE_ENGINES_LIMIT, LEDGER_DERIVED_CAP } from './board.mjs';
 import { runInit } from './init.mjs';
 import { buildRegistry, writeRegistry } from './lib/fleet.mjs';
 import { appendEvent } from './lib/ledger.mjs';
@@ -457,7 +457,7 @@ describe('derived-канбан (a) — no ledgerTopics: byte-identical to the pr
 
   it('model exposes ledgerOverflow all-zero when there is nothing to derive', () => {
     const model = buildBoardModel(docs, { now: NOW });
-    assert.deepEqual(model.ledgerOverflow, { inprog: 0, blocked: 0, done: 0 });
+    assert.deepEqual(model.ledgerOverflow, { backlog: 0, inprog: 0, blocked: 0, done: 0 });
   });
 });
 
@@ -633,5 +633,70 @@ describe("derived-канбан (е) — GET /api/board serves source:'ledger' ca
     } finally {
       server.close();
     }
+  });
+});
+
+describe('--json payload: document bodies and file paths must not be shipped', () => {
+  // A board model is built from full docs (body, file, links, supersedes …), but the --json
+  // wire payload must carry only the fields an interface actually reads (id, fm, relations).
+  // The markdown and HTML renderers still get the full model — thinDoc is the wire projection.
+  it('thinDoc drops body, file, base, reserved, hasFM, links, supersedes, supersededBy', () => {
+    const full = {
+      id: 'projects/task-x',
+      file: '/home/user/bundle/projects/task-x.md',
+      base: 'task-x.md',
+      reserved: false,
+      hasFM: true,
+      fm: { type: 'Task', title: 'X', description: 'do X', status: 'in-progress' },
+      body: '## Detail\na long body ' + 'x'.repeat(2000),
+      links: ['/projects/plan-a.md'],
+      relations: { project: ['projects/p'] },
+      supersedes: [],
+      supersededBy: [],
+    };
+    const thin = thinDoc(full);
+    assert.deepEqual(Object.keys(thin).sort(), ['fm', 'id', 'relations']);
+    assert.equal(thin.body, undefined);
+    assert.equal(thin.file, undefined);
+    assert.deepEqual(thin.fm, full.fm);
+  });
+
+  it('thinDoc passes ledger-derived cards through untouched (already flat)', () => {
+    const card = { id: 'ledger:topic', title: 'topic', type: 'Task', source: 'ledger', ts: 'x', actor: 'grok', action: 'did' };
+    assert.equal(thinDoc(card), card);
+  });
+
+  it('projectBoardJson strips every doc array in the model', () => {
+    const docs = [
+      doc('projects/task-a', { type: 'Task', title: 'A', status: 'in-progress', description: 'aa', timestamp: daysAgo(1) }),
+      doc('projects/plan-b', { type: 'Plan', title: 'B', status: 'agreed', description: 'bb', timestamp: daysAgo(2) }),
+      doc('concepts/sess-c', { type: 'Session', title: 'C', timestamp: daysAgo(3) }),
+    ];
+    const model = buildBoardModel(docs, { now: NOW });
+    const projected = projectBoardJson(model);
+    for (const arr of ['backlog', 'inprog', 'blocked', 'done', 'plans', 'recent', 'sessions', 'ideasVisible']) {
+      for (const d of projected[arr]) {
+        assert.equal(d.body, undefined, `${arr}: body must not be shipped`);
+        assert.equal(d.file, undefined, `${arr}: file must not be shipped`);
+      }
+    }
+  });
+});
+
+describe('--json payload: capped arrays report their true total', () => {
+  it('sessions is capped at SESSION_SUMMARY_LIMIT but sessionsTotal reflects all sessions', () => {
+    const sessions = [];
+    for (let i = 0; i < 6; i++) {
+      sessions.push(doc(`concepts/sess-${i}`, { type: 'Session', title: `S${i}`, timestamp: daysAgo(i) }));
+    }
+    const model = buildBoardModel(sessions, { now: NOW });
+    assert.ok(model.sessions.length <= 3, 'sessions is capped');
+    assert.equal(model.sessionsTotal, 6, 'sessionsTotal reflects all sessions');
+  });
+
+  it('ledgerOverflow has all four column keys (backlog included, always 0)', () => {
+    const model = buildBoardModel([], { now: NOW });
+    assert.deepEqual(Object.keys(model.ledgerOverflow).sort(), ['backlog', 'blocked', 'done', 'inprog']);
+    assert.equal(model.ledgerOverflow.backlog, 0);
   });
 });

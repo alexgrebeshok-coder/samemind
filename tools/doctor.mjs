@@ -290,7 +290,7 @@ export async function runDoctor({
   for (const id of ids) {
     const supported = checkSupported(id);
     if (!supported.ok) {
-      results.push({ id, label: id, states: { supported, installed: skip(), connected: skip(), verified: skip(), active: skip() } });
+      results.push({ id, label: id, states: { supported, installed: skipState(), connected: skipState(), verified: skipVerified(), active: skipActive() } });
       continue;
     }
     const entries = supported.readable ? findSamemindEntries(id, { home, target }) : [];
@@ -299,7 +299,7 @@ export async function runDoctor({
       ? checkConnected(entries, { findings, engine: id })
       : { ok: false, unknown: true, locations: [] };
 
-    let verified = skip();
+    let verified = skipVerified();
     if (connected.ok && probe) {
       const e = entries.find((x) => x.found && x.enabled !== false && x.command);
       const key = `${e.command}\0${(e.args || []).join('\0')}\0${e.env?.OKF_ROOT || ''}`;
@@ -315,20 +315,25 @@ export async function runDoctor({
         ourVersion: version,
       });
     } else if (connected.ok && !probe) {
-      verified = { ...skip(), reason: 'probe-skipped' };
+      verified = { ...skipVerified(), reason: 'probe-skipped' };
     }
 
-    results.push({ id, label: ENGINE_FILES[id]?.label || id, states: { supported, installed, connected, verified, active: skip() } });
+    results.push({ id, label: ENGINE_FILES[id]?.label || id, states: { supported, installed, connected, verified, active: skipActive() } });
   }
 
-  const active = resolvedRoot ? checkActive(resolvedRoot, { now }) : { ok: false, state: 'unknown' };
+  // active: always the same key set whether or not a root was resolved. A missing root is not a
+  // reason to drop intervalSec/lastError/targets — a consumer must not see three keys today and
+  // five tomorrow depending on where doctor was run.
+  const active = resolvedRoot
+    ? checkActive(resolvedRoot, { now })
+    : { ok: false, state: 'unknown', intervalSec: null, lastError: null, targets: [] };
   for (const r of results) if (r.states.connected.ok) r.states.active = active;
 
   const consistency = summarizeConsistency(results, findings);
   const summary = tally(results, findings);
   return {
     ok: !findings.some((f) => FINDINGS[f.id]?.severity === 'fail'),
-    version, node: process.version, platform: process.platform,
+    version,
     root: resolvedRoot
       ? { path: resolvedRoot, realpath: realish(resolvedRoot), isBundle: true, concepts: localCount, source: root ? 'flag' : 'cwd' }
       : { path: null, realpath: null, isBundle: false, concepts: null, source: 'unknown' },
@@ -337,24 +342,50 @@ export async function runDoctor({
   };
 }
 
-const skip = () => ({ ok: false, skipped: true });
+/**
+ * The verified state is a single shape across every branch — a consumer never has to guess
+ * whether a key exists. The canonical key set (verifiedShape) is always present; a skipped
+ * branch fills every probe-only field with `null` so the contract is stable before 1.0 freezes.
+ */
+const VERIFIED_KEYS = [
+  'ok', 'skipped', 'reason',
+  'status', 'durationMs',
+  'protocolVersion', 'protocolSupported',
+  'serverInfo', 'tools', 'missingCore', 'health',
+  'exitCode', 'spawnError', 'stdoutNoise', 'stderrTail',
+  'corpus',
+];
+
+const verifiedShell = () => Object.fromEntries(VERIFIED_KEYS.map(k => [k, null]));
+
+/** A skipped verified: same keys, probe-only fields nulled, `skipped: true`. */
+const skipVerified = () => ({ ...verifiedShell(), ok: false, skipped: true, missingCore: [], stdoutNoise: [] });
+
+/** Skipped installed/connected: lightweight gates, their own small shape. */
+const skipState = () => ({ ok: false, skipped: true });
+
+/** A skipped active: same keys as a real checkActive result, values nulled. */
+const skipActive = () => ({ ok: false, state: 'skipped', intervalSec: null, lastError: null, targets: [] });
 
 function summarizeProbe(p, { engine, findings, expectedRoot, localConcepts, ourVersion: ov }) {
   const add = (id, detail) => findings.push({ id, engine, detail });
   const base = {
+    ...verifiedShell(),
+    ok: false, skipped: false,
     status: p.status, durationMs: p.durationMs,
     protocolVersion: p.protocolVersion ?? null, protocolSupported: p.protocolSupported ?? null,
     serverInfo: p.serverInfo ?? null, tools: p.tools ?? null,
     missingCore: p.missingCore ?? [], health: p.health ?? null,
     exitCode: p.exitCode ?? null, spawnError: p.spawnError ?? null,
     stdoutNoise: p.stdoutNoise ?? [], stderrTail: p.stderrTail ?? '',
+    corpus: null,
   };
-  if (p.status === PROBE_STATUS.NOT_SAMEMIND) { add('not-samemind', p.serverInfo?.name || '?'); return { ...base, ok: false }; }
-  if (p.status === PROBE_STATUS.NO_TOOLS) { add('no-tools', (p.missingCore || []).join(', ')); return { ...base, ok: false }; }
-  if (p.status !== PROBE_STATUS.OK) { add('probe-failed', `${p.status}${p.spawnError ? ': ' + p.spawnError.code : ''}`); return { ...base, ok: false }; }
+  if (p.status === PROBE_STATUS.NOT_SAMEMIND) { add('not-samemind', p.serverInfo?.name || '?'); return base; }
+  if (p.status === PROBE_STATUS.NO_TOOLS) { add('no-tools', (p.missingCore || []).join(', ')); return base; }
+  if (p.status !== PROBE_STATUS.OK) { add('probe-failed', `${p.status}${p.spawnError ? ': ' + p.spawnError.code : ''}`); return base; }
 
   const missing = CORE_TOOLS.filter((t) => !(p.tools || []).includes(t));
-  if (missing.length) { add('no-tools', missing.join(', ')); return { ...base, ok: false, missingCore: missing }; }
+  if (missing.length) { add('no-tools', missing.join(', ')); return { ...base, missingCore: missing }; }
 
   const corpus = checkCorpus(p.health, {
     expectedRoot, localConcepts, serverVersion: p.serverInfo?.version, ourVersion: ov, engine, findings,
@@ -444,7 +475,11 @@ const ICON = { ok: '✅', fail: '❌', failed: '❌', warn: '⚠️', stale: '�
 function render(r) {
   const out = [];
   out.push('samemind doctor');
-  out.push(`  version ${r.version} · node ${r.node} · ${r.platform}`);
+  // Node version and platform were dropped from the JSON on purpose: a frozen contract must not
+  // carry machine specifics, or consumers start matching on them. The human render is not frozen
+  // and this is a diagnostic tool — "why won't my server start" is often answered by the runtime,
+  // so it stays here, where a person reads it and nothing depends on it.
+  out.push(`  version ${r.version} · node ${process.version} · ${process.platform}`);
   out.push(`  bundle  ${r.root.path || '(not resolved — pass --root)'}${r.root.concepts != null ? ` · ${r.root.concepts} facts` : ''}`);
   out.push(`  health  ${ICON[r.active.state] || ICON.unknown} ${r.active.state}`);
   out.push('');

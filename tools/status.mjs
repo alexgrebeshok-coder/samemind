@@ -67,7 +67,7 @@ export function main(argv = process.argv.slice(2)) {
       version: health?.version ?? null,
       ts: health?.ts ?? null,
     };
-    console.log(JSON.stringify({ contract: 1, kind: 'status', data }));
+    console.log(JSON.stringify({ contract: 1, kind: 'status', generatedAt: new Date().toISOString(), data }));
     return 0;
   }
 

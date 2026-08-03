@@ -349,13 +349,16 @@ export function buildBoardModel(docs, {
     return Number.isFinite(t) && t >= recentCutoff && !String(d.base).startsWith('_');
   }).sort(byTsDesc);
 
-  const sessions = cs.filter(d => typeOf(d) === 'session').sort(byTsDesc).slice(0, SESSION_SUMMARY_LIMIT);
+  const allSessions = cs.filter(d => typeOf(d) === 'session').sort(byTsDesc);
+  const sessions = allSessions.slice(0, SESSION_SUMMARY_LIMIT);
 
   // Honest per-column totals, before the display caps. The shown arrays stay capped
   // (LEDGER_DERIVED_CAP per column), so a heading or KPI that quotes a count must quote these —
   // "In progress 8" on a bundle with 93 in-flight topics is a lie the reader cannot detect.
   // `done` deliberately counts only its "last N" window: that heading already says `last ${doneLimit}`,
-  // so its total is the window, which also keeps totals == length for every ledger-free bundle.
+  // so its total is the window size, NOT the lifetime count of done tasks — a consumer reading
+  // columnTotals.done as "tasks completed ever" is misled. Keep that meaning until a separate
+  // lifetime total is asked for; meanwhile every other column's total IS its true count.
   const columnTotals = {
     backlog: backlog.length,
     inprog: inprog.length + ledgerDerived.overflow.inprog,
@@ -367,11 +370,50 @@ export function buildBoardModel(docs, {
     nowMs, doneLimit, recentDays, project,
     backlog, inprog, blocked, done, plans,
     ideaIncubating, ideaSpark, ideaAdopted, ideasVisible, byId,
-    recent, sessions,
+    recent, sessions, sessionsTotal: allSessions.length,
     openFailuresShown, openFailuresTotal,
     overdueEnginesShown, overdueEnginesTotal,
-    ledgerOverflow: ledgerDerived.overflow,
+    // Symmetric with columnTotals: every column key is present, even backlog (always 0 — ledger
+    // has no backlog analogue, see deriveLedgerCards).
+    ledgerOverflow: { backlog: 0, inprog: ledgerDerived.overflow.inprog, blocked: ledgerDerived.overflow.blocked, done: ledgerDerived.overflow.done },
     columnTotals,
+  };
+}
+
+/**
+ * Thin projection of a full doc for the `--json` payload: keeps only the fields a UI consumer
+ * (cardView in ui/src/lib.ts) actually reads — `id`, `fm`, `relations`, `source`. Drops the full
+ * `body` (all markdown text), the owner's absolute `file` path, and the internal `base`/
+ * `reserved`/`hasFM`/`links`/`byId`/`supersedes`/`supersededBy` glue. The markdown and HTML
+ * renderers still receive the full model — this projection is for the wire only, so `board --json`
+ * does not ship 12 KB of document bodies a UI never opens (it fetches a body per-doc, on click).
+ */
+export function thinDoc(d) {
+  if (!d || d.source === 'ledger') return d; // ledger-derived cards are already flat
+  return {
+    id: d.id,
+    fm: d.fm || {},
+    relations: d.relations || {},
+    ...(d.source ? { source: d.source } : {}),
+  };
+}
+
+/** Apply `thinDoc` to every doc-carrying array in a board model (for the `--json` wire payload). */
+export function projectBoardJson(model) {
+  const thin = arr => (arr || []).map(thinDoc);
+  return {
+    ...model,
+    backlog: thin(model.backlog),
+    inprog: thin(model.inprog),
+    blocked: thin(model.blocked),
+    done: thin(model.done),
+    plans: thin(model.plans),
+    ideaIncubating: thin(model.ideaIncubating),
+    ideaSpark: thin(model.ideaSpark),
+    ideaAdopted: thin(model.ideaAdopted),
+    ideasVisible: thin(model.ideasVisible),
+    recent: thin(model.recent),
+    sessions: thin(model.sessions),
   };
 }
 
@@ -502,7 +544,7 @@ export async function main(argv = process.argv.slice(2)) {
     const now = Date.now();
     const model = buildBoardModel(docs, { now, project, openFailures, overdueEngines, ledgerTopics });
     console.log(JSON.stringify({
-      contract: 1, kind: 'board', generatedAt: new Date(now).toISOString(), data: model,
+      contract: 1, kind: 'board', generatedAt: new Date(now).toISOString(), data: projectBoardJson(model),
     }));
     return;
   }

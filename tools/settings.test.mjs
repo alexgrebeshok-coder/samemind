@@ -102,6 +102,31 @@ describe('settings — voice availability has three honest states', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  // A frozen shape must not make a consumer guess `undefined` vs `null`. Every branch of
+  // assessAvailability — unavailable / configured / reachable, plus vision — returns the SAME
+  // key set; absence is always `null`, never a missing key. (doctor.active / verified share this
+  // rule but live in doctor.mjs — owned by the parallel наряд P, not asserted here.)
+  it('every availability branch returns one constant key set — absence is null, never a missing key', () => {
+    const AVAIL_KEYS = ['available', 'fix', 'note', 'reason', 'state'];
+    const branches = [
+      ['voice unavailable', assessAvailability({ voice: { serviceUrl: null } }).voice],
+      ['voice configured', assessAvailability({ voice: { serviceUrl: 'http://127.0.0.1:8000' } }).voice],
+      ['voice reachable', assessAvailability({ voice: { serviceUrl: 'http://127.0.0.1:8000' } }, { voiceProbe: { model: 'whisper-1' } }).voice],
+      ['vision', assessAvailability({ voice: { serviceUrl: null } }).vision],
+    ];
+    for (const [label, b] of branches) {
+      assert.deepEqual(Object.keys(b).sort(), AVAIL_KEYS, `${label}: key set must be exactly ${AVAIL_KEYS.join(',')}`);
+    }
+    // and the populated/absent values land in the right slots per state
+    const unavail = assessAvailability({ voice: { serviceUrl: null } }).voice;
+    assert.ok(unavail.reason && unavail.fix, 'unavailable carries reason + fix');
+    assert.equal(unavail.note, null, 'unavailable has no note');
+    const reachable = assessAvailability({ voice: { serviceUrl: 'http://x' } }, { voiceProbe: { model: 'm' } }).voice;
+    assert.ok(reachable.note, 'reachable carries a note');
+    assert.equal(reachable.reason, null, 'reachable has no reason');
+    assert.equal(reachable.fix, null, 'reachable has no fix');
+  });
 });
 
 describe('settings — validation', () => {

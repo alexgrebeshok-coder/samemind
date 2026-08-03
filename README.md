@@ -2,7 +2,7 @@
 
 samemind is a git-native markdown memory bundle for AI coding agents — identity, search, a work ledger, and a kanban board in one place, portable across engines like Claude Code, Cursor, and OpenClaw. No daemon or database required; BM25 search always works offline, semantic search is optional.
 
-**Latest: v0.14.0** — memory keeps itself current: `samemind serviced` re-projects into engine files on every bundle change, `serve --http` reaches the same MCP tools over local HTTP, and engines with real lifecycle hooks (Claude Code, Codex, opencode) get auto recall/persist. See [CHANGELOG.md](https://github.com/alexgrebeshok-coder/samemind/blob/main/CHANGELOG.md).
+**Latest: v0.17.0** — the release before the freeze: the JSON contract is written down ([docs/json-contract.md](docs/json-contract.md)) and locked with shape tests, payloads dropped the machine paths and document bodies they were carrying, and `samemind dogfood` reports days without a failure of our own — saying *nothing to measure* rather than *0 failures* when there is no history. See [CHANGELOG.md](https://github.com/alexgrebeshok-coder/samemind/blob/main/CHANGELOG.md).
 
 [![ci](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml/badge.svg)](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml)
 
@@ -135,15 +135,33 @@ Codex / opencode only) SessionStart already runs `handoff` for you after
 npx samemind ui          # → http://127.0.0.1:7787 (your bundle; --root <dir>, --open)
 ```
 
-Local and read-only by design (binds 127.0.0.1, exact-match Host guard, zero write endpoints).
-Four screens: **Overview** — kanban with honest totals, synthesized from ledger topics when no
-Task docs exist (real Task docs always win); **Memory** — concept browser, BM25 search, and an
-interactive graph (wheel-zoom at cursor, pan, draggable nodes, neighbor highlight); **Fleet** —
-engine heartbeat bars, naryad timeline, and a live event feed over SSE (`/api/events/stream`) —
-the board updates itself seconds after an agent reports; **Projects** — cards with status,
-description and linked concepts, opening into the full project doc. Light + dark. The same data
-is scriptable: `board`, `handoff`, `fleet status`, `ledger status`, `query links` all take
-`--json` (`{ contract: 1, … }`), and the dashboard's `/api/*` serves the same shapes.
+Loopback-only (127.0.0.1, exact-match Host guard via `tools/lib/http-guard.mjs`). The **memory
+bundle** is not mutated from the UI: no inbox writes, no ledger append, no fleet dispatch — those
+stay CLI/MCP commands the UI may show and copy but never run. **Settings are different:** one
+write route, `POST /api/config`, toggles `voice` / `vision` in `.samemind/config.json` (idempotent,
+reversible; guarded origin/host checks). Everything else non-GET is 405.
+
+Seven screens (`ui/src/screens/`): **Today** — in-flight/stuck work and recovery commands;
+**Overview** — kanban with honest totals, synthesized from ledger topics when no Task docs exist
+(real Task docs always win); **Memory** — concept browser, BM25 search, interactive graph;
+**Fleet** — engine heartbeat bars, naryad timeline, live SSE feed (`/api/events/stream`);
+**Projects** — cards with status, description, linked concepts; **Voice** — companion state and
+intent gate (no built-in microphone capture in core); **Settings** — effective `voice`/`vision`
+values with per-field **layer** (default / global / project). Light + dark.
+
+Capability config lives in **`.samemind/config.json`** (project) merged over **`~/.samemind/config.json`**
+(global), same file as `projection` / embed settings. Voice keeps **three separate consents** —
+microphone (`enabled`) ≠ storing transcripts (`storeTranscripts`) ≠ sending recognized text to an
+LLM (`sendTextToLlm`). The dashboard shows each effective value and which tier won it.
+
+**Voice companion:** samemind does **not** ship speech recognition; it talks to any OpenAI-compatible
+HTTP endpoint you set in `voice.serviceUrl` (same pattern as embeddings). See
+[docs/voice-companion.md](docs/voice-companion.md).
+
+The same board/handoff/fleet data is scriptable: `board`, `handoff`, `status`, `doctor`, `fleet status`,
+`ledger status`, `query links`, and `proactive` support `--json` (`{ contract: 1, kind, … }` where
+documented in [docs/json-contract.md](docs/json-contract.md)); the dashboard `/api/*` mirrors those
+shapes (HTTP adds `generatedAt` on some routes the CLI omits — also in the contract doc).
 
 **Global personal bundle** (project + global recall, project wins on id collision):
 
@@ -169,8 +187,29 @@ npx samemind hooks install --agent claude-code # real SessionStart/SessionEnd ho
 Honest per-engine tier (`samemind hooks list`): **auto** (Claude Code, Codex, opencode — real
 lifecycle hooks, verified) vs **projection** (every other engine — kept current by a file write,
 not a live hook). `samemind status` reads the heartbeat any real run leaves behind: `✅ ok` /
-`⚠️ stale` / `❌ failed` / `❓ unknown`. `samemind serve --http [--port N]` exposes the same MCP
+`⚠️ stale` / `❌ failed` / `❓ unknown` (`status --json` for the machine shape). `samemind serve --http [--port N]` exposes the same MCP
 tools over local HTTP (127.0.0.1 only) instead of stdio. Details: [docs/service.md](docs/service.md).
+
+## Why agents have no memory (`samemind doctor`)
+
+A line in an engine’s MCP config is **not** a working connection. Until 0.15 the server could answer
+`tools/list` with all ten tools while serving the **package directory** and holding **zero facts** —
+nothing reported the problem. `samemind doctor` is the inspect-first answer.
+
+Five states, checked in order; each failure short-circuits later steps to `skipped`:
+
+`supported` → `installed` → `connected` → `verified` → `active`
+
+- **`connected`** only means an entry exists in the engine config — it does **not** imply **`verified`**.
+- **`verified`** spawns the configured server and runs a real JSON-RPC round-trip (`initialize`,
+  `tools/list`, `memory_health`), then compares the **corpus** (fact count / root sanity), not just
+  whether tools are listed.
+- **`active`** is projection liveness from `.samemind/health.json` (same family as `samemind status`).
+
+Safe by default: reads configs and probes; it never writes unless you pass **`--repair`**, and repair
+has exactly **one** safe auto-fix — inject a missing `OKF_ROOT` when the target bundle is unambiguous
+(everything else stays advisory). Human report or **`doctor --json`** (`contract: 1`, env values redacted).
+Details and finding ids: [`docs/spec/`](docs/spec/) (doctor contract).
 
 ## Proof (commands agents actually run)
 
@@ -183,12 +222,14 @@ tools over local HTTP (127.0.0.1 only) instead of stdio. Details: [docs/service.
 | `capture` | Pull engine transcripts → `inbox/` |
 | `ledger` | Append-only work events |
 | `fleet` | Declared engine registry: who reports, who went quiet ([docs/fleet.md](docs/fleet.md)) |
-| `ui` | Local read-only dashboard: board, graph, fleet, live SSE feed |
+| `ui` | Local dashboard: memory read-only; settings via `POST /api/config` only |
 | `project` | Project curated facts into an engine's own instruction file |
 | `service` / `serviced` | Install an OS unit that keeps `project` running — periodic or event-daemon |
-| `status` | Health check: is memory projection alive |
+| `status` | Health check: is memory projection alive (`--json`) |
+| `doctor` | Connection health: config vs live MCP + corpus (`--json`, `--repair`, `--no-probe`) |
 | `hooks` | Per-engine lifecycle wiring — real hooks where an engine has them, file projection otherwise |
 | `serve` | MCP: `memory_search`, `memory_get`, `memory_write_inbox`, … (stdio default, `--http` for local HTTP) |
+| `proactive` | Active Memory prototype: auto top-k recall pack before an answer (`-k`, `--json`, `--force`) |
 | `forget` / `export` / `import` | Hygiene + OKF packs |
 
 Full table and env vars: [docs/full-guide.md § Tools](docs/full-guide.md#tools).
@@ -214,9 +255,13 @@ Security perimeter (secret visibility, inbox-only writes, path safety): [docs/fu
 | Event ledger | [docs/event-ledger.md](docs/event-ledger.md) |
 | Fleet registry + heartbeat | [docs/fleet.md](docs/fleet.md) |
 | Session capture | [docs/session-capture.md](docs/session-capture.md) |
-| Auto-sync: `project`/`service`/`serviced`/`hooks`/`status` | [docs/service.md](docs/service.md) |
+| Auto-sync: `project`/`service`/`serviced`/`hooks`/`status`/`doctor` | [docs/service.md](docs/service.md) |
 | Compaction / handoff | [docs/compaction-recipe.md](docs/compaction-recipe.md) |
 | OKF interop | [docs/interop.md](docs/interop.md) |
+| JSON contract (`--json`, `/api/*`, 1.0 freeze) | [docs/json-contract.md](docs/json-contract.md) |
+| Voice companion (external ASR, `serviceUrl`) | [docs/voice-companion.md](docs/voice-companion.md) |
+| Dashboard build contract | [docs/ui-spec.md](docs/ui-spec.md) |
+| Machine-readable specs (`doctor`, voice, …) | [docs/spec/](docs/spec/) |
 | Benchmark notes | [docs/benchmark.md](docs/benchmark.md) |
 
 ## Limits (honest)
@@ -224,6 +269,21 @@ Security perimeter (secret visibility, inbox-only writes, path safety): [docs/fu
 - Canon promotion is **human-gated** (inbox → concepts); not auto-mem that rewrites truth silently.
 - Semantic search needs a local/OpenAI-compatible embeddings endpoint (`OKF_EMBED_URL`); without it, BM25 only — by design.
 - Hand-curated scale (roughly 10²–10³ concepts), not a 24/7 life-ingestion daemon — see vs [gbrain](docs/full-guide.md#samemind-vs-gbrain-garry-tan--when-to-use-which).
+
+## Version policy (JSON contract)
+
+Heading toward **1.0**, the CLI `--json` and HTTP `/api/*` shapes in
+[docs/json-contract.md](docs/json-contract.md) are the human-readable contract record; after 1.0,
+breaking changes there require a **major** package version.
+
+- **Breaking (major):** remove or rename a documented field; change a field’s JSON type; change a
+  field’s meaning while keeping the name; drop or repurpose a `kind`; move payloads in/out of the
+  `{ contract, kind, generatedAt, data }` envelope without coordination.
+- **Non-breaking (minor/patch):** add an optional field; add a new `kind` or route/command; add
+  `*Total` / overflow fields beside truncated arrays; add `generatedAt` where it was missing.
+- **MCP tools** (`memory_search`, `memory_handoff`, …) are a **separate surface** — pretty-printed JSON
+  inside MCP `content[].text`, not the CLI/HTTP envelope — with their own compatibility rules (see
+  §7 of the contract doc). Do not assume one schema fits both.
 
 ## FAQ
 
@@ -233,15 +293,23 @@ No, to use it: it's git-native markdown, BM25 search always works offline, and s
 ### Which AI engines does it work with?
 `samemind install` wires the memory protocol into 12 engines (see [docs/adapters.md](docs/adapters.md)), and it exposes an MCP server (`npx samemind serve`) for engines like Claude Code. Three of those 12 also get real lifecycle hooks (`claude-code`, `codex`, `opencode`); the rest stay on file projection — see Freshness tier in the matrix.
 
-### What's new in v0.14.0?
+### What's new in v0.17.0?
 
-Memory keeps itself current: `samemind serviced` re-projects into engine files on every bundle
-change (event-driven, with a periodic backstop), `samemind serve --http` exposes the same MCP
-tools over local HTTP, and `samemind hooks install` wires real session-lifecycle hooks for
-Claude Code/Codex/opencode — every other engine stays on file projection, stated honestly, not
-promised as auto. v0.12–0.13 built the pieces underneath: `samemind project` (curated facts →
-engine file) and `samemind service` (OS-scheduled periodic run) + `samemind status` (health
-heartbeat). Full history: [CHANGELOG.md](https://github.com/alexgrebeshok-coder/samemind/blob/main/CHANGELOG.md).
+The groundwork for freezing the contract at 1.0. The JSON shape is now **written down**
+([docs/json-contract.md](docs/json-contract.md)) and **locked with shape tests** — before this,
+renaming a field left the suite green. Payloads stopped carrying absolute paths and full document
+bodies (`board` on a real bundle: 160,833 → 23,123 bytes), truncated arrays now state their totals,
+and each payload returns one key set with explicit `null` instead of three shapes by branch.
+**`samemind dogfood`** answers "how long has it run clean?" — and says *nothing to measure* rather
+than *0 failures* when there is no history.
+
+**v0.16** grew the dashboard into a switchboard: **Settings** (with `POST /api/config` as the sole
+write route), **Today** and **Voice** screens, `voice`/`vision` in `.samemind/config.json` with layer
+provenance and honest companion availability, plus `/api/status` and `/api/doctor` on the wire.
+**v0.15** added **`samemind doctor`** — five connection states where `connected` ≠ `verified`, corpus
+checks beyond `tools/list`, and `--repair` for a missing `OKF_ROOT`. Earlier 0.14 work (`serviced`,
+`serve --http`, lifecycle hooks) is still there — see the changelog. Full history:
+[CHANGELOG.md](https://github.com/alexgrebeshok-coder/samemind/blob/main/CHANGELOG.md).
 
 ## Tests
 

@@ -195,7 +195,7 @@ if (cmd === 'list') {
 } else if (cmd === 'links') {
   const model = buildLinksModel(all);
   if (jsonOut) {
-    console.log(JSON.stringify({ contract: 1, kind: 'links', data: model }));
+    console.log(JSON.stringify({ contract: 1, kind: 'links', generatedAt: new Date().toISOString(), data: model }));
   } else {
     console.log(renderLinksText(model));
   }

@@ -58,7 +58,7 @@ export function cmdStatus(a = {}) {
   if (a.json) {
     // --json: versioned wrapper over the same summarizeLedger() the human status uses — a
     // foundation for a future UI, not a new model.
-    console.log(JSON.stringify({ contract: 1, kind: 'ledger', data: summary }));
+    console.log(JSON.stringify({ contract: 1, kind: 'ledger', generatedAt: new Date().toISOString(), data: summary }));
     return;
   }
   const { topics, openFailures } = summary;

@@ -3,6 +3,71 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.0] — 2026-08-02
+
+The release before the freeze. 1.0's defining promise is that the JSON shape stops moving — after
+it, a changed field is a major version. So this release does the thing that has to happen first:
+it writes the contract down, locks it with tests, cleans up the shapes we would have regretted,
+and builds the instrument that can actually answer "has it run clean for a week?".
+
+Three findings drove it, each measured rather than assumed.
+
+**The contract existed in eight modules and in no document.** `ui/src/api.ts` was the de-facto
+schema — a file that does not ship, and that already disagreed with the wire on two fields.
+
+**Almost nothing held the shape.** Renaming `handoff.plansInForce`, `board.columnTotals` or
+`ledger.topics[].evs` left the suite green. Two surfaces out of twenty-three were genuinely
+guarded, one of them by accident.
+
+**"A week without failures" was unmeasurable.** `health.json` remembers a single run; no layer
+wrote samemind's own failure to the ledger; there was no `samemind` entry in the fleet registry.
+A clean week and a week with a silent failure looked identical.
+
+### Added
+
+- **`docs/json-contract.md`** — every surface, its `kind`, the keys of `data`, the error shape,
+  and what counts as a breaking change. Verified against live responses, not against the types.
+- **`tools/contract-shape.test.mjs`** — key-presence assertions for every payload. Verified by
+  breaking it: renaming `handoff.plansInForce` now fails with the exact missing key, restoring it
+  goes green.
+- **`samemind dogfood`** — days without an open failure of our own, what the last one was, and
+  whether it is closed. On a bundle with no history it says **"nothing to measure"**, never
+  "0 failures": the whole product rests on telling *no problems* apart from *not checked*, and an
+  instrument that confuses the two would undo two releases of work.
+- **Self-failures reach the ledger.** `writeHealth` now also appends to topic `samemind-health`,
+  so `summarizeLedger` yields "days since the last unclosed failure" for free. Success is written
+  too — otherwise nothing closes a failure — and only on a **state change**, because a run every
+  half hour would put 48 junk events a day into an append-only ledger the board reads.
+- **A `samemind` entry in the fleet registry**, `heartbeatSec` 604800 — one dogfood week, so
+  silence is itself a signal.
+- `generatedAt` on `status`, `fleet status`, `ledger status`, `query links`, and `proactive --json`
+  in the envelope. Additive now; after 1.0 both would be major.
+
+### Fixed
+
+- **Payloads carried the machine and the whole corpus.** `board` and `handoff` shipped absolute
+  paths and the full markdown body of every document. On the live bundle `board` went from
+  **160,833 to 23,123 bytes** — seven times smaller. A screen needs titles, not bodies.
+- **Truncated arrays now state their totals.** `board.sessions`, `handoff.sessionNext`, the SSE
+  snapshot and `ledger.topics[].evs` were silently capped — a consumer could not tell a tail from
+  the whole. Same class of defect as `columnTotals`, which 0.16 fixed.
+- **One key set per payload.** `assessAvailability` returned three different sets depending on the
+  branch; `doctor.active` two; `doctor.states.verified` three. Absence is now an explicit `null`.
+- **`node` and `platform` left the doctor payload** — a frozen contract must not carry machine
+  specifics, or consumers start matching on them. They stay in the human output, which is not
+  frozen and where the runtime is often the answer to "why won't my server start".
+- **A test wrote into the shipped demo bundle.** `POST /api/config` was aimed at `demo/`, leaving a
+  `config.json` behind on every run — and `demo/` ships in the tarball, so the fixture would have
+  drifted into the package carrying settings nobody chose.
+- README claimed four screens where there are seven and zero write endpoints where `POST
+  /api/config` exists, and never mentioned `doctor` at all. It now also states the versioning
+  policy: what is breaking, what is not, and that the MCP tools are a separate surface.
+
+### Not yet
+
+1.0 is not tagged. The owner's condition — a clean dogfood week — is now measurable for the first
+time, and the clock starts when the instrument starts recording, not retroactively.
+
 ## [0.16.0] — 2026-08-01
 
 The switchboard. 0.15 made connection honest — an engine was either provably reaching memory or

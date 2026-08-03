@@ -94,6 +94,8 @@ export type Board = {
   ideasVisible: Doc[];
   recent: Doc[];
   sessions: Doc[];
+  /** Total session docs before the SESSION_SUMMARY_LIMIT cap. Optional: older servers omit it. */
+  sessionsTotal?: number;
   openFailuresShown: LedgerEvent[];
   openFailuresTotal: number;
   overdueEnginesShown: Engine[];
@@ -119,6 +121,8 @@ export type Handoff = {
   lastSession: Doc | null;
   blocked: Doc[];
   sessionNext: string[];
+  /** Total ## Next bullets before the 5-item cap. Optional: older servers omit it. */
+  sessionNextTotal?: number;
   nowMs: number;
 };
 
