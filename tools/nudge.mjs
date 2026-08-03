@@ -10,16 +10,25 @@
 // nothing in this file or its callers says "camera" or "schedule" — it says "trigger".
 //
 // This module is the wiring layer. The three substantive pieces live in parallel modules:
-//   - tools/lib/nudge-candidates.mjs (наряд B) — picks what to say, if anything
-//   - tools/lib/nudge-policy.mjs     (наряд A) — decides whether speaking is allowed right now
-//   - tools/lib/nudge-state.mjs      (наряд A) — cooldowns / daily counters / recordOutcome
+//   - tools/lib/nudge-candidates.mjs — picks what to say, if anything
+//   - tools/lib/nudge-policy.mjs     — decides whether speaking is allowed right now
+//   - tools/lib/nudge-state.mjs      — cooldowns / daily counters / recordOutcome
 //
-// We import them lazily behind a thin adapter (loadNudgeCoreAsync) so that:
-//   1. a missing module is one predictable error at the boundary, not a crash on import;
-//   2. integration is a single line per function once A/B land — swap the adapter body;
-//   3. the CLI/HTTP surfaces above this layer compile and test independently.
+// These are STATIC imports on purpose. They were briefly resolved through a lazy adapter that
+// fell back to "speak if there are candidates" when a module was missing — and after the three
+// parallel branches merged, the modules were all present while the adapter still resolved to
+// null, because it looked for names nobody exported. The result was a proactive layer that spoke
+// with the entire policy bypassed: no quiet hours, no cooldown, no daily cap, and every surface
+// reporting success. A static import turns that class of mistake into an unmissable load error.
 import { fileURLToPath } from 'node:url';
-import { appendEvent } from './lib/ledger.mjs';
+import { appendEvent, readEvents, summarizeLedger } from './lib/ledger.mjs';
+import { load } from './lib/okf.mjs';
+import { buildBoardModel } from './board.mjs';
+import { buildHandoffModel } from './handoff.mjs';
+import { readFeatureConfig } from './lib/feature-config.mjs';
+import { buildCandidates } from './lib/nudge-candidates.mjs';
+import { decideNudge, REASONS } from './lib/nudge-policy.mjs';
+import { readNudgeState, recordOutcome } from './lib/nudge-state.mjs';
 
 const ACTOR = 'samemind';
 const VALID_OUTCOMES = new Set(['accepted', 'deferred', 'dismissed', 'muted']);
@@ -59,50 +68,47 @@ const VALID_OUTCOMES = new Set(['accepted', 'deferred', 'dismissed', 'muted']);
  *   }
  */
 export async function buildNudgeModel(root, { zone = 'default', dryRun = false, now = Date.now() } = {}) {
-  const core = await loadNudgeCoreAsync();
+  const docs = load({ includeSecret: false }, root);
+  const events = readEvents(root);
+  const { openFailures, topics } = summarizeLedger(events);
+  const board = buildBoardModel(docs, { now, openFailures, ledgerTopics: topics });
+  const handoff = buildHandoffModel(docs, { now: new Date(now) }); // handoff takes a Date, board takes epoch ms
 
-  const candidates = core.collectCandidates
-    ? await core.collectCandidates(root, { zone, now })
-    : [];
+  const candidates = buildCandidates({ board, ledger: { openFailures, topics, events }, handoff, now });
+  const config = readFeatureConfig(root);
+  const decision = decideNudge({
+    now,
+    trigger: { source: 'manual', zone },
+    candidates,
+    config,
+    state: readNudgeState(root),
+  });
 
-  const decision = core.shouldSpeak
-    ? await core.shouldSpeak(root, { zone, now, candidateCount: candidates.length })
-    : { allowed: candidates.length > 0, reasonCode: candidates.length > 0 ? 'ok' : 'no-candidates' };
-
-  const spoken = decision.allowed && candidates.length > 0;
-  const candidate = spoken ? candidates[0] : null;
+  // A live run must record the delivery, or the cooldown and the daily cap never engage: they
+  // count `delivered` outcomes, and nothing else writes one. Dry runs (the dashboard card polls
+  // constantly) compute the identical decision and mutate nothing — that is the whole difference.
+  if (!dryRun && decision.deliver) {
+    recordOutcome(root, {
+      zone: decision.zone,
+      outcome: 'delivered',
+      at: now,
+      candidateId: decision.candidate?.id ?? null,
+    });
+  }
 
   return {
-    zone,
-    spoken,
-    reasonCode: decision.reasonCode ?? (spoken ? 'ok' : 'silent'),
-    candidate,
+    // `decision.zone` is null on silence; the model still reports the zone that was ASKED about,
+    // because the card says "quiet in the kitchen", not "quiet in null".
+    zone: decision.zone ?? zone,
+    spoken: decision.deliver,
+    reasonCode: decision.reason,
+    candidate: decision.candidate,
+    // Why the policy said no, in the candidate's own words — this is what the "почему спросил" /
+    // "почему молчишь" button renders. Without it the UI would have to re-derive the reason and
+    // we would be back to two copies of one policy, which is how the voice panel went wrong.
+    nextAllowedAt: decision.nextAllowedAt,
     dryRun: !!dryRun,
     trigger: 'manual',
-  };
-}
-
-/** Resolves the three modules into a flat object of callables, or an object with nulls if any
- *  module is absent. Exposed for tests so they can stub the boundary. */
-export async function loadNudgeCoreAsync() {
-  const results = {};
-  const specs = {
-    policyMod: './lib/nudge-policy.mjs',
-    stateMod: './lib/nudge-state.mjs',
-    candMod: './lib/nudge-candidates.mjs',
-  };
-  for (const [key, spec] of Object.entries(specs)) {
-    try {
-      results[key] = await import(spec);
-    } catch {
-      results[key] = null;
-    }
-  }
-  // Flatten to the expected callable names (tolerant of default vs named exports).
-  return {
-    shouldSpeak: results.policyMod?.shouldSpeak ?? results.policyMod?.default?.shouldSpeak ?? null,
-    collectCandidates: results.candMod?.collectCandidates ?? results.candMod?.default?.collectCandidates ?? null,
-    recordOutcome: results.stateMod?.recordOutcome ?? results.stateMod?.default?.recordOutcome ?? null,
   };
 }
 
@@ -119,15 +125,10 @@ export async function recordNudgeResponse(root, { outcome, zone = 'default', ref
     throw new Error(`invalid outcome "${outcome}"; expected one of ${[...VALID_OUTCOMES].join('|')}`);
   }
 
-  const core = await loadNudgeCoreAsync();
-  let stateResult = { ok: true };
-
-  if (core.recordOutcome) {
-    stateResult = await core.recordOutcome(root, { outcome, zone, now, ref });
-    // recordOutcome does its own dedup on ref; if it says deduped, we mirror that and skip
-    // the ledger line too — one response, one trace.
-    if (stateResult.deduped) return { ok: true, deduped: true };
-  }
+  // `at`, not `now`: the state module keys every window off `at`, and an outcome written with an
+  // undefined timestamp is invisible to both the cooldown ("не сейчас" would do nothing) and the
+  // daily cap. Same class as the two mismatches above — parallel authors, unstated field names.
+  recordOutcome(root, { zone, outcome, at: now, reason: ref || undefined });
 
   // Ledger trace: a `note`-phase event on topic `nudge`. The ref is the idempotency key —
   // appendEvent already deduplicates on ref, so even without stateMod this stays honest.
@@ -184,8 +185,8 @@ function wrap(kind, data) {
 function printHuman(model) {
   if (model.spoken && model.candidate) {
     const c = model.candidate;
-    console.log(`→ ${c.why}`);
-    if (c.consequenceIfAccepted) console.log(`  Если согласишься: ${c.consequenceIfAccepted}`);
+    console.log(`→ ${c.text}`);            // what would be said
+    if (c.why) console.log(`  почему: ${c.why}`);  // the "почему спросил" answer, already human
     if (model.dryRun) console.log('  (dry-run — состояние не изменено)');
     return;
   }

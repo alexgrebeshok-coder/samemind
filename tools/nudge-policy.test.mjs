@@ -253,6 +253,22 @@ describe('decideNudge — real candidate shape (no zone anywhere)', () => {
     assert.equal(capped.reason, REASONS.DAILY_LIMIT, 'a default zone that no outcome matches would silently disable the cap');
   });
 
+  it('an unanswered nudge is not repeated — the next tick rotates to another candidate', () => {
+    const second = { ...REAL, id: 'ledger:other:1754179200000', text: 'другой блокер' };
+    const justDelivered = { outcomes: [{ outcome: 'delivered', zone: 'default', at: NOON - 60_000, candidateId: REAL.id }] };
+    const r = decideNudge({ now: NOON, trigger: 'schedule', candidates: [REAL, second], config: ON, state: justDelivered });
+    assert.equal(r.deliver, true);
+    assert.equal(r.candidate.id, second.id, 'saying the identical sentence again is nagging, not reminding');
+  });
+
+  it('with nothing left to rotate to, it goes quiet with a reason rather than repeating', () => {
+    const justDelivered = { outcomes: [{ outcome: 'delivered', zone: 'default', at: NOON - 60_000, candidateId: REAL.id }] };
+    const r = decideNudge({ now: NOON, trigger: 'schedule', candidates: [REAL], config: ON, state: justDelivered });
+    assert.equal(r.deliver, false);
+    assert.equal(r.reason, REASONS.COOLDOWN);
+    assert.ok(r.nextAllowedAt > NOON, 'the card must be able to say when it will speak again');
+  });
+
   it('silence carries an explicit null zone — one key set, never a missing key', () => {
     const r = decideNudge({ now: NOON, trigger: 'schedule', candidates: [], config: ON, state: EMPTY });
     assert.equal(r.deliver, false);

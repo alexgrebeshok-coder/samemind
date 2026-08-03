@@ -131,6 +131,21 @@ export function zoneDeliveredToday(state, zone, now) {
   return n;
 }
 
+/** Epoch ms until which THIS candidate must not be repeated, or null. A delivered nudge the human
+ *  never answered is not a licence to say the identical sentence again on the next tick: measured
+ *  end-to-end, an unanswered nudge repeated verbatim until the daily cap ate all three slots —
+ *  the exact nagging the candidate builder filters for elsewhere. Rotating to the next candidate
+ *  is both quieter and more useful. Reuses cooldownMin rather than inventing a second knob. */
+export function candidateRepeatUntil(state, candidateId, cooldownMin) {
+  const log = state?.outcomes;
+  if (!Array.isArray(log) || candidateId == null) return null;
+  let latest = -Infinity;
+  for (const o of log) {
+    if (o.outcome === 'delivered' && o.candidateId === candidateId && Number.isFinite(o.at) && o.at > latest) latest = o.at;
+  }
+  return Number.isFinite(latest) ? latest + cooldownMin * MIN : null;
+}
+
 /** Epoch ms when `zone`'s "not now" cooldown expires, or null if none active. The latest
  *  `deferred` outcome for the zone sets the clock; cooldown lasts cooldownMin from it. */
 export function zoneCooldownUntil(state, zone, cooldownMin) {
@@ -228,6 +243,8 @@ export function decideNudge({ now, trigger, candidates = [], config = {}, state 
   let topBlock = null;
   for (const c of ranked) {
     const zone = c.zone ?? triggerZone; // per-candidate zone stays an override for a genuinely room-bound item
+    const repeatUntil = candidateRepeatUntil(state, c.id, cooldownMin);
+    if (repeatUntil != null && repeatUntil > now) { topBlock ??= { r: REASONS.COOLDOWN, c, t: repeatUntil }; continue; }
     if (isRoomPaused(state, zone)) { topBlock ??= { r: REASONS.ROOM_PAUSED, c, t: null }; continue; }
     const cdUntil = zoneCooldownUntil(state, zone, cooldownMin);
     if (cdUntil != null && cdUntil > now) { topBlock ??= { r: REASONS.COOLDOWN, c, t: cdUntil }; continue; }
