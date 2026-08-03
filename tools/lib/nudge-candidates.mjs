@@ -301,10 +301,16 @@ function daysOf(ageMs) {
   return Math.floor(ageMs / DAY_MS);
 }
 
+// Russian plurals are keyed on the LAST digit (with the teens as an exception), not on the number
+// itself: 21 день, 32 дня, 105 дней. Testing the number directly gave "32 дней" on a real nudge.
 function daysPhrase(days) {
   if (days <= 0) return 'меньше дня';
-  if (days === 1) return '1 день';
-  if (days >= 2 && days <= 4) return `${days} дня`;
+  const t = days % 100;
+  const d = days % 10;
+  if (t < 11 || t > 14) {
+    if (d === 1) return `${days} день`;
+    if (d >= 2 && d <= 4) return `${days} дня`;
+  }
   return `${days} дней`;
 }
 
