@@ -34,6 +34,9 @@ import {
   REFRESH_MIN_GAP_MS,
   neighbourIds,
   snippet,
+  NUDGE_REASON_CODES,
+  nudgeClockTime,
+  nudgeSilenceLine,
 } from './lib.ts';
 
 import {
@@ -492,6 +495,34 @@ test('project card facts: graph neighbours fold both directions, snippet cuts on
   assert.equal(cut.length, 90, 'the cap includes the ellipsis');
   assert.ok(cut.endsWith('…'));
   assert.equal(snippet('word boundary', 6), 'word…', 'a cut landing on a space loses it, not keeps it');
+});
+
+test('nudgeSilenceLine: every reasonCode has calm Russian copy', () => {
+  for (const code of NUDGE_REASON_CODES) {
+    const line = nudgeSilenceLine(code, null);
+    assert.ok(line.length > 8, `${code} should have a human line`);
+    assert.doesNotMatch(line, /^reason:/i);
+  }
+  assert.match(nudgeSilenceLine('outside_hours', 1_754_179_200_000), /Снова после/);
+  const local = new Date(2026, 6, 26, 14, 30);
+  assert.equal(nudgeClockTime(local.getTime()), '14:30');
+});
+
+test('nudge respond guard: in-flight latch blocks a second POST (unit)', () => {
+  let posts = 0;
+  const latch = { busy: false };
+  async function respondOnce() {
+    if (latch.busy) return false;
+    latch.busy = true;
+    posts += 1;
+    await Promise.resolve();
+    latch.busy = false;
+    return true;
+  }
+  return Promise.all([respondOnce(), respondOnce()]).then((results) => {
+    assert.equal(posts, 1);
+    assert.deepEqual(results.filter(Boolean).length, 1);
+  });
 });
 
 test('source carries no HTML-injection sinks and no external hosts (spec §0)', () => {

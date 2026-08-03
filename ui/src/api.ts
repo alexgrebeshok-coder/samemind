@@ -225,6 +225,43 @@ export type PostConfigResult =
   | { ok: true; data: Settings; generatedAt: string }
   | { ok: false; status: number; errors?: string[]; message: string };
 
+export type NudgeReasonCode =
+  | 'ok'
+  | 'disabled'
+  | 'mode_not_proactive'
+  | 'outside_hours'
+  | 'do_not_disturb'
+  | 'muted_today'
+  | 'room_paused'
+  | 'cooldown'
+  | 'daily_limit'
+  | 'no_candidates';
+
+export type NudgeCandidate = {
+  id: string;
+  kind: string;
+  text: string;
+  why: string;
+  sourceRef: string;
+  age: number;
+};
+
+export type NudgeData = {
+  zone: string;
+  spoken: boolean;
+  reasonCode: NudgeReasonCode;
+  candidate: NudgeCandidate | null;
+  nextAllowedAt: number | null;
+  dryRun: boolean;
+  trigger: string;
+};
+
+export type NudgeRespondOutcome = 'accepted' | 'deferred' | 'dismissed' | 'muted';
+
+export type PostNudgeRespondResult =
+  | { ok: true; deduped: boolean }
+  | { ok: false; status: number; errors?: string[]; message: string };
+
 /** POST /api/config — returns the settings envelope re-read from disk (no optimistic merge). */
 /** GET /api/voice/probe — on-demand companion check (never on render / poll). */
 export async function fetchVoiceProbe(): Promise<
@@ -265,6 +302,43 @@ export async function postConfig(patch: ConfigPatch): Promise<PostConfigResult> 
   }
   const message = body.message || body.error || `POST /api/config → HTTP ${res.status}`;
   return { ok: false, status: res.status, errors: body.errors, message };
+}
+
+/** POST /api/nudge/respond — human answer to the nudge card (same fetch shape as postConfig). */
+export async function postNudgeRespond(body: {
+  outcome: NudgeRespondOutcome;
+  ref: string;
+}): Promise<PostNudgeRespondResult> {
+  const res = await fetch('/api/nudge/respond', {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  let json: unknown;
+  try {
+    json = await res.json();
+  } catch {
+    return { ok: false, status: res.status, message: 'POST /api/nudge/respond → unreadable body' };
+  }
+  if (res.ok) {
+    const env = json as Envelope<{ ok: boolean; deduped: boolean }>;
+    if (!env?.data || typeof env.data.ok !== 'boolean') {
+      return { ok: false, status: res.status, message: 'POST /api/nudge/respond → bad payload' };
+    }
+    set({ offline: false });
+    return { ok: true, deduped: !!env.data.deduped };
+  }
+  const errBody = json as { error?: string; errors?: string[]; message?: string };
+  if (res.status === 400 && Array.isArray(errBody.errors)) {
+    return {
+      ok: false,
+      status: 400,
+      errors: errBody.errors,
+      message: errBody.error || errBody.message || 'rejected',
+    };
+  }
+  const message = errBody.message || errBody.error || `POST /api/nudge/respond → HTTP ${res.status}`;
+  return { ok: false, status: res.status, errors: errBody.errors, message };
 }
 
 // --- shared refresh clock + reachability, so every screen agrees on "fresh" and "offline" ----
