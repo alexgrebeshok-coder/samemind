@@ -41,6 +41,16 @@ describe('parseArgs', () => {
     assert.equal(a.dryRun, true);
   });
 
+  it('--help / -h short-circuits: help is not a nudge', () => {
+    // Shipped in 0.18.0 without this: `samemind nudge --help` ran the command and printed
+    // "∅ Промолчал (disabled)". Found by the post-publish smoke — no test covered the flag.
+    for (const flag of ['--help', '-h']) {
+      assert.equal(parseArgs([flag]).help, true, flag);
+      assert.equal(parseArgs(['respond', flag]).help, true, `respond ${flag}`);
+    }
+    assert.equal(parseArgs([]).help, false);
+  });
+
   it('parses --root for top-level nudge', () => {
     const a = parseArgs(['--root', '/tmp/bundle']);
     assert.equal(a.root, '/tmp/bundle');
