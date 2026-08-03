@@ -2,7 +2,7 @@
 
 samemind is a git-native markdown memory bundle for AI coding agents — identity, search, a work ledger, and a kanban board in one place, portable across engines like Claude Code, Cursor, and OpenClaw. No daemon or database required; BM25 search always works offline, semantic search is optional.
 
-**Latest: v0.16.0** — the dashboard is a switchboard (settings + Today/Voice screens, one guarded write route), capabilities live in `.samemind/config.json` with honest availability, and `samemind doctor` (0.15) still answers “why does my agent have no memory?”. See [CHANGELOG.md](https://github.com/alexgrebeshok-coder/samemind/blob/main/CHANGELOG.md).
+**Latest: v0.17.0** — the release before the freeze: the JSON contract is written down ([docs/json-contract.md](docs/json-contract.md)) and locked with shape tests, payloads dropped the machine paths and document bodies they were carrying, and `samemind dogfood` reports days without a failure of our own — saying *nothing to measure* rather than *0 failures* when there is no history. See [CHANGELOG.md](https://github.com/alexgrebeshok-coder/samemind/blob/main/CHANGELOG.md).
 
 [![ci](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml/badge.svg)](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml)
 
@@ -293,10 +293,18 @@ No, to use it: it's git-native markdown, BM25 search always works offline, and s
 ### Which AI engines does it work with?
 `samemind install` wires the memory protocol into 12 engines (see [docs/adapters.md](docs/adapters.md)), and it exposes an MCP server (`npx samemind serve`) for engines like Claude Code. Three of those 12 also get real lifecycle hooks (`claude-code`, `codex`, `opencode`); the rest stay on file projection — see Freshness tier in the matrix.
 
-### What's new in v0.16.0?
+### What's new in v0.17.0?
 
-The local dashboard grew into a switchboard: **Settings** (with `POST /api/config` as the sole write
-route), **Today** and **Voice** screens, `voice`/`vision` in `.samemind/config.json` with layer
+The groundwork for freezing the contract at 1.0. The JSON shape is now **written down**
+([docs/json-contract.md](docs/json-contract.md)) and **locked with shape tests** — before this,
+renaming a field left the suite green. Payloads stopped carrying absolute paths and full document
+bodies (`board` on a real bundle: 160,833 → 23,123 bytes), truncated arrays now state their totals,
+and each payload returns one key set with explicit `null` instead of three shapes by branch.
+**`samemind dogfood`** answers "how long has it run clean?" — and says *nothing to measure* rather
+than *0 failures* when there is no history.
+
+**v0.16** grew the dashboard into a switchboard: **Settings** (with `POST /api/config` as the sole
+write route), **Today** and **Voice** screens, `voice`/`vision` in `.samemind/config.json` with layer
 provenance and honest companion availability, plus `/api/status` and `/api/doctor` on the wire.
 **v0.15** added **`samemind doctor`** — five connection states where `connected` ≠ `verified`, corpus
 checks beyond `tools/list`, and `--repair` for a missing `OKF_ROOT`. Earlier 0.14 work (`serviced`,
