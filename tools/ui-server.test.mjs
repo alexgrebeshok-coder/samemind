@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // ui-server.test.mjs — samemind ui: local read-only HTTP dashboard (tools/lib/ui-server.mjs).
 //   node --test tools/ui-server.test.mjs
-import { describe, it, before, after } from 'node:test';
+import { describe, it, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, appendFileSync } from 'node:fs';
+import net from 'node:net';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -514,6 +515,202 @@ describe('createUiServer — GET /api/voice/probe', () => {
       const r = await request(port, '/api/voice/probe', { method: 'POST' });
       assert.equal(r.status, 405);
     } finally { down(); }
+  });
+});
+
+// ─────────────────────────────── nudge: GET /api/nudge, POST /api/nudge/respond ───────────────────────────────
+
+describe('createUiServer — nudge routes', () => {
+  let dir, server, port;
+
+  function boot() {
+    dir = tmp('ui-nudge');
+    mkdirSync(join(dir, 'concepts'), { recursive: true });
+    writeFileSync(join(dir, 'index.md'), '# bundle\n', 'utf8');
+    server = createUiServer({ root: dir, distDir: null });
+  }
+
+  function rawRequest(port, method, path, { host, origin, contentType, body } = {}) {
+    return new Promise((resolve) => {
+      const lines = [`${method} ${path} HTTP/1.1`];
+      if (host != null) lines.push(`Host: ${host}`);
+      if (origin != null) lines.push(`Origin: ${origin}`);
+      if (contentType != null) lines.push(`Content-Type: ${contentType}`);
+      if (body != null) lines.push(`Content-Length: ${Buffer.byteLength(body)}`);
+      lines.push('Connection: close', '', body || '');
+      const c = net.connect(port, '127.0.0.1', () => c.write(lines.join('\r\n')));
+      let data = '';
+      c.on('data', (d) => { data += d; });
+      c.on('close', () => {
+        const statusLine = data.split('\r\n')[0];
+        const status = Number(statusLine.split(' ')[1]);
+        const blank = data.indexOf('\r\n\r\n');
+        const responseBody = blank >= 0 ? data.slice(blank + 4) : '';
+        resolve({ status, body: responseBody });
+      });
+    });
+  }
+
+  beforeEach(() => boot());
+  afterEach(() => { if (server) server.close(); if (dir) rmSync(dir, { recursive: true, force: true }); });
+
+  it('GET /api/nudge → contract:1, kind:nudge, constant key set', async () => {
+    server.listen(0, '127.0.0.1');
+    await new Promise((r) => server.on('listening', r));
+    port = server.address().port;
+
+    const r = await request(port, '/api/nudge');
+    assert.equal(r.status, 200);
+    const json = JSON.parse(r.body);
+    assert.equal(json.contract, 1);
+    assert.equal(json.kind, 'nudge');
+    assert.ok(json.generatedAt);
+    assert.ok('data' in json);
+    for (const k of ['zone', 'spoken', 'reasonCode', 'candidate', 'dryRun', 'trigger']) {
+      assert.ok(k in json.data, `data.${k} missing`);
+    }
+  });
+
+  it('GET /api/nudge does NOT mutate state — two calls write zero ledger lines', async () => {
+    server.listen(0, '127.0.0.1');
+    await new Promise((r) => server.on('listening', r));
+    port = server.address().port;
+
+    await request(port, '/api/nudge');
+    await request(port, '/api/nudge');
+    await request(port, '/api/nudge');
+
+    const ledgerFile = join(dir, 'ledger', 'events.jsonl');
+    if (existsSync(ledgerFile)) {
+      const lines = readFileSync(ledgerFile, 'utf8').split('\n').filter(l => l.trim());
+      assert.equal(lines.length, 0, 'GET /api/nudge must not write any ledger events');
+    }
+    // No ledger file at all is the expected case on an empty bundle.
+  });
+
+  it('GET /api/nudge is read-only — dryRun is hard-wired true in the model', async () => {
+    server.listen(0, '127.0.0.1');
+    await new Promise((r) => server.on('listening', r));
+    port = server.address().port;
+
+    const r = await request(port, '/api/nudge');
+    const json = JSON.parse(r.body);
+    assert.equal(json.data.dryRun, true, 'GET /api/nudge must always be dryRun');
+  });
+
+  it('POST /api/nudge → 405 (the read route stays method-locked)', async () => {
+    server.listen(0, '127.0.0.1');
+    await new Promise((r) => server.on('listening', r));
+    port = server.address().port;
+
+    const r = await rawRequest(port, 'POST', '/api/nudge', {
+      host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}`,
+      contentType: 'application/json', body: '{}',
+    });
+    assert.equal(r.status, 405);
+  });
+
+  it('POST /api/nudge/respond with valid guard → 200 nudge-response', async () => {
+    server.listen(0, '127.0.0.1');
+    await new Promise((r) => server.on('listening', r));
+    port = server.address().port;
+
+    const body = JSON.stringify({ outcome: 'accepted', ref: 'http-1' });
+    const r = await rawRequest(port, 'POST', '/api/nudge/respond', {
+      host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}`,
+      contentType: 'application/json', body,
+    });
+    assert.equal(r.status, 200);
+    const json = JSON.parse(r.body);
+    assert.equal(json.contract, 1);
+    assert.equal(json.kind, 'nudge-response');
+    assert.equal(json.data.ok, true);
+  });
+
+  it('POST /api/nudge/respond rejects a foreign Origin (same guard as /api/config)', async () => {
+    server.listen(0, '127.0.0.1');
+    await new Promise((r) => server.on('listening', r));
+    port = server.address().port;
+
+    const r = await rawRequest(port, 'POST', '/api/nudge/respond', {
+      host: `127.0.0.1:${port}`, origin: 'http://evil.com',
+      contentType: 'application/json', body: JSON.stringify({ outcome: 'accepted' }),
+    });
+    assert.equal(r.status, 403);
+  });
+
+  it('POST /api/nudge/respond rejects a different loopback port', async () => {
+    server.listen(0, '127.0.0.1');
+    await new Promise((r) => server.on('listening', r));
+    port = server.address().port;
+
+    const r = await rawRequest(port, 'POST', '/api/nudge/respond', {
+      host: `127.0.0.1:${port}`, origin: 'http://127.0.0.1:9999',
+      contentType: 'application/json', body: JSON.stringify({ outcome: 'accepted' }),
+    });
+    assert.equal(r.status, 403);
+  });
+
+  it('POST /api/nudge/respond rejects non-JSON content type', async () => {
+    server.listen(0, '127.0.0.1');
+    await new Promise((r) => server.on('listening', r));
+    port = server.address().port;
+
+    const r = await rawRequest(port, 'POST', '/api/nudge/respond', {
+      host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}`,
+      contentType: 'text/plain', body: 'outcome=accepted',
+    });
+    assert.equal(r.status, 415);
+  });
+
+  it('POST /api/nudge/respond with bad outcome → 400 rejected', async () => {
+    server.listen(0, '127.0.0.1');
+    await new Promise((r) => server.on('listening', r));
+    port = server.address().port;
+
+    const r = await rawRequest(port, 'POST', '/api/nudge/respond', {
+      host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}`,
+      contentType: 'application/json', body: JSON.stringify({ outcome: 'bogus' }),
+    });
+    assert.equal(r.status, 400);
+    const json = JSON.parse(r.body);
+    assert.equal(json.error, 'rejected');
+    assert.ok(Array.isArray(json.errors));
+  });
+
+  it('POST /api/nudge/respond with same ref twice → second is deduped', async () => {
+    server.listen(0, '127.0.0.1');
+    await new Promise((r) => server.on('listening', r));
+    port = server.address().port;
+
+    const body = JSON.stringify({ outcome: 'accepted', ref: 'dup-http' });
+    const opts = { host: `127.0.0.1:${port}`, origin: `http://127.0.0.1:${port}`, contentType: 'application/json', body };
+
+    const r1 = await rawRequest(port, 'POST', '/api/nudge/respond', opts);
+    assert.equal(r1.status, 200);
+    assert.equal(JSON.parse(r1.body).data.deduped, false);
+
+    const r2 = await rawRequest(port, 'POST', '/api/nudge/respond', opts);
+    assert.equal(r2.status, 200);
+    assert.equal(JSON.parse(r2.body).data.deduped, true);
+
+    // Exactly one ledger line for that ref.
+    const ledgerFile = join(dir, 'ledger', 'events.jsonl');
+    const lines = readFileSync(ledgerFile, 'utf8').split('\n').filter(l => l.trim());
+    const matching = lines.filter(l => l.includes('"ref":"dup-http"'));
+    assert.equal(matching.length, 1);
+  });
+
+  it('GET /api/nudge/respond → 404 (respond has no GET handler — POST-only by design)', async () => {
+    server.listen(0, '127.0.0.1');
+    await new Promise((r) => server.on('listening', r));
+    port = server.address().port;
+
+    const r = await request(port, '/api/nudge/respond');
+    // /api/nudge/respond is registered in WRITE_ROUTES as POST-only; a GET is not a write so
+    // it bypasses the guard, falls through API_ROUTES (which has no entry for it), and hits
+    // the /api/ 404. This is correct: there is no read shape for "respond" — it is an action.
+    assert.equal(r.status, 404);
   });
 });
 
