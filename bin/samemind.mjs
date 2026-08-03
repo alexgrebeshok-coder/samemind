@@ -61,6 +61,7 @@ const ROUTES = {
   ui: 'tools/ui.mjs',
   serve: 'tools/mcp-server.mjs',
   proactive: 'tools/proactive.mjs',
+  nudge: 'tools/nudge.mjs',
 };
 
 function usage() {
@@ -93,6 +94,7 @@ function usage() {
   console.log('  ui [...]              local read-only dashboard over the bundle, GET /api/* (--port N default 7787, --root <dir>, --open) — see docs/ui-spec.md');
   console.log('  serve [--http [--port N]]  MCP server (memory_search/get/list/write_inbox/handoff/health/ledger_append/ledger_status): stdio by default; --http → Streamable HTTP on 127.0.0.1 (--port 0 = ephemeral)');
   console.log('  proactive "<msg>"     Active Memory prototype: auto top-k recall pack before answer (-k N --json --force --pack)');
+  console.log('  nudge [...]           proactive nudge: one candidate + policy verdict (--zone <name> --json --dry-run | respond --outcome accepted|deferred|dismissed|muted --ref <id>)');
 }
 
 export function main(argv = process.argv.slice(2)) {

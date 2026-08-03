@@ -6,7 +6,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, existsSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, existsSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -188,6 +188,11 @@ describe('install / uninstall roundtrip (SAMEMIND_SERVICE_HOME sandbox — never
   function sandbox(fn) {
     const units = mkdtempSync(join(tmpdir(), 'sm-svc-units-'));
     const root = mkdtempSync(join(tmpdir(), 'sm-svc-root-'));
+    // The sandbox bundle now gets a projection target. Until this was added these tests installed
+    // against an empty root and passed — encoding the very defect dogfooding later found on a real
+    // machine: a unit whose every run exits 1 because `project` has nothing to project into.
+    mkdirSync(join(root, '.samemind'), { recursive: true });
+    writeFileSync(join(root, '.samemind', 'config.json'), JSON.stringify({ projection: { targets: [{ engine: 'codex' }] } }));
     try { return fn({ units, root }); }
     finally { rmSync(units, { recursive: true, force: true }); rmSync(root, { recursive: true, force: true }); }
   }
@@ -236,6 +241,59 @@ describe('install / uninstall roundtrip (SAMEMIND_SERVICE_HOME sandbox — never
       const plan = buildPlan(process.platform, resolveConfig({}, process.platform, env), units, 0);
       for (const f of plan.files) assert.ok(!existsSync(f.path), 'dry-run writes no unit files');
     });
+  });
+});
+
+// Found by dogfooding, not by review: `service install` on a bundle with no projection target
+// produced a launchd unit that failed on every single run — twelve identical "no target" errors in
+// the .err file before anyone looked. `installed` must never be able to mean `cannot possibly work`.
+describe('cmdInstall — refuses a unit that could never succeed', () => {
+  function bundle(projection) {
+    const dir = mkdtempSync(join(tmpdir(), 'sm-svc-'));
+    const cfgDir = join(dir, '.samemind');
+    mkdirSync(cfgDir, { recursive: true });
+    writeFileSync(join(cfgDir, 'config.json'), JSON.stringify(projection ? { projection } : {}));
+    return dir;
+  }
+
+  it('no projection target → exit 1, and no unit file is written', () => {
+    const root = bundle(null);
+    const units = join(root, 'units');
+    try {
+      const env = { ...process.env, SAMEMIND_SERVICE_HOME: units, OKF_ROOT: root };
+      const r = spawnSync(process.execPath, [BIN, 'service', 'install', '--root', root], { env, encoding: 'utf8' });
+      assert.equal(r.status, 1, r.stdout + r.stderr);
+      assert.match(r.stderr, /no projection target/);
+      assert.match(r.stderr, /fail on every run/i, 'the message must say WHY, not just refuse');
+      assert.ok(!existsSync(units), 'a refused install must leave nothing behind');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('a configured target installs normally', () => {
+    const root = bundle({ targets: [{ engine: 'codex' }] });
+    const units = join(root, 'units');
+    try {
+      const env = { ...process.env, SAMEMIND_SERVICE_HOME: units, OKF_ROOT: root };
+      const r = spawnSync(process.execPath, [BIN, 'service', 'install', '--root', root], { env, encoding: 'utf8' });
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.ok(existsSync(units), 'the unit directory must exist after a successful install');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('--daemon is exempt: serviced resolves targets as they appear', () => {
+    const root = bundle(null);
+    const units = join(root, 'units');
+    try {
+      const env = { ...process.env, SAMEMIND_SERVICE_HOME: units, OKF_ROOT: root };
+      const r = spawnSync(process.execPath, [BIN, 'service', 'install', '--root', root, '--daemon'], { env, encoding: 'utf8' });
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

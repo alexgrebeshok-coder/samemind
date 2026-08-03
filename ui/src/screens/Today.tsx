@@ -5,6 +5,7 @@ import { useApi, useApiStatus, type Board, type BoardCard, type Handoff, type He
 import { blockedRecoveryCmd, cardView, idTail } from '../lib';
 import { KpiStrip } from '../shared';
 import { Markdown } from '../markdown';
+import { NudgeCard } from '../NudgeCard';
 import { Card, Cmd, Empty, Panel, Spinner, TypeBadge } from '../ui';
 
 function decisionAgeLabel(ageDays: number): string {
@@ -101,10 +102,15 @@ export function Today() {
   const h = handoff.data;
 
   if (!b) {
-    return board.loading ? (
-      <Spinner label="reading the board" />
-    ) : (
-      <Empty text="Board unavailable — the API returned no data." cmd="samemind ui" />
+    return (
+      <div className="flex flex-col gap-5">
+        <NudgeCard />
+        {board.loading ? (
+          <Spinner label="reading the board" />
+        ) : (
+          <Empty text="Board unavailable — the API returned no data." cmd="samemind ui" />
+        )}
+      </div>
     );
   }
 
@@ -119,6 +125,7 @@ export function Today() {
 
   return (
     <div className="flex flex-col gap-5">
+      <NudgeCard />
       <KpiStrip board={b} health={health.data} />
 
       <div className="grid gap-5 xl:grid-cols-2">

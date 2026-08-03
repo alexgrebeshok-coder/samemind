@@ -3,6 +3,49 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.18.0] — 2026-08-03
+
+Memory that speaks first — without a camera.
+
+Everything up to here answered a question when asked. This release lets samemind raise something
+on its own: an unclosed failure nobody came back to, a blocker that stopped moving, a plan that
+named itself next. The design decision worth stating is what it does **not** need. Relevance comes
+entirely from the board and the ledger — from what the work actually looks like — so the camera
+that was on the roadmap turns out to supply only the *moment*, not the *reason*. The moment comes
+from a pluggable trigger source; today the only source is a schedule, and a camera can become a
+second one later without changing anything downstream. That was worth finding out before building
+any of it.
+
+**Nothing is on by default.** `vision.enabled` ships `false`, and `nudge` answers *disabled* until
+someone turns it on. No camera, no microphone, no capture of any kind in this release.
+
+### Added
+
+- **`samemind nudge`** — one candidate plus the policy verdict, `--json` in the standard envelope,
+  `--dry-run` computes the identical decision and mutates nothing.
+- **`samemind nudge respond --outcome accepted|deferred|dismissed|muted`** — the human's answer,
+  idempotent on `--ref`, mirrored to the ledger under topic `nudge`.
+- **`GET /api/nudge`** and **`POST /api/nudge/respond`** — the second write route in the project,
+  behind the same host/origin/content-type guard as `POST /api/config`.
+- **The card on the dashboard** — what it would say and why, with *Понял / Не сейчас / Не надо /
+  Хватит на сегодня*. When it is quiet, it says which of the ten reasons applies, and when it will
+  speak again if the silence is temporary.
+- **Policy gates**, in order: feature on, mode `proactive`, allowed hours, do-not-disturb, "enough
+  for today", room pause, cooldown after "not now", daily cap, and finally *is there anything worth
+  saying*. Exactly one nudge is ever delivered — never a fan of proposals.
+- **Candidate selection reads relevance from the data**: a topic with events today is dropped,
+  because work that is moving does not need a reminder. Every candidate carries a human `why`,
+  which is the answer to "why did you ask" rather than a second string written for the button.
+
+### Notes
+
+- An unanswered nudge is not repeated verbatim on the next tick; the next candidate takes its turn.
+  Measured before the guard existed, the same sentence consumed all three daily slots.
+- "Хватит на сегодня" is recorded without a zone, so it expires at local midnight. Recorded *with*
+  a zone it would have been a room pause lasting until an explicit unmute — a button promising one
+  evening must not silence the assistant permanently.
+- `dogfood` continues to count the week toward 1.0; this release does not tag it.
+
 ## [0.17.0] — 2026-08-02
 
 The release before the freeze. 1.0's defining promise is that the JSON shape stops moving — after

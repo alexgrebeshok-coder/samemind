@@ -21,6 +21,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readProjectionConfig } from './lib/projection-config.mjs';
+import { ENGINE_FILES } from './install.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(HERE, '..');
@@ -214,8 +216,31 @@ function writeFiles(files) {
   }
 }
 
+/**
+ * A periodic unit runs `project`, and `project` without a target exits 1 every time. Installing
+ * that unit produces a scheduler entry which can never succeed, failing silently into a log file
+ * nobody reads — found by dogfooding: twelve identical failures before anyone looked. `installed`
+ * must not be able to mean `cannot possibly work`, so the install refuses instead.
+ * Daemon mode is exempt: `serviced` resolves its own targets as they appear.
+ */
+function projectionTargetMissing(cfg) {
+  if (cfg.daemon) return false;
+  try {
+    return (readProjectionConfig(cfg.root).targets || []).length === 0;
+  } catch {
+    return false; // unreadable config is the projection layer's problem to report, not ours
+  }
+}
+
 export function cmdInstall(args, platform = process.platform, env = process.env) {
   const cfg = resolveConfig(args, platform, env);
+  if (projectionTargetMissing(cfg)) {
+    console.error(`service: refusing to install — no projection target in ${cfg.root}`);
+    console.error(`  \`samemind project\` needs one, so this unit would fail on every run.`);
+    console.error(`  Fix: add "projection": { "targets": [{ "engine": "<id>" }] } to .samemind/config.json`);
+    console.error(`  (engines: ${Object.keys(ENGINE_FILES).join(', ')}), then run this again.`);
+    return 1;
+  }
   const dir = unitDir(platform, env);
   const uid = platform === 'darwin' && process.getuid ? process.getuid() : 0;
   const plan = buildPlan(platform, cfg, dir, uid);

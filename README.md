@@ -2,7 +2,7 @@
 
 samemind is a git-native markdown memory bundle for AI coding agents — identity, search, a work ledger, and a kanban board in one place, portable across engines like Claude Code, Cursor, and OpenClaw. No daemon or database required; BM25 search always works offline, semantic search is optional.
 
-**Latest: v0.17.0** — the release before the freeze: the JSON contract is written down ([docs/json-contract.md](docs/json-contract.md)) and locked with shape tests, payloads dropped the machine paths and document bodies they were carrying, and `samemind dogfood` reports days without a failure of our own — saying *nothing to measure* rather than *0 failures* when there is no history. See [CHANGELOG.md](https://github.com/alexgrebeshok-coder/samemind/blob/main/CHANGELOG.md).
+**Latest: v0.18.0** — memory that speaks first, without a camera: `samemind nudge` raises an unclosed failure or a stalled blocker on its own, with a card on the dashboard and a policy that decides when speaking is welcome (hours, cooldown, daily cap, "enough for today"). Off by default; no camera, no microphone. See [CHANGELOG.md](https://github.com/alexgrebeshok-coder/samemind/blob/main/CHANGELOG.md).
 
 [![ci](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml/badge.svg)](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml)
 
@@ -137,11 +137,14 @@ npx samemind ui          # → http://127.0.0.1:7787 (your bundle; --root <dir>,
 
 Loopback-only (127.0.0.1, exact-match Host guard via `tools/lib/http-guard.mjs`). The **memory
 bundle** is not mutated from the UI: no inbox writes, no ledger append, no fleet dispatch — those
-stay CLI/MCP commands the UI may show and copy but never run. **Settings are different:** one
-write route, `POST /api/config`, toggles `voice` / `vision` in `.samemind/config.json` (idempotent,
-reversible; guarded origin/host checks). Everything else non-GET is 405.
+stay CLI/MCP commands the UI may show and copy but never run. **Two write routes**, both behind the
+same origin/host/content-type guard: `POST /api/config` toggles `voice` / `vision` in
+`.samemind/config.json` (idempotent, reversible), and `POST /api/nudge/respond` records your answer
+to a nudge — the one place the UI writes work state, and only ever the answer you clicked.
+Everything else non-GET is 405.
 
-Seven screens (`ui/src/screens/`): **Today** — in-flight/stuck work and recovery commands;
+Seven screens (`ui/src/screens/`): **Today** — in-flight/stuck work, recovery commands, and the
+nudge card (what it would raise now and why, or which of the ten reasons it is quiet for);
 **Overview** — kanban with honest totals, synthesized from ledger topics when no Task docs exist
 (real Task docs always win); **Memory** — concept browser, BM25 search, interactive graph;
 **Fleet** — engine heartbeat bars, naryad timeline, live SSE feed (`/api/events/stream`);
@@ -293,9 +296,18 @@ No, to use it: it's git-native markdown, BM25 search always works offline, and s
 ### Which AI engines does it work with?
 `samemind install` wires the memory protocol into 12 engines (see [docs/adapters.md](docs/adapters.md)), and it exposes an MCP server (`npx samemind serve`) for engines like Claude Code. Three of those 12 also get real lifecycle hooks (`claude-code`, `codex`, `opencode`); the rest stay on file projection — see Freshness tier in the matrix.
 
-### What's new in v0.17.0?
+### What's new in v0.18.0?
 
-The groundwork for freezing the contract at 1.0. The JSON shape is now **written down**
+Memory that speaks first — **without a camera**. `samemind nudge` raises one thing worth raising:
+an unclosed failure nobody came back to, a blocker that stopped moving, a plan that named itself
+next. Relevance comes entirely from the board and the ledger, which is why no camera is involved —
+a camera would supply the moment, never the reason. A card on the dashboard shows what it would say
+and why, with *Понял / Не сейчас / Не надо / Хватит на сегодня*; when it is quiet it says which of
+the ten reasons applies. Gates run in order — allowed hours, do-not-disturb, "enough for today",
+cooldown after "not now", daily cap — and exactly one nudge is ever delivered.
+**Off by default**: `vision.enabled` is `false`, no camera and no microphone are used at all.
+
+**v0.17** was the groundwork for freezing the contract at 1.0. The JSON shape is now **written down**
 ([docs/json-contract.md](docs/json-contract.md)) and **locked with shape tests** — before this,
 renaming a field left the suite green. Payloads stopped carrying absolute paths and full document
 bodies (`board` on a real bundle: 160,833 → 23,123 bytes), truncated arrays now state their totals,

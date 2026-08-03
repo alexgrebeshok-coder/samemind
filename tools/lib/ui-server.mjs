@@ -31,6 +31,7 @@ import { readFeatureConfig } from './feature-config.mjs';
 import { probeVoiceCompanion } from './probe-voice.mjs';
 import { routeIntent } from './voice-intent.mjs';
 import { scanForInjection } from './injection.mjs';
+import { buildNudgeModel, recordNudgeResponse } from '../nudge.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(HERE, '..', '..');
@@ -80,7 +81,8 @@ const API_ENDPOINTS = [
   'GET /api/health', 'GET /api/status', 'GET /api/doctor', 'GET /api/board',
   'GET /api/handoff', 'GET /api/fleet', 'GET /api/ledger', 'GET /api/concepts',
   'GET /api/concept/<id>', 'GET /api/graph', 'GET /api/events/stream',
-  'GET /api/voice/probe', 'GET /api/voice/route',
+  'GET /api/voice/probe', 'GET /api/voice/route', 'GET /api/nudge',
+  'POST /api/nudge/respond',
 ];
 
 function placeholderHtml() {
@@ -226,6 +228,21 @@ function apiVoiceRoute(root, query) {
   return wrap('voice-route', { ...decision, threshold, quarantine: scanForInjection(text) });
 }
 
+/** GET /api/nudge — the card on the dashboard: "what would I say right now?"
+ *
+ * READ-ONLY by contract. It builds the same model the CLI does, but must NOT call
+ * recordOutcome / set cooldown / bump counters — otherwise a dashboard polling every few
+ * seconds would silently burn the daily cap and silence itself. dryRun is always true here;
+ * the one place a side effect happens is POST /api/nudge/respond (the human's actual answer).
+ */
+async function apiNudge(root, query) {
+  const zone = query.get('zone') || 'default';
+  // dryRun hard-wired to true: the read path must never mutate state. If a future trigger
+  // source wants to push a real nudge through HTTP it gets its own POST, not this GET.
+  const model = await buildNudgeModel(root, { zone, dryRun: true });
+  return wrap('nudge', model);
+}
+
 /** 64 KiB is far more than a settings patch needs; the cap exists so a hostile or buggy client
  *  cannot make the dashboard buffer unbounded memory. Mirrors the MCP HTTP transport's limit. */
 const MAX_WRITE_BODY = 64 * 1024;
@@ -255,6 +272,40 @@ function handleConfigWrite(req, res, root) {
   });
 }
 
+/** POST /api/nudge/respond — the human's answer to a nudge card. The second write route in
+ *  the project; it clears the same write guard as POST /api/config (host/origin/content-type)
+ *  via WRITE_ROUTES + checkWriteRequest in the dispatcher, then lands here. Mirrors
+ *  handleConfigWrite's shape: buffer with a cap, parse JSON, call the domain function, reply. */
+function handleNudgeRespond(req, res, root) {
+  let body = '';
+  let aborted = false;
+  req.on('data', (chunk) => {
+    if (aborted) return;
+    body += chunk;
+    if (body.length > MAX_WRITE_BODY) {
+      aborted = true;
+      sendJson(res, 413, { error: 'body too large' });
+      req.destroy();
+    }
+  });
+  req.on('end', () => {
+    if (aborted) return;
+    let parsed;
+    try { parsed = JSON.parse(body || '{}'); } catch { sendJson(res, 400, { error: 'invalid JSON body' }); return; }
+    const outcome = parsed.outcome;
+    const zone = typeof parsed.zone === 'string' && parsed.zone.trim() ? parsed.zone.trim() : 'default';
+    const ref = typeof parsed.ref === 'string' && parsed.ref.trim() ? parsed.ref.trim() : null;
+    const VALID = new Set(['accepted', 'deferred', 'dismissed', 'muted']);
+    if (!outcome || !VALID.has(outcome)) {
+      sendJson(res, 400, { error: 'rejected', errors: ['"outcome" must be one of accepted|deferred|dismissed|muted'] });
+      return;
+    }
+    Promise.resolve(recordNudgeResponse(root, { outcome, zone, ref }))
+      .then((result) => sendJson(res, 200, wrap('nudge-response', result)))
+      .catch((e) => sendJson(res, 500, { error: e.message }));
+  });
+}
+
 const API_ROUTES = {
   '/api/health': apiHealth,
   '/api/settings': apiSettings,
@@ -266,6 +317,7 @@ const API_ROUTES = {
   '/api/ledger': apiLedger,
   '/api/concepts': apiConcepts,
   '/api/graph': apiGraph,
+  '/api/nudge': apiNudge,
   '/api/voice/route': apiVoiceRoute,
 };
 
@@ -398,9 +450,9 @@ function serveStaticFile(res, distDir, relPath) {
   return true;
 }
 
-/** The only path that accepts a write, and the only method it accepts. Kept as data next to the
+/** The paths that accept a write, and the only method each accepts. Kept as data next to the
  *  guard so "what can this server mutate" is one line to read, not a grep across handlers. */
-const WRITE_ROUTES = new Map([['/api/config', 'POST']]);
+const WRITE_ROUTES = new Map([['/api/config', 'POST'], ['/api/nudge/respond', 'POST']]);
 
 function handleRequest(req, res, root, distDir, hub, fetchImpl = fetch) {
   if (!hostAllowed(req.headers.host)) { sendJson(res, 403, { error: 'forbidden host' }); return; }
@@ -420,7 +472,11 @@ function handleRequest(req, res, root, distDir, hub, fetchImpl = fetch) {
       method: req.method, headers: req.headers, boundPort: req.socket?.localPort,
     });
     if (!verdict.ok) { sendJson(res, verdict.status, { error: verdict.error }); return; }
-    handleConfigWrite(req, res, root);
+    if (writePath === '/api/nudge/respond') {
+      handleNudgeRespond(req, res, root);
+    } else {
+      handleConfigWrite(req, res, root);
+    }
     return;
   }
 

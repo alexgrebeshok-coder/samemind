@@ -1,6 +1,6 @@
 // lib.ts — pure display helpers + the graph layout. No React, no fetch: everything here runs
 // under plain node and is covered by src/lib.test.mjs.
-import type { BoardCard, Frontmatter, Graph, LedgerCard, LedgerEvent } from './api';
+import type { BoardCard, Frontmatter, Graph, LedgerCard, LedgerEvent, NudgeReasonCode } from './api';
 
 /** "12s ago" / "4m ago" / "3d ago" — coarse on purpose, this is a freshness stamp not a clock. */
 export function ago(fromIso: string | null | undefined, now: number = Date.now()): string {
@@ -347,4 +347,45 @@ export function layout(graph: Pick<Graph, 'nodes' | 'edges'>): { placed: PlacedN
     }
   });
   return { placed, clipped: sorted.length - shown.length };
+}
+
+/** GET /api/nudge silence copy — display only; policy lives in tools/. */
+export const NUDGE_REASON_CODES = [
+  'ok',
+  'disabled',
+  'mode_not_proactive',
+  'outside_hours',
+  'do_not_disturb',
+  'muted_today',
+  'room_paused',
+  'cooldown',
+  'daily_limit',
+  'no_candidates',
+] as const satisfies readonly NudgeReasonCode[];
+
+const NUDGE_SILENCE_RU: Record<NudgeReasonCode, string> = {
+  ok: 'Сейчас нечего предложить.',
+  disabled: 'Подсказки выключены.',
+  mode_not_proactive: 'Режим зрения не проактивный — подсказки не показываю.',
+  outside_hours: 'Сейчас вне часов, когда можно подсказывать.',
+  do_not_disturb: 'Режим «не беспокоить».',
+  muted_today: 'На сегодня хватит — по твоей просьбе.',
+  room_paused: 'Комната на паузе.',
+  cooldown: 'Недавно ты просил подождать.',
+  daily_limit: 'На сегодня лимит подсказок исчерпан.',
+  no_candidates: 'Нечего сказать — нет подходящих поводов.',
+};
+
+/** Wall-clock time for `nextAllowedAt` (epoch ms from the server). */
+export function nudgeClockTime(epochMs: number): string {
+  const d = new Date(epochMs);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+}
+
+/** Calm Russian line when `spoken` is false; appends server `nextAllowedAt` when present. */
+export function nudgeSilenceLine(reasonCode: NudgeReasonCode, nextAllowedAt: number | null): string {
+  const base = NUDGE_SILENCE_RU[reasonCode] ?? NUDGE_SILENCE_RU.ok;
+  if (nextAllowedAt == null) return base;
+  return `${base} Снова после ${nudgeClockTime(nextAllowedAt)}.`;
 }
