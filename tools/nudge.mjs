@@ -128,7 +128,14 @@ export async function recordNudgeResponse(root, { outcome, zone = 'default', ref
   // `at`, not `now`: the state module keys every window off `at`, and an outcome written with an
   // undefined timestamp is invisible to both the cooldown ("не сейчас" would do nothing) and the
   // daily cap. Same class as the two mismatches above — parallel authors, unstated field names.
-  recordOutcome(root, { zone, outcome, at: now, reason: ref || undefined });
+  //
+  // `muted` deliberately carries NO zone. The policy reads a zone-scoped mute as a room pause that
+  // lasts until someone unmutes it, and a zone-less one as "enough for today", expiring at local
+  // midnight. The card's button says "хватит на сегодня" — recording it with a zone would silence
+  // the assistant permanently behind a label promising one evening. There are no rooms to pause in
+  // a camera-less build anyway; room mutes become reachable when a camera introduces real zones.
+  const scoped = outcome === 'muted' ? { outcome, at: now } : { zone, outcome, at: now };
+  recordOutcome(root, { ...scoped, reason: ref || undefined });
 
   // Ledger trace: a `note`-phase event on topic `nudge`. The ref is the idempotency key —
   // appendEvent already deduplicates on ref, so even without stateMod this stays honest.

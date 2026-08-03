@@ -2,11 +2,10 @@
 // nudge.test.mjs — tests for the nudge CLI surface (tools/nudge.mjs).
 //   node --test tools/nudge.test.mjs
 //
-// The nudge model is built from three modules that наряды A/B have not landed yet
-// (nudge-policy / nudge-state / nudge-candidates). buildNudgeModel degrades gracefully
-// (no candidates → silent), so these tests exercise the wiring, the contract, and the
-// ledger trace — not the policy math itself. Once A/B land, the adapter plumbs through
-// and the same tests cover the integration.
+// The nudge model is built from three modules (nudge-policy / nudge-state / nudge-candidates),
+// imported statically: a missing one is a load error, never a quiet fallback that would act with
+// the policy bypassed. These tests cover the wiring, the contract surface and the ledger trace;
+// the policy math itself lives in nudge-policy.test.mjs.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
@@ -15,6 +14,8 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { parseArgs, buildNudgeModel, recordNudgeResponse } from './nudge.mjs';
+import { readNudgeState } from './lib/nudge-state.mjs';
+import { decideNudge } from './lib/nudge-policy.mjs';
 import { readEvents } from './lib/ledger.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -135,6 +136,28 @@ describe('recordNudgeResponse', () => {
     const actions = events.map(e => e.action).sort();
     assert.ok(actions.some(a => a.startsWith('respond accepted')));
     assert.ok(actions.some(a => a.startsWith('respond dismissed')));
+  });
+
+  it('"хватит на сегодня" is recorded without a zone — a day, not a permanent room pause', async () => {
+    const r = tmp('mute');
+    try {
+      await recordNudgeResponse(r, { outcome: 'muted', zone: 'kitchen' });
+      const { outcomes } = readNudgeState(r);
+      const muted = outcomes.find(o => o.outcome === 'muted');
+      assert.ok(muted, 'the mute must reach the state, not only the ledger');
+      // The policy reads a zone-scoped mute as a room pause lasting until an explicit unmute, and
+      // a zone-less one as "enough for today". A button promising one evening must not do the former.
+      assert.ok(!muted.zone, 'a zone here would silence the assistant permanently');
+      const NOW = Date.now();
+      const cfg = { vision: { enabled: true, proactivePrompts: true, mode: 'proactive' } };
+      const cand = [{ id: 'c1', text: 'что-то важное' }];
+      const today = decideNudge({ now: NOW, candidates: cand, config: cfg, state: readNudgeState(r) });
+      assert.equal(today.reason, 'muted_today');
+      const tomorrow = decideNudge({ now: NOW + 24 * 3600_000, candidates: cand, config: cfg, state: readNudgeState(r) });
+      assert.equal(tomorrow.deliver, true, 'tomorrow resets it — that is what "на сегодня" means');
+    } finally {
+      rmSync(r, { recursive: true, force: true });
+    }
   });
 
   it('a second call with the same ref is deduped (no new ledger line)', async () => {
