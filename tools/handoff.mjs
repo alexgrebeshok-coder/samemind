@@ -3,7 +3,14 @@
 // can continue without re-explaining. Built from the work-discipline layer
 // (Plan / Decision / Task / Session — see docs/work-discipline.md).
 //
-//   node tools/handoff.mjs [--project <path>] [--days N] [--html [--out <file>]] [--json]
+//   node tools/handoff.mjs [--root <dir>] [--project <path>] [--days N] [--html [--out <file>]] [--json]
+//
+// --root <dir>  which bundle to read: the physical OKF-bundle root, same meaning the flag carries
+//               in status/nudge/service/okf-query. Overrides OKF_ROOT for this run.
+//
+// --root and --project answer different questions and compose freely: --root picks WHICH bundle,
+// --project filters WITHIN it. `handoff --root ./other-bundle --project lumen` reads other-bundle
+// and keeps only lumen's work-discipline docs.
 //
 // NOT the same as `samemind brief` (identity/personality). This is about *what is in
 // progress* — active tasks, recent decisions, plans in force, last session, open questions.
@@ -15,8 +22,10 @@
 //          one line to stdout — a versioned foundation for a future UI. Incompatible with --html.
 //
 // Target size ≤ ~2000 tokens (~8000 chars). Each line carries a path citation.
+import { statSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { load, asPathList, pathToId } from './lib/okf.mjs';
+import { load, asPathList, pathToId, ROOT } from './lib/okf.mjs';
 
 export const DEFAULT_DAYS = 14;
 export const DEFAULT_BUDGET_TOKENS = 2000;
@@ -223,12 +232,18 @@ export function buildHandoffModel(docs, {
     })
     .sort((a, b) => String(a.fm.title || a.id).localeCompare(String(b.fm.title || b.id)));
 
-  // --- Last session: freshest by date/timestamp ---
+  // --- Last session: freshest by date/timestamp, id as a deterministic tiebreak (same pattern
+  // as project.mjs rankCanon/rankBundle). Without the tiebreak, two equal-`ts` elements compared
+  // as `a.ts < b.ts ? 1 : -1` never return 0 — an invalid comparator (asymmetric on ties) that
+  // V8's sort can resolve inconsistently: measured to fully reverse the array at ~11+ equal
+  // elements. `id` is unique per doc, so this always terminates in a real order, never 0 unless
+  // it's the same doc.
   const lastSession = sessions
     .map(d => ({ d, date: docDate(d) || '0000-00-00', ts: String(d.fm.timestamp || '') }))
     .sort((a, b) => {
       if (a.date !== b.date) return a.date < b.date ? 1 : -1;
-      return a.ts < b.ts ? 1 : -1;
+      if (a.ts !== b.ts) return a.ts < b.ts ? 1 : -1;
+      return a.d.id.localeCompare(b.d.id);
     })[0]?.d || null;
 
   // --- Open questions: blocked tasks + ## Next bullets from last session ---
@@ -408,29 +423,66 @@ export function buildHandoff(docs, {
   return { markdown, sections, warnings, days: dayWindow, project: projectKey };
 }
 
-function parseArgs(argv) {
-  const out = { project: null, days: DEFAULT_DAYS, html: false, outFile: null, json: false };
+export function parseArgs(argv) {
+  const out = { root: null, project: null, days: DEFAULT_DAYS, html: false, outFile: null, json: false, help: false };
+  // A value-taking flag whose value is missing is a usage error, not undefined: `handoff --root`
+  // with nothing after it silently fell back to OKF_ROOT and briefed on a bundle nobody named.
+  const value = (i, flag) => {
+    const v = argv[i];
+    if (v === undefined || v.startsWith('-')) throw new Error(`${flag} needs a value — see: samemind handoff --help`);
+    return v;
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--project') out.project = argv[++i];
-    else if (a === '--days') out.days = Number(argv[++i]) || DEFAULT_DAYS;
+    if (a === '--root') out.root = value(++i, '--root');
+    else if (a === '--project') out.project = value(++i, '--project');
+    else if (a === '--days') out.days = Number(value(++i, '--days')) || DEFAULT_DAYS;
     else if (a === '--html') out.html = true;
-    else if (a === '--out') out.outFile = argv[++i] || null;
+    else if (a === '--out') out.outFile = value(++i, '--out');
     else if (a === '--json') out.json = true;
     else if (a === '--help' || a === '-h') out.help = true;
+    // Unknown flag (starts with '-') is a loud error, not a silent no-op — same family as the
+    // nudge --help bug (samemind fixed 09.08): a flag that looks accepted but does nothing lets
+    // `handoff --root ./other-bundle` "succeed" while quietly reporting on the wrong bundle.
+    // Positional args (no leading '-') are left alone — handoff.mjs never had any.
+    else if (a.startsWith('-')) throw new Error(`unknown flag "${a}" — see: samemind handoff --help`);
   }
   return out;
+}
+
+/**
+ * Physical bundle root for one run: --root wins over OKF_ROOT (the module-level ROOT).
+ * Existing is not enough — it must be a directory (see board.mjs `resolveBundleRoot` for why
+ * a regular file slipped through as an empty bundle). `statSync` follows symlinks, so a symlink
+ * to a directory is accepted and a symlink to a file or a dangling one is not.
+ */
+export function resolveBundleRoot(rootArg) {
+  if (!rootArg) return ROOT;
+  const root = resolve(rootArg);
+  let st;
+  try {
+    st = statSync(root);
+  } catch {
+    throw new Error(`root not found: ${root} (pass --root <dir> or set OKF_ROOT)`);
+  }
+  if (!st.isDirectory()) {
+    throw new Error(`root is not a directory: ${root} (--root takes an OKF-bundle directory)`);
+  }
+  return root;
 }
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help) {
     console.log('samemind handoff — work-state brief (Plan/Task/Decision/Session)');
+    console.log('  --root <dir>       which bundle to read (default: OKF_ROOT, else the package checkout)');
     console.log('  --project <path>   filter by project (e.g. lumen or /projects/lumen.md)');
     console.log(`  --days N           decision window in days (default ${DEFAULT_DAYS})`);
     console.log('  --html             self-contained HTML projection instead of markdown');
     console.log('  --out <file>       with --html, atomic-write the page here instead of stdout');
     console.log('  --json             versioned JSON over buildHandoffModel() (incompatible with --html)');
+    console.log('');
+    console.log('  --root picks WHICH bundle, --project filters WITHIN it — independent, combinable.');
     return;
   }
   if (opts.json && opts.html) {
@@ -442,7 +494,7 @@ async function main() {
   // inbox stays excluded too (default, no includeInbox): handoff is built purely from typed
   // work-discipline docs (Plan/Task/Decision/Session); raw inbox notes have no `type` and were
   // never picked up by touchesProject()/typeOf() anyway — see issue #4.
-  const docs = load({ includeSecret: false, includeMirror: true });
+  const docs = load({ includeSecret: false, includeMirror: true }, resolveBundleRoot(opts.root));
 
   if (opts.json) {
     // --json: versioned wrapper over buildHandoffModel — a foundation for a future UI, not a

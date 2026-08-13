@@ -5,7 +5,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readFileSync,
+  mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readFileSync, symlinkSync,
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -150,6 +150,247 @@ describe('buildBoard --project filter', () => {
     assert.match(board, /## 🔧 In progress \(1\)/);
     assert.match(board, /## 🆕 Backlog \(0\)/);        // atlas has no backlog task
     assert.ok(board.includes('AtlasOne'));
+  });
+});
+
+// ─────────── CLI: --root selects the bundle, --project filters inside it ───────────
+// The two flags answer different questions, so a bundle A in OKF_ROOT plus `--root B` must
+// report on B alone — never on A's concepts, ledger or fleet, and `--write` must land in B.
+
+/** Bundle with one in-progress Task, optionally scoped to a project. */
+function seedTask(root, { file, title, project = null }) {
+  writeFileSync(join(root, 'projects', file), `---
+type: Task
+title: ${title}
+description: seeded by board.test.mjs
+status: in-progress
+timestamp: ${daysAgo(1)}
+${project ? `relations:\n  project: ${project}\n` : ''}---
+`, 'utf8');
+}
+
+describe('board CLI --root — picks WHICH bundle to read (not a project filter)', () => {
+  let bundleA, bundleB;
+  before(() => {
+    bundleA = mkdtempSync(join(tmpdir(), 'samemind-board-rootA-'));
+    bundleB = mkdtempSync(join(tmpdir(), 'samemind-board-rootB-'));
+    runInit({ targetDir: bundleA });
+    runInit({ targetDir: bundleB });
+    seedTask(bundleA, { file: 'a.md', title: 'OnlyInBundleA' });
+    seedTask(bundleB, { file: 'b.md', title: 'OnlyInBundleB' });
+    // Distinct ledger topics per bundle: an open failure only B has, so a board that read A's
+    // ledger under a --root B run would show A's topic and fail the assertion below.
+    appendEvent(bundleA, { actor: 'test', topic: 'topic-of-a', phase: 'fail', status: 'fail', action: 'A failed' });
+    appendEvent(bundleB, { actor: 'test', topic: 'topic-of-b', phase: 'fail', status: 'fail', action: 'B failed' });
+  });
+  after(() => {
+    rmSync(bundleA, { recursive: true, force: true });
+    rmSync(bundleB, { recursive: true, force: true });
+  });
+
+  it('OKF_ROOT=A + --root B reads B\'s concepts only', () => {
+    const { code, out } = runCLI(bundleA, ['--root', bundleB]);
+    assert.equal(code, 0, out);
+    assert.ok(out.includes('OnlyInBundleB'), 'B\'s task is on the board');
+    assert.ok(!out.includes('OnlyInBundleA'), 'A\'s task must not leak in');
+  });
+
+  it('--root B also switches the ledger the 🔥 Open failures section reads', () => {
+    const { code, out } = runCLI(bundleA, ['--root', bundleB]);
+    assert.equal(code, 0, out);
+    assert.ok(out.includes('topic-of-b'), 'B\'s open failure shown');
+    assert.ok(!out.includes('topic-of-a'), 'A\'s ledger must not be read under --root B');
+  });
+
+  it('--root B also switches the fleet registry the 🔥 Overdue engines section reads', () => {
+    // Registry only in B: a run rooted at A that showed it would prove fleet still read ROOT.
+    writeRegistry(bundleB, buildRegistry({ engines: [{ id: 'engine-of-b', role: 'executor', heartbeatSec: 60 }] }));
+    appendEvent(bundleB, { actor: 'engine-of-b', topic: 't', phase: 'start', action: 'long ago', ts: '2020-01-01T00:00:00Z' });
+    const inB = runCLI(bundleA, ['--root', bundleB]);
+    assert.equal(inB.code, 0, inB.out);
+    assert.ok(inB.out.includes('engine-of-b'), 'B\'s overdue engine shown under --root B');
+    const inA = runCLI(bundleA, []);
+    assert.equal(inA.code, 0, inA.out);
+    assert.ok(!inA.out.includes('engine-of-b'), 'A has no registry — nothing borrowed from B');
+  });
+
+  it('--root without OKF_ROOT pointing anywhere useful still reads the named bundle', () => {
+    const { code, out } = runCLI(bundleA, ['--json', '--root', bundleB]);
+    assert.equal(code, 0, out);
+    const payload = JSON.parse(out.trim().split('\n').pop());
+    // Doc-sourced cards only — ledger-derived cards are synthesized from B's ledger topics
+    // and carry no frontmatter.
+    const titles = payload.data.inprog.filter(t => t.source !== 'ledger').map(t => t.fm?.title);
+    assert.deepEqual(titles, ['OnlyInBundleB']);
+  });
+
+  it('--root <missing dir> → nonzero exit with an explicit error, not a silent OKF_ROOT fallback', () => {
+    const { code, out } = runCLI(bundleA, ['--root', join(bundleB, 'no-such-dir')]);
+    assert.notEqual(code, 0);
+    assert.match(out, /root not found/);
+  });
+
+  // walk() swallows the ENOTDIR readdirSync throws on a regular file and returns [], so an
+  // existence check alone let `--root ./notes.md` print a cheerful empty board.
+  it('--root <regular file> → nonzero exit, not an empty board', () => {
+    const file = join(bundleB, 'index.md');
+    assert.ok(existsSync(file), 'fixture: a regular file to point --root at');
+    const { code, out } = runCLI(bundleA, ['--root', file]);
+    assert.notEqual(code, 0, 'a file is not a bundle root');
+    assert.match(out, /root is not a directory/);
+    assert.ok(!out.includes('# Dashboard'), 'must not render a board for a non-directory root');
+  });
+
+  it('--root <symlink to a directory> is accepted — bundles do get symlinked into place', () => {
+    const link = join(tmpdir(), `samemind-board-rootlink-${process.pid}`);
+    symlinkSync(bundleB, link, 'dir');
+    try {
+      const { code, out } = runCLI(bundleA, ['--root', link]);
+      assert.equal(code, 0, out);
+      assert.ok(out.includes('OnlyInBundleB'), 'reads through the symlink to B');
+    } finally {
+      rmSync(link, { force: true });
+    }
+  });
+
+  it('--root <symlink to a file> is rejected like the file itself', () => {
+    const link = join(tmpdir(), `samemind-board-filelink-${process.pid}`);
+    symlinkSync(join(bundleB, 'index.md'), link, 'file');
+    try {
+      const { code, out } = runCLI(bundleA, ['--root', link]);
+      assert.notEqual(code, 0);
+      assert.match(out, /root is not a directory/);
+    } finally {
+      rmSync(link, { force: true });
+    }
+  });
+
+  it('--root <dangling symlink> reports "not found", not "not a directory"', () => {
+    const link = join(tmpdir(), `samemind-board-danglink-${process.pid}`);
+    symlinkSync(join(bundleB, 'no-such-target'), link, 'dir');
+    try {
+      const { code, out } = runCLI(bundleA, ['--root', link]);
+      assert.notEqual(code, 0);
+      assert.match(out, /root not found/);
+    } finally {
+      rmSync(link, { force: true });
+    }
+  });
+});
+
+describe('board CLI --root + --project — independent, combinable', () => {
+  let bundleA, bundleB;
+  before(() => {
+    bundleA = mkdtempSync(join(tmpdir(), 'samemind-board-combA-'));
+    bundleB = mkdtempSync(join(tmpdir(), 'samemind-board-combB-'));
+    runInit({ targetDir: bundleA });
+    runInit({ targetDir: bundleB });
+    seedTask(bundleA, { file: 'a-lumen.md', title: 'ALumen', project: '/projects/lumen.md' });
+    seedTask(bundleB, { file: 'b-lumen.md', title: 'BLumen', project: '/projects/lumen.md' });
+    seedTask(bundleB, { file: 'b-atlas.md', title: 'BAtlas', project: '/projects/atlas.md' });
+  });
+  after(() => {
+    rmSync(bundleA, { recursive: true, force: true });
+    rmSync(bundleB, { recursive: true, force: true });
+  });
+
+  it('--root B --project lumen shows B\'s lumen task, not B\'s atlas task and not A\'s lumen task', () => {
+    const { code, out } = runCLI(bundleA, ['--root', bundleB, '--project', 'lumen']);
+    assert.equal(code, 0, out);
+    assert.match(out, /## 🔧 In progress \(1\)/);
+    assert.ok(out.includes('BLumen'), 'B\'s lumen task shown');
+    assert.ok(!out.includes('ALumen'), 'A\'s lumen task must not leak across roots');
+    assert.match(out, /Task filter: project `lumen`/);
+  });
+
+  it('--root B alone keeps both of B\'s projects — the root is not a filter', () => {
+    const { code, out } = runCLI(bundleA, ['--root', bundleB]);
+    assert.equal(code, 0, out);
+    assert.match(out, /## 🔧 In progress \(2\)/);
+    assert.ok(out.includes('BLumen') && out.includes('BAtlas'));
+  });
+
+  it('--project alone still filters the OKF_ROOT bundle — no root change implied', () => {
+    const { code, out } = runCLI(bundleB, ['--project', 'atlas']);
+    assert.equal(code, 0, out);
+    assert.match(out, /## 🔧 In progress \(1\)/);
+    assert.ok(out.includes('BAtlas'));
+  });
+});
+
+describe('board CLI --write --root — writes only the selected bundle\'s DASHBOARD.md', () => {
+  let bundleA, bundleB;
+  before(() => {
+    bundleA = mkdtempSync(join(tmpdir(), 'samemind-board-writeA-'));
+    bundleB = mkdtempSync(join(tmpdir(), 'samemind-board-writeB-'));
+    runInit({ targetDir: bundleA });
+    runInit({ targetDir: bundleB });
+    rmSync(join(bundleA, 'DASHBOARD.md'), { force: true });
+    rmSync(join(bundleB, 'DASHBOARD.md'), { force: true });
+    seedTask(bundleB, { file: 'b.md', title: 'OnlyInBundleB' });
+  });
+  after(() => {
+    rmSync(bundleA, { recursive: true, force: true });
+    rmSync(bundleB, { recursive: true, force: true });
+  });
+
+  it('OKF_ROOT=A + --write --root B creates B/DASHBOARD.md and leaves A untouched', () => {
+    const { code, out } = runCLI(bundleA, ['--write', '--root', bundleB]);
+    assert.equal(code, 0, out);
+    assert.ok(existsSync(join(bundleB, 'DASHBOARD.md')), 'B/DASHBOARD.md written');
+    assert.ok(!existsSync(join(bundleA, 'DASHBOARD.md')), 'A/DASHBOARD.md must not be created');
+    assert.match(out, new RegExp(`board written: ${bundleB}`));
+    assert.ok(readFileSync(join(bundleB, 'DASHBOARD.md'), 'utf8').includes('OnlyInBundleB'));
+  });
+});
+
+// ─────────────────── CLI: unknown flag / missing value rejected, valid flags intact ───────────────────
+
+describe('board CLI — unknown flag is a loud error; every documented flag still works', () => {
+  let root;
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), 'samemind-board-flags-'));
+    runInit({ targetDir: root });
+  });
+  after(() => { rmSync(root, { recursive: true, force: true }); });
+
+  it('an unknown flag (e.g. --bogus) exits nonzero with a clear stderr message', () => {
+    const { code, out } = runCLI(root, ['--bogus']);
+    assert.notEqual(code, 0);
+    assert.match(out, /unknown flag "--bogus"/);
+  });
+
+  it('a positional argument (no leading -) is left alone, not rejected', () => {
+    const { code } = runCLI(root, ['stray-positional']);
+    assert.equal(code, 0);
+  });
+
+  it('a value-taking flag with no value exits nonzero instead of falling back silently', () => {
+    for (const flag of ['--root', '--project', '--out']) {
+      const { code, out } = runCLI(root, [flag]);
+      assert.notEqual(code, 0, `${flag} with no value must fail`);
+      assert.match(out, new RegExp(`${flag} needs a value`));
+    }
+  });
+
+  it('a value-taking flag swallowing the next flag as its value is rejected', () => {
+    const { code, out } = runCLI(root, ['--root', '--json']);
+    assert.notEqual(code, 0);
+    assert.match(out, /--root needs a value/);
+  });
+
+  it('every flag board.mjs documents today still works: --root, --write, --project, --html, --out, --json, --help, -h', () => {
+    assert.equal(runCLI(root, ['--root', root]).code, 0);
+    assert.equal(runCLI(root, ['--write']).code, 0);
+    assert.equal(runCLI(root, ['--project', 'lumen']).code, 0);
+    assert.equal(runCLI(root, ['--html']).code, 0);
+    const htmlOut = join(root, 'x.html');
+    const r = runCLI(root, ['--html', '--out', htmlOut]);
+    assert.equal(r.code, 0, r.out);
+    assert.ok(existsSync(htmlOut));
+    assert.equal(runCLI(root, ['--json']).code, 0);
+    assert.equal(runCLI(root, ['--help']).code, 0);
+    assert.equal(runCLI(root, ['-h']).code, 0);
   });
 });
 

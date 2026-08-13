@@ -3,6 +3,54 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.1] — 2026-08-13
+
+A patch. No JSON form changed: the `{ contract, kind, generatedAt, data }` envelope and every
+key under `data` for `board` and `handoff`, CLI and HTTP, are byte-identical to 1.0.0 — checked
+against the 1.0.0 tree rather than asserted.
+
+### Fixed
+
+- **`--root` in `board` and `handoff` did not select a bundle.** Everywhere else in the CLI
+  (`status`, `nudge`, `serviced`, `service`, `ui`, `dogfood`) `--root <dir>` means "the physical
+  OKF-bundle root to work on". In these two commands it meant nothing: `board` read concepts,
+  `ledger/events.jsonl` and `fleet/registry.json` from `OKF_ROOT` regardless, and `--write`
+  always put `DASHBOARD.md` there. So `board --root ./other-bundle` reported on whatever
+  `OKF_ROOT` pointed at, under the name of the bundle you asked for — the wrong board, with no
+  sign it was wrong.
+
+  `--root <dir>` now picks **which** bundle to read, and `--project <id>` still filters **within**
+  it. They are independent and combine: `board --root ./b --project lumen` reads `./b` and scopes
+  its task columns to lumen. In `board` one root serves the whole run — concepts, ledger, fleet
+  registry and the `--write` target — so a run rooted at B can no longer show A's open failures
+  or overdue engines. In `handoff` the docs come from the selected root; `--project` stays a filter.
+- **A `--root` that is not a directory produced an empty board instead of an error.** A missing
+  path was already refused, but an existing *file* passed the check and then failed the directory
+  read silently, leaving zero documents — output indistinguishable from a real but empty bundle.
+  Both `board` and `handoff` now refuse a non-directory root by name. A symlink to a directory is
+  accepted (bundles get symlinked into place); a symlink to a file, or a dangling one, is not.
+- **A missing flag value passed silently.** `board --root` at the end of a command line, or
+  `--root --json` where the next flag would have become the value, resolved to "no value given"
+  and the run quietly fell back to `OKF_ROOT`. Both now exit non-zero and say which flag needs a
+  value. Same for `--project`, `--out`, and `handoff --days`.
+- **`samemind --version` / `-v` printed the usage banner.** The same defect class as the `nudge
+  --help` fix in 0.18.0: the flag was never routed, fell through to an unknown command, and
+  printed help. A script asking for the installed version got a page of prose. It now prints the
+  version and exits 0.
+- **`handoff`'s last-session pick could depend on input order.** Sessions were compared with
+  `a.ts < b.ts ? 1 : -1`, which never returns 0 — an invalid comparator on ties. Two sessions
+  sharing a timestamp are ordinary (same-millisecond writes, or a hand-written `date` with no
+  time), and V8's sort resolved such ties inconsistently once enough of them collided. The
+  comparator now falls back to `id`, which is unique per document, so the winner is the same
+  regardless of the order the bundle happened to be walked in.
+
+### Changed
+
+- **An unknown flag on `board` / `handoff` is now an error.** Previously any unrecognized
+  `-`-prefixed argument was silently ignored, which is how a mistyped or unsupported flag looked
+  like it had been accepted. Positional arguments are still left alone. A script that passes a
+  flag these commands never supported will now fail instead of quietly doing something else.
+
 ## [1.0.0] — 2026-08-13
 
 No new features. 1.0 marks that the JSON contract stopped moving and that a dogfood week

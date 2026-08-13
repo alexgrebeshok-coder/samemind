@@ -2,7 +2,7 @@
 
 samemind is a git-native markdown memory bundle for AI coding agents — identity, search, a work ledger, and a kanban board in one place, portable across engines like Claude Code, Cursor, and OpenClaw. No daemon or database required; BM25 search always works offline, semantic search is optional.
 
-**Latest: v1.0.0** — contract frozen. No new features: 1.0 means the JSON shape stopped moving, so changing the form of an existing field is now a major version. One fix rode in ahead of the freeze — HTTP `/api/board` and `/api/handoff` had kept shipping absolute host paths and full document bodies that the CLI already stripped. See [CHANGELOG.md](https://github.com/alexgrebeshok-coder/samemind/blob/main/CHANGELOG.md) and [docs/json-contract.md](https://github.com/alexgrebeshok-coder/samemind/blob/main/docs/json-contract.md).
+**Latest: v1.0.1** — a patch, no JSON form changed. `--root <dir>` now actually selects which bundle `board` and `handoff` read (it used to be ignored, so `board --root ./other-bundle` printed the wrong bundle's board under the right bundle's name), `--project <id>` still filters within it, and the two combine. Also: a flag missing its value fails instead of falling back to `OKF_ROOT`, `samemind --version` prints a version instead of the help banner, and an unknown flag on these two commands is now an error. See [CHANGELOG.md](https://github.com/alexgrebeshok-coder/samemind/blob/main/CHANGELOG.md) and [docs/json-contract.md](https://github.com/alexgrebeshok-coder/samemind/blob/main/docs/json-contract.md).
 
 [![ci](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml/badge.svg)](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml)
 

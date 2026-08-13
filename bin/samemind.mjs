@@ -26,7 +26,7 @@
 // query/recall/gde are routed with OKF_ROOT defaulted to the caller's cwd, so the tools
 // operate on the user's own bundle rather than on samemind's own repo checkout.
 import { spawnSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -67,6 +67,8 @@ const ROUTES = {
 function usage() {
   console.log('samemind — universal git-native memory for AI agents');
   console.log('');
+  console.log('Global flags: --help, -h, help — this text; --version, -v — installed version, then exit');
+  console.log('');
   console.log('Commands:');
   console.log('  init [dir] [--demo]   create a bundle from scratch (empty folder only; --demo — with demo content)');
   console.log('  setup [...]           one-shot onboarding: detect engine, scaffold bundle, wire install+MCP, probe local embeddings (default: interactive; --yes — no prompts; --dry-run — plan only; --target <dir>; --global — machine-wide instead of one project)');
@@ -74,8 +76,8 @@ function usage() {
   console.log('  recall <cmd> ...      search: index | "<query>" [-k N] [--mode bm25|semantic|auto] (default auto: BM25 without an endpoint)');
   console.log('  gde "<query>" ...     human-readable search (semantic + BM25 fallback)');
   console.log('  brief [...]           personality-layer brief: identity+owner+engine role (--engine <id> --budget <n> --inject <file>)');
-  console.log('  board [...]           memory kanban in markdown: Backlog/In progress/Done/Blocked+aging, Plans, Recent (--write → DASHBOARD.md, --project <path>, --json)');
-  console.log('  handoff [...]         work-state brief: active/decisions/plans/session (--project <path> --days N --json)');
+  console.log('  board [...]           memory kanban in markdown: Backlog/In progress/Done/Blocked+aging, Plans, Recent (--write → DASHBOARD.md, --root <dir>, --project <path>, --json)');
+  console.log('  handoff [...]         work-state brief: active/decisions/plans/session (--root <dir> --project <path> --days N --json)');
   console.log('  forget <id>           mark a concept deprecated (deprecated: true) — never deletes the file, see docs/memory-hygiene.md');
   console.log('  reconcile [...]       Ф2 bi-temporal supersede proposals (--dir <subpath> --write) — human-gate, prints/saves a report, never writes canon');
   console.log('  reflect [...]         Ф5 reconcile+consolidate+heat proposal report (--write) — human-gate, prints/saves a report, never writes canon');
@@ -99,6 +101,16 @@ function usage() {
 
 export function main(argv = process.argv.slice(2)) {
   const [cmd, ...rest] = argv;
+
+  // Same family as the nudge --help bug (e2e640b): every command answered --help, this
+  // flag answered nothing — it fell through to ROUTES[cmd] === undefined → usage banner
+  // instead of the version a script piping `samemind --version` actually asked for.
+  if (cmd === '--version' || cmd === '-v') {
+    const { version } = JSON.parse(readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf8'));
+    console.log(version);
+    return 0;
+  }
+
   const script = ROUTES[cmd];
 
   if (!script) {
