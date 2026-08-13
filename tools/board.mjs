@@ -6,8 +6,12 @@
 // what's moving, what's blocked (and for how long), what just landed, what was
 // recently agreed, and what candidate ideas are incubating.
 //
-//   node tools/board.mjs [--write] [--project <path>] [--html [--out <file>]] [--json]
+//   node tools/board.mjs [--root <dir>] [--write] [--project <path>] [--html [--out <file>]] [--json]
 //
+// --root <dir>       which bundle to read: the physical OKF-bundle root, same meaning the flag
+//                     carries in status/nudge/service/okf-query. Overrides OKF_ROOT for this run;
+//                     everything the board reads (concepts, ledger/events.jsonl, fleet/registry.json)
+//                     and everything --write produces (<root>/DASHBOARD.md) comes from this root.
 // --write            atomic-write the board to <bundle-root>/DASHBOARD.md (committed
 //                     feature — DASHBOARD.md is tracked, not gitignored). Default: stdout.
 // --project <path>   scope the four task columns to one project (matched against the
@@ -20,10 +24,15 @@
 //                     as one line to stdout — a versioned foundation for a future UI. Incompatible
 //                     with --write/--html (pick one projection). Never atomic-written.
 //
+// --root and --project answer different questions and compose freely: --root picks WHICH bundle,
+// --project filters WITHIN it. `board --root ./other-bundle --project lumen` reads other-bundle
+// and scopes its task columns to lumen.
+//
 // The board is a pure function of parsed docs (lib/okf.mjs `load()`); `now` is injectable
 // so aging/davnost is deterministic in tests. No volatile timestamp is baked into the
 // output, so `--write` is idempotent: same bundle state → same bytes.
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { load, ROOT, pathToId } from './lib/okf.mjs';
 import { atomicWriteFileSync } from '../lib/atomic-write.mjs';
@@ -499,17 +508,40 @@ export function buildBoard(docs, opts = {}) {
   return L.join('\n').trim() + '\n';
 }
 
-function parseArgs(argv) {
-  const out = { write: false, project: null, html: false, out: null, json: false };
+export function parseArgs(argv) {
+  const out = { write: false, root: null, project: null, html: false, out: null, json: false, help: false };
+  // A value-taking flag whose value is missing is a usage error, not an empty string: `board
+  // --root` with nothing after it silently fell back to OKF_ROOT and reported on a bundle the
+  // caller never named.
+  const value = (i, flag) => {
+    const v = argv[i];
+    if (v === undefined || v.startsWith('-')) throw new Error(`${flag} needs a value — see: samemind board --help`);
+    return v;
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--write') out.write = true;
-    else if (a === '--project') out.project = argv[++i] || null;
+    else if (a === '--root') out.root = value(++i, '--root');
+    else if (a === '--project') out.project = value(++i, '--project');
     else if (a === '--html') out.html = true;
-    else if (a === '--out') out.out = argv[++i] || null;
+    else if (a === '--out') out.out = value(++i, '--out');
     else if (a === '--json') out.json = true;
+    else if (a === '--help' || a === '-h') out.help = true;
+    // Unknown flag (starts with '-') is a loud error, not a silent no-op — same family as the
+    // nudge --help bug (samemind fixed 09.08): a flag that looks accepted but does nothing lets
+    // `board --root ./other-bundle` "succeed" while quietly reporting on the wrong bundle.
+    // Positional args (no leading '-') are left alone — board.mjs never had any.
+    else if (a.startsWith('-')) throw new Error(`unknown flag "${a}" — see: samemind board --help`);
   }
   return out;
+}
+
+/** Physical bundle root for one run: --root wins over OKF_ROOT (the module-level ROOT). */
+export function resolveBundleRoot(rootArg) {
+  if (!rootArg) return ROOT;
+  const root = resolve(rootArg);
+  if (!existsSync(root)) throw new Error(`root not found: ${root} (pass --root <dir> or set OKF_ROOT)`);
+  return root;
 }
 
 /** Board file path inside a bundle root. */
@@ -518,24 +550,42 @@ export function boardPath(root = ROOT) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
-  const { write, project, html, out, json } = parseArgs(argv);
+  const { write, root: rootArg, project, html, out, json, help } = parseArgs(argv);
+  if (help) {
+    console.log('samemind board — memory kanban (Backlog/In progress/Blocked/Done, Plans, Ideas, Recent, Sessions)');
+    console.log('');
+    console.log('  samemind board [--root <dir>] [--write] [--project <path>] [--html [--out <file>]] [--json]');
+    console.log('');
+    console.log('  --root <dir>       which bundle to read (default: OKF_ROOT, else the package checkout)');
+    console.log('  --write            atomic-write the board to <bundle-root>/DASHBOARD.md');
+    console.log('  --project <path>   scope the four task columns to one project (relations.project)');
+    console.log('  --html             self-contained HTML projection instead of markdown');
+    console.log('  --out <file>       with --html, atomic-write the page here instead of stdout');
+    console.log('  --json             versioned JSON over buildBoardModel() (incompatible with --write/--html)');
+    console.log('');
+    console.log('  --root picks WHICH bundle, --project filters WITHIN it — independent, combinable.');
+    return;
+  }
   if (json && (write || html)) {
     console.error('board: --json is incompatible with --write/--html');
     process.exitCode = 1;
     return;
   }
-  const docs = load({ includeSecret: false });
+  // One root for the whole run: concepts, ledger, fleet and the --write target all resolve
+  // against it, so `board --root B` can never report on A's ledger under B's heading.
+  const bundleRoot = resolveBundleRoot(rootArg);
+  const docs = load({ includeSecret: false }, bundleRoot);
   // Event ledger (docs/event-ledger.md) is not part of the OKF graph — read it separately
   // and summarize to open failures here, in the I/O layer, so buildBoardModel/buildBoard stay
   // pure functions of their arguments (same reasoning as `now` being injectable).
-  const events = readEvents(ROOT);
+  const events = readEvents(bundleRoot);
   // topics (per-topic latest event, docs/event-ledger.md) also feed the derived kanban
   // (docs/ui-spec.md §3.1) — a bundle can have hundreds of ledger topics and zero Task docs.
   const { openFailures, topics: ledgerTopics } = summarizeLedger(events);
   // Fleet registry (docs/fleet.md) is likewise not an OKF concept — read it here, in the I/O
   // layer, and reduce to the overdue subset via the same `heartbeat()` the CLI/MCP use, so
   // buildBoardModel/buildBoard never touch the filesystem themselves. No registry → [].
-  const registry = readRegistry(ROOT);
+  const registry = readRegistry(bundleRoot);
   const overdueEngines = registry ? heartbeat(registry.engines, events, Date.now()).filter(e => e.overdue) : [];
 
   if (json) {
@@ -571,7 +621,7 @@ export async function main(argv = process.argv.slice(2)) {
   });
 
   if (write) {
-    const target = boardPath(ROOT);
+    const target = boardPath(bundleRoot);
     atomicWriteFileSync(target, md);
     console.log(`✓ board written: ${target}`);
     console.log('  DASHBOARD.md is committed to git (a feature, not gitignored).');

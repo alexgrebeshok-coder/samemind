@@ -229,6 +229,55 @@ describe('buildHandoff — unit', () => {
   });
 });
 
+// ─────────────────── Н9 fix 3 — lastSession comparator on equal-ts elements ───────────────────
+// The old comparator `a.ts < b.ts ? 1 : -1` never returns 0 — invalid for a sort comparator on
+// ties. Measured: V8's sort fully reverses the array once ties reach ~11 elements. id.localeCompare
+// (same tiebreak pattern as project.mjs rankCanon/rankBundle) makes the comparator a real total
+// order, so the winner is deterministic and stable regardless of input order/array size.
+describe('buildHandoffModel — lastSession picks a deterministic winner on equal-ts ties', () => {
+  function equalTsSessions(n) {
+    return Array.from({ length: n }, (_, i) => doc({
+      id: `concepts/sess-${String(i).padStart(2, '0')}`,
+      type: 'Session',
+      title: `S${i}`,
+      date: '2026-07-09',
+      timestamp: '2026-07-09T10:00:00Z',
+    }));
+  }
+
+  it('15 tied sessions → same winner (smallest id) no matter the input order', () => {
+    const asc = equalTsSessions(15);
+    const desc = [...asc].reverse();
+    const shuffled = [asc[7], asc[2], asc[14], asc[0], asc[9], asc[1], asc[13], asc[3],
+      asc[11], asc[5], asc[8], asc[4], asc[12], asc[6], asc[10]];
+
+    const winnerAsc = buildHandoffModel(asc, { now: FIXED_NOW }).lastSession.id;
+    const winnerDesc = buildHandoffModel(desc, { now: FIXED_NOW }).lastSession.id;
+    const winnerShuffled = buildHandoffModel(shuffled, { now: FIXED_NOW }).lastSession.id;
+
+    assert.equal(winnerAsc, 'concepts/sess-00', 'id tiebreak deterministically picks the smallest id');
+    assert.equal(winnerDesc, winnerAsc, 'reversed input must not change the winner');
+    assert.equal(winnerShuffled, winnerAsc, 'shuffled input must not change the winner');
+  });
+
+  it('11 tied sessions (the measured flip threshold) also stays deterministic', () => {
+    const docs11 = equalTsSessions(11);
+    const rev = [...docs11].reverse();
+    const a = buildHandoffModel(docs11, { now: FIXED_NOW }).lastSession.id;
+    const b = buildHandoffModel(rev, { now: FIXED_NOW }).lastSession.id;
+    assert.equal(a, 'concepts/sess-00');
+    assert.equal(b, a);
+  });
+
+  it('distinct ts still picks the freshest — the tiebreak only fires on a real tie', () => {
+    const docs = [
+      doc({ id: 'concepts/sess-old', type: 'Session', title: 'Old', date: '2026-07-01', timestamp: '2026-07-01T00:00:00Z' }),
+      doc({ id: 'concepts/sess-new', type: 'Session', title: 'New', date: '2026-07-09', timestamp: '2026-07-09T10:00:00Z' }),
+    ];
+    assert.equal(buildHandoffModel(docs, { now: FIXED_NOW }).lastSession.id, 'concepts/sess-new');
+  });
+});
+
 describe('handoff CLI — demo bundle', () => {
   it('OKF_ROOT=demo fills all sections from live demo', () => {
     const r = spawnSync(process.execPath, [HANDOFF], {
@@ -266,6 +315,153 @@ describe('handoff CLI — demo bundle', () => {
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /backlink/i);
     assert.doesNotMatch(r.stdout, /\*\*blocked\*\*.*Atlas|\*\*blocked\*\*.*retrieval/i);
+  });
+});
+
+// ─────────── CLI: --root selects the bundle, --project filters inside it ───────────
+// Two different questions: --root picks WHICH bundle the docs come from, --project narrows the
+// work-discipline docs within it. A bundle A in OKF_ROOT plus `--root B` must brief on B alone.
+
+/** Bundle with one in-progress Task, optionally scoped to a project. */
+function seedTask(root, { file, title, project = null }) {
+  writeFileSync(join(root, 'projects', file), `---
+type: Task
+title: ${title}
+status: in-progress
+timestamp: 2026-07-09T10:00:00Z
+${project ? `relations:\n  project: ${project}\n` : ''}---
+`, 'utf8');
+}
+
+describe('handoff CLI --root — picks WHICH bundle to read (not a project filter)', () => {
+  let bundleA, bundleB;
+  const run = (cwdRoot, ...args) => spawnSync(process.execPath, [HANDOFF, ...args], {
+    env: { ...process.env, OKF_ROOT: cwdRoot },
+    encoding: 'utf8',
+  });
+
+  before(() => {
+    bundleA = mkdtempSync(join(tmpdir(), 'samemind-handoff-rootA-'));
+    bundleB = mkdtempSync(join(tmpdir(), 'samemind-handoff-rootB-'));
+    runInit({ targetDir: bundleA });
+    runInit({ targetDir: bundleB });
+    seedTask(bundleA, { file: 'a.md', title: 'OnlyInBundleA' });
+    seedTask(bundleB, { file: 'b.md', title: 'OnlyInBundleB' });
+  });
+  after(() => {
+    rmSync(bundleA, { recursive: true, force: true });
+    rmSync(bundleB, { recursive: true, force: true });
+  });
+
+  it('OKF_ROOT=A + --root B briefs on B\'s docs only', () => {
+    const r = run(bundleA, '--root', bundleB);
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes('OnlyInBundleB'), 'B\'s task is in the brief');
+    assert.ok(!r.stdout.includes('OnlyInBundleA'), 'A\'s task must not leak in');
+  });
+
+  it('no --root still reads OKF_ROOT — the default is unchanged', () => {
+    const r = run(bundleA);
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes('OnlyInBundleA'));
+    assert.ok(!r.stdout.includes('OnlyInBundleB'));
+  });
+
+  it('--root <missing dir> → nonzero exit with an explicit error, not a silent OKF_ROOT fallback', () => {
+    const r = run(bundleA, '--root', join(bundleB, 'no-such-dir'));
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /root not found/);
+  });
+});
+
+describe('handoff CLI --root + --project — independent, combinable', () => {
+  let bundleA, bundleB;
+  const run = (cwdRoot, ...args) => spawnSync(process.execPath, [HANDOFF, ...args], {
+    env: { ...process.env, OKF_ROOT: cwdRoot },
+    encoding: 'utf8',
+  });
+
+  before(() => {
+    bundleA = mkdtempSync(join(tmpdir(), 'samemind-handoff-combA-'));
+    bundleB = mkdtempSync(join(tmpdir(), 'samemind-handoff-combB-'));
+    runInit({ targetDir: bundleA });
+    runInit({ targetDir: bundleB });
+    seedTask(bundleA, { file: 'a-lumen.md', title: 'ALumen', project: '/projects/lumen.md' });
+    seedTask(bundleB, { file: 'b-lumen.md', title: 'BLumen', project: '/projects/lumen.md' });
+    seedTask(bundleB, { file: 'b-atlas.md', title: 'BAtlas', project: '/projects/atlas.md' });
+  });
+  after(() => {
+    rmSync(bundleA, { recursive: true, force: true });
+    rmSync(bundleB, { recursive: true, force: true });
+  });
+
+  it('--root B --project lumen keeps B\'s lumen task, drops B\'s atlas task and A\'s lumen task', () => {
+    const r = run(bundleA, '--root', bundleB, '--project', 'lumen');
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes('BLumen'), 'B\'s lumen task briefed');
+    assert.ok(!r.stdout.includes('BAtlas'), 'project filter still applies inside B');
+    assert.ok(!r.stdout.includes('ALumen'), 'A\'s lumen task must not leak across roots');
+    assert.match(r.stdout, /project filter: `projects\/lumen`/);
+  });
+
+  it('--root B alone keeps both of B\'s projects — the root is not a filter', () => {
+    const r = run(bundleA, '--root', bundleB);
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes('BLumen') && r.stdout.includes('BAtlas'));
+  });
+
+  it('--project alone still filters the OKF_ROOT bundle — no root change implied', () => {
+    const r = run(bundleB, '--project', 'atlas');
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes('BAtlas'));
+    assert.ok(!r.stdout.includes('BLumen'));
+  });
+});
+
+// ─────────────────── CLI: unknown flag / missing value rejected, valid flags intact ───────────────────
+
+describe('handoff CLI — unknown flag is a loud error; every documented flag still works', () => {
+  const run = (...args) => spawnSync(process.execPath, [HANDOFF, ...args], {
+    env: { ...process.env, OKF_ROOT: DEMO },
+    encoding: 'utf8',
+  });
+
+  it('an unknown flag (e.g. --bogus) exits nonzero with a clear stderr message', () => {
+    const r = run('--bogus');
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /unknown flag "--bogus"/);
+  });
+
+  it('a value-taking flag with no value exits nonzero instead of falling back silently', () => {
+    for (const flag of ['--root', '--project', '--days', '--out']) {
+      const r = run(flag);
+      assert.notEqual(r.status, 0, `${flag} with no value must fail`);
+      assert.match(r.stderr, new RegExp(`${flag} needs a value`));
+    }
+  });
+
+  it('a value-taking flag swallowing the next flag as its value is rejected', () => {
+    const r = run('--root', '--json');
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /--root needs a value/);
+  });
+
+  it('every flag handoff.mjs documents today still works: --root, --project, --days, --html, --out, --json, --help, -h', () => {
+    assert.equal(run('--root', DEMO).status, 0);
+    assert.equal(run('--project', 'lumen').status, 0);
+    assert.equal(run('--days', '30').status, 0);
+    assert.equal(run('--html').status, 0);
+    const htmlOut = join(tmpdir(), `samemind-handoff-flagtest-${process.pid}.html`);
+    try {
+      const r = run('--html', '--out', htmlOut);
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(existsSync(htmlOut));
+    } finally {
+      rmSync(htmlOut, { force: true });
+    }
+    assert.equal(run('--json').status, 0);
+    assert.equal(run('--help').status, 0);
+    assert.equal(run('-h').status, 0);
   });
 });
 
