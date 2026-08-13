@@ -153,13 +153,20 @@ export function summarizeLedger(events) {
   const topics = [];
   const openFailures = [];
   for (const [topic, evsRaw] of byTopic) {
+    // Stable sort: events sharing one `ts` (same millisecond) keep their original stream
+    // position. "Which came later" for two same-ms events is therefore decided by INDEX in
+    // `evs`, never by comparing the (now-equal) ts strings — a `>=` on equal strings is always
+    // true, which silently declared every same-ms fail "still open" regardless of order.
     const evs = [...evsRaw].sort((x, y) => String(x.ts).localeCompare(String(y.ts)));
     const last = evs[evs.length - 1];
-    const closingEvs = evs.filter(e => e.phase === 'done' || e.status === 'ok');
-    const lastClosingTs = closingEvs.length ? closingEvs[closingEvs.length - 1].ts : '';
-    const failEvs = evs.filter(e => e.phase === 'fail' || e.phase === 'block');
-    const lastFail = failEvs.length ? failEvs[failEvs.length - 1] : null;
-    const openFail = (lastFail && String(lastFail.ts) >= String(lastClosingTs)) ? lastFail : null;
+    let lastClosingIdx = -1;
+    let lastFailIdx = -1;
+    let lastFail = null;
+    evs.forEach((e, i) => {
+      if (e.phase === 'done' || e.status === 'ok') lastClosingIdx = i;
+      if (e.phase === 'fail' || e.phase === 'block') { lastFailIdx = i; lastFail = e; }
+    });
+    const openFail = (lastFailIdx > lastClosingIdx) ? lastFail : null;
     if (openFail) openFailures.push({ ...openFail, topic });
     topics.push({ topic, last, count: evs.length, openFail, evs: evs.slice(-LEDGER_TOPIC_TAIL) });
   }

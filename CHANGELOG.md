@@ -29,6 +29,15 @@ ran clean on a live bundle — the two conditions set for the tag.
   regression test fails if either drops the projection. Landing this **before** the tag was
   the point: frozen, the fix would have been a major. Consumers that read `body` or `file`
   off these two routes should fetch per document via `GET /api/concept/<id>`.
+- **A failure closed in the same millisecond stayed open forever.** `summarizeLedger`
+  compared timestamp *strings* with `>=`, so when a `fail` and the `done`/`ok` that closes it
+  landed in the same millisecond, the topic never cleared. Order inside one millisecond now
+  comes from position in the stream, not from comparing equal strings. This is the metric
+  `dogfood` reports on — a phantom open failure would have broken the very gate that decides
+  whether a release is allowed. The bug was one-directional (it could only invent an open
+  failure, never hide a real one), so past clean-week verdicts stand. Caught by the release
+  gate itself on Node 20; the same test had passed twice on Node 22, where the two writes
+  never collided.
 - **The contract document had drifted from the wire.** Re-check before signing found
   `generatedAt` marked missing on five surfaces that all carry it since 0.17.0, `proactive`
   described as envelope-less when it is enveloped, `sessionsTotal` / `sessionNextTotal`
