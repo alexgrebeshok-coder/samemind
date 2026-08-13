@@ -222,4 +222,19 @@ describe('orientRelation — alias reverse for expand', () => {
       },
     );
   });
+
+  it('returns null for next, hygiene, unknown — deleting the non-edge guard goes red', () => {
+    // next/supersedes have a non-null kind; unknown has kind null. All three classes
+    // must stay off the walk. Mutation: drop `c.class !== 'edge'` → this test fails.
+    const from = 'entities/a';
+    const to = 'entities/b';
+    assert.equal(orientRelation(from, 'next', to), null);
+    assert.equal(orientRelation(from, 'supersedes', to), null);
+    assert.equal(orientRelation(from, 'superseded_by', to), null);
+    assert.equal(orientRelation(from, 'relations.supersedes', to), null);
+    assert.equal(orientRelation(from, 'frobnicates', to), null);
+    for (const raw of PROTO_KEYS) {
+      assert.equal(orientRelation(from, raw, to), null, raw);
+    }
+  });
 });

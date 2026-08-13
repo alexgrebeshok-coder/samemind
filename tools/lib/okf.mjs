@@ -71,16 +71,23 @@ export function asPathList(v) {
   return [String(v).trim().replace(/^["']|["']$/g, '')].filter(Boolean);
 }
 
+/** Own-key relation map. Null prototype so `__proto__` is a data key, not a setter. */
+function emptyRelations() {
+  return Object.create(null);
+}
+
 /**
  * Normalize SameMind `relations` extension to { type: string[] }.
  * Edge types are open (no dictionary). Values are bundle-absolute paths or lists of them.
+ * Accumulator is null-prototype: JSON shape of own keys is unchanged; prototype-name
+ * keys stay own so validate can warn and they do not become inherited slots.
  */
 export function normalizeRelations(raw) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-  const out = {};
-  for (const [k, v] of Object.entries(raw)) {
+  const out = emptyRelations();
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const k of Object.getOwnPropertyNames(raw)) {
     if (!k) continue;
-    out[k] = asPathList(v);
+    out[k] = asPathList(raw[k]);
   }
   return out;
 }
@@ -117,7 +124,7 @@ export function parseFrontmatter(yaml) {
 
     // relations:  (block with indented edge types)
     if (/^relations:\s*$/.test(line) || /^relations:\s*\{\s*\}\s*$/.test(line)) {
-      const rel = {};
+      const rel = emptyRelations();
       i++;
       while (i < lines.length) {
         const rl = lines[i];

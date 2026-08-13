@@ -92,9 +92,50 @@ describe('normalizeRelations + parse frontmatter', () => {
     assert.deepEqual(n.empty, []);
   });
 
-  it('normalizeRelations: null/array root → {}', () => {
-    assert.deepEqual(okf.normalizeRelations(null), {});
-    assert.deepEqual(okf.normalizeRelations([]), {});
+  it('normalizeRelations: null/array root → empty own map, JSON {}', () => {
+    for (const raw of [null, []]) {
+      const n = okf.normalizeRelations(raw);
+      assert.equal(Object.getPrototypeOf(n), null);
+      assert.deepEqual(Object.keys(n), []);
+      assert.equal(JSON.stringify(n), '{}');
+    }
+  });
+
+  it('normalizeRelations: own-safe — __proto__ stays a data key, JSON shape of real edges unchanged', () => {
+    const raw = Object.create(null);
+    raw.works_at = '/entities/b.md';
+    raw.depends_on = ['/projects/p.md'];
+    raw['__proto__'] = '/entities/evil.md';
+    raw.constructor = '/entities/evil.md';
+    const n = okf.normalizeRelations(raw);
+    assert.equal(Object.getPrototypeOf(n), null);
+    assert.ok(Object.hasOwn(n, '__proto__'));
+    assert.ok(Object.hasOwn(n, 'constructor'));
+    assert.deepEqual(n.works_at, ['/entities/b.md']);
+    assert.deepEqual(n.depends_on, ['/projects/p.md']);
+    assert.deepEqual(n['__proto__'], ['/entities/evil.md']);
+    assert.deepEqual(n.constructor, ['/entities/evil.md']);
+    assert.equal({}.foo, undefined, 'Object.prototype not polluted');
+    const parsed = JSON.parse(JSON.stringify(n));
+    assert.deepEqual(parsed.works_at, ['/entities/b.md']);
+    assert.deepEqual(parsed.depends_on, ['/projects/p.md']);
+    assert.deepEqual(parsed['__proto__'], ['/entities/evil.md']);
+    assert.deepEqual(parsed.constructor, ['/entities/evil.md']);
+  });
+
+  it('parseFrontmatter: __proto__ under relations: is an own key, not a prototype write', () => {
+    const fm = okf.parseFrontmatter(
+      'type: Entity\nrelations:\n  __proto__: /entities/b.md\n  works_at: /entities/a.md\n',
+    );
+    assert.equal(Object.getPrototypeOf(fm.relations), null);
+    assert.ok(Object.hasOwn(fm.relations, '__proto__'));
+    assert.equal(fm.relations['__proto__'], '/entities/b.md');
+    assert.equal(fm.relations.works_at, '/entities/a.md');
+    const n = okf.normalizeRelations(fm.relations);
+    assert.ok(Object.hasOwn(n, '__proto__'));
+    assert.deepEqual(n['__proto__'], ['/entities/b.md']);
+    assert.deepEqual(n.works_at, ['/entities/a.md']);
+    assert.equal(JSON.stringify({ works_at: n.works_at }), '{"works_at":["/entities/a.md"]}');
   });
 
   it('parse: relations always arrays on document', () => {
@@ -383,12 +424,13 @@ describe('validate — prototype keys are unknown, soft exit', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('constructor / toString: ⚠️ + exit 0 (soft)', () => {
+  it('constructor / toString / __proto__: ⚠️ + exit 0 (soft)', () => {
     const { code, out } = runQuery(root, ['validate']);
     assert.equal(code, 0, out);
     assert.match(out, /✅ OKF/);
     assert.match(out, /entities\/a \[constructor\] — unknown relation kind/);
     assert.match(out, /entities\/a \[toString\] — unknown relation kind/);
+    assert.match(out, /entities\/a \[__proto__\] — unknown relation kind/);
   });
 });
 
