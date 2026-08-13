@@ -32,7 +32,7 @@
 // so aging/davnost is deterministic in tests. No volatile timestamp is baked into the
 // output, so `--write` is idempotent: same bundle state → same bytes.
 import { join, dirname, resolve } from 'node:path';
-import { existsSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { load, ROOT, pathToId } from './lib/okf.mjs';
 import { atomicWriteFileSync } from '../lib/atomic-write.mjs';
@@ -536,11 +536,27 @@ export function parseArgs(argv) {
   return out;
 }
 
-/** Physical bundle root for one run: --root wins over OKF_ROOT (the module-level ROOT). */
+/**
+ * Physical bundle root for one run: --root wins over OKF_ROOT (the module-level ROOT).
+ *
+ * A path that exists is not enough — it has to be a directory. `walk()` swallows the ENOTDIR
+ * from `readdirSync` on a regular file and returns [], so `--root ./notes.md` used to print a
+ * cheerful empty board instead of saying the root was not a bundle. `statSync` follows symlinks
+ * on purpose: a symlink to a directory is a perfectly good bundle root (bundles get symlinked
+ * into place), while a symlink to a file or a dangling one is not.
+ */
 export function resolveBundleRoot(rootArg) {
   if (!rootArg) return ROOT;
   const root = resolve(rootArg);
-  if (!existsSync(root)) throw new Error(`root not found: ${root} (pass --root <dir> or set OKF_ROOT)`);
+  let st;
+  try {
+    st = statSync(root);
+  } catch {
+    throw new Error(`root not found: ${root} (pass --root <dir> or set OKF_ROOT)`);
+  }
+  if (!st.isDirectory()) {
+    throw new Error(`root is not a directory: ${root} (--root takes an OKF-bundle directory)`);
+  }
   return root;
 }
 

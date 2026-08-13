@@ -24,6 +24,11 @@ against the 1.0.0 tree rather than asserted.
   its task columns to lumen. In `board` one root serves the whole run — concepts, ledger, fleet
   registry and the `--write` target — so a run rooted at B can no longer show A's open failures
   or overdue engines. In `handoff` the docs come from the selected root; `--project` stays a filter.
+- **A `--root` that is not a directory produced an empty board instead of an error.** A missing
+  path was already refused, but an existing *file* passed the check and then failed the directory
+  read silently, leaving zero documents — output indistinguishable from a real but empty bundle.
+  Both `board` and `handoff` now refuse a non-directory root by name. A symlink to a directory is
+  accepted (bundles get symlinked into place); a symlink to a file, or a dangling one, is not.
 - **A missing flag value passed silently.** `board --root` at the end of a command line, or
   `--root --json` where the next flag would have become the value, resolved to "no value given"
   and the run quietly fell back to `OKF_ROOT`. Both now exit non-zero and say which flag needs a

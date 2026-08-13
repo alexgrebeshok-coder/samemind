@@ -5,7 +5,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readFileSync,
+  mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readFileSync, symlinkSync,
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -228,6 +228,53 @@ describe('board CLI --root — picks WHICH bundle to read (not a project filter)
     const { code, out } = runCLI(bundleA, ['--root', join(bundleB, 'no-such-dir')]);
     assert.notEqual(code, 0);
     assert.match(out, /root not found/);
+  });
+
+  // walk() swallows the ENOTDIR readdirSync throws on a regular file and returns [], so an
+  // existence check alone let `--root ./notes.md` print a cheerful empty board.
+  it('--root <regular file> → nonzero exit, not an empty board', () => {
+    const file = join(bundleB, 'index.md');
+    assert.ok(existsSync(file), 'fixture: a regular file to point --root at');
+    const { code, out } = runCLI(bundleA, ['--root', file]);
+    assert.notEqual(code, 0, 'a file is not a bundle root');
+    assert.match(out, /root is not a directory/);
+    assert.ok(!out.includes('# Dashboard'), 'must not render a board for a non-directory root');
+  });
+
+  it('--root <symlink to a directory> is accepted — bundles do get symlinked into place', () => {
+    const link = join(tmpdir(), `samemind-board-rootlink-${process.pid}`);
+    symlinkSync(bundleB, link, 'dir');
+    try {
+      const { code, out } = runCLI(bundleA, ['--root', link]);
+      assert.equal(code, 0, out);
+      assert.ok(out.includes('OnlyInBundleB'), 'reads through the symlink to B');
+    } finally {
+      rmSync(link, { force: true });
+    }
+  });
+
+  it('--root <symlink to a file> is rejected like the file itself', () => {
+    const link = join(tmpdir(), `samemind-board-filelink-${process.pid}`);
+    symlinkSync(join(bundleB, 'index.md'), link, 'file');
+    try {
+      const { code, out } = runCLI(bundleA, ['--root', link]);
+      assert.notEqual(code, 0);
+      assert.match(out, /root is not a directory/);
+    } finally {
+      rmSync(link, { force: true });
+    }
+  });
+
+  it('--root <dangling symlink> reports "not found", not "not a directory"', () => {
+    const link = join(tmpdir(), `samemind-board-danglink-${process.pid}`);
+    symlinkSync(join(bundleB, 'no-such-target'), link, 'dir');
+    try {
+      const { code, out } = runCLI(bundleA, ['--root', link]);
+      assert.notEqual(code, 0);
+      assert.match(out, /root not found/);
+    } finally {
+      rmSync(link, { force: true });
+    }
   });
 });
 

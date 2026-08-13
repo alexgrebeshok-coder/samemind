@@ -4,7 +4,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync, existsSync,
+  mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync, existsSync, symlinkSync,
 } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -371,6 +371,39 @@ describe('handoff CLI --root — picks WHICH bundle to read (not a project filte
     const r = run(bundleA, '--root', join(bundleB, 'no-such-dir'));
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /root not found/);
+  });
+
+  // walk() swallows the ENOTDIR readdirSync throws on a regular file and returns [], so an
+  // existence check alone let `--root ./notes.md` produce an empty brief that looked real.
+  it('--root <regular file> → nonzero exit, not an empty brief', () => {
+    const r = run(bundleA, '--root', join(bundleB, 'index.md'));
+    assert.notEqual(r.status, 0, 'a file is not a bundle root');
+    assert.match(r.stderr, /root is not a directory/);
+    assert.ok(!r.stdout.includes('# Handoff'), 'must not render a brief for a non-directory root');
+  });
+
+  it('--root <symlink to a directory> is accepted — bundles do get symlinked into place', () => {
+    const link = join(tmpdir(), `samemind-handoff-rootlink-${process.pid}`);
+    symlinkSync(bundleB, link, 'dir');
+    try {
+      const r = run(bundleA, '--root', link);
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(r.stdout.includes('OnlyInBundleB'), 'reads through the symlink to B');
+    } finally {
+      rmSync(link, { force: true });
+    }
+  });
+
+  it('--root <dangling symlink> reports "not found", not "not a directory"', () => {
+    const link = join(tmpdir(), `samemind-handoff-danglink-${process.pid}`);
+    symlinkSync(join(bundleB, 'no-such-target'), link, 'dir');
+    try {
+      const r = run(bundleA, '--root', link);
+      assert.notEqual(r.status, 0);
+      assert.match(r.stderr, /root not found/);
+    } finally {
+      rmSync(link, { force: true });
+    }
   });
 });
 
