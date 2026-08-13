@@ -1,6 +1,6 @@
-# samemind JSON contract (pre-1.0 freeze draft)
+# samemind JSON contract (frozen at 1.0)
 
-**Status:** living document for the 1.0 freeze.  
+**Status:** frozen as of v1.0.0. Changing the form of anything described here is a major version.  
 **Authority:** live CLI/`--json` output and live HTTP `/api/*` responses from this tree.  
 **Not authority:** `ui/src/api.ts` (not in the npm package; already drifts), `docs/ui-spec.md` field tables (the spec itself says wire names win).
 
