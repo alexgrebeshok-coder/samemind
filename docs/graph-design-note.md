@@ -1,7 +1,9 @@
 # Граф памяти 1.0 — типы рёбер и expand
 
-**Статус:** шаг 0. Решение, по которому пишут код. Кода в этой ноте нет.  
-**Дата:** 2026-08-12  
+**Статус:** expand + validate реализованы в 1.1 (`relation-kinds.mjs`, `expandHits`,
+`unknownRelationKindWarnings`). **`query rel` — сырые ключи** (канонический обход —
+отдельный срез). Нота — канон решения.  
+**Дата:** 2026-08-12 (код: 1.1.0)  
 **Наряд:** Н4 / `n4-samemind-graph-1208`  
 **Аудитория:** директор (приёмка) и Саша.
 
@@ -11,26 +13,26 @@
 
 ## 0. Что уже есть в коде (не выдумывать)
 
-В продукте граф **уже есть**, но он **без закрытого словаря**. Формулировка наряда «только `[[wiki]]` без типа и направления» — про восприятие, не про репозиторий. По коду:
+В продукте граф **уже есть**. С 1.1 словарь **закрыт на чтении** для **expand** и
+**validate**; парсер и **`query rel` по-прежнему сырые ключи**. Таблица §0 —
+инвентарь на старт наряда; пометки «до 1.1» / «с 1.1» отделяют историю от
+текущего кода.
 
 | Слой | Где | Что делает |
 |---|---|---|
 | Хранение | markdown + YAML frontmatter, `tools/lib/okf.mjs` `parse()` / `load()` | Узел = файл. Источник правды — файлы бандла, не БД. |
 | Markdown-ссылки | `okf.mjs:214` | Из тела (вне code/inline-code) вытаскиваются только `[text](path.md)`. Это и есть «wikilink» продукта. |
 | `[[wiki]]` | комментарий `okf.mjs:306–307` | Формат зеркал Claude Code. `validate`/`links` их **не** разбирают. В живом бандле ~30 штук, большинство не резолвится в id концепта (`[[skill-lifecycle]]`, `[[x]]`, `[[ссылок]]`). В `demo/` — 0. |
-| Типизированные рёбра | frontmatter `relations:`, `normalizeRelations`, `collectRelationEdges` | Словарь **открытый**: любой ключ → список путей. `samemind query rel <type> <id>` ходит в обе стороны. `validate` ругается на битую цель, **не** на неизвестный тип. |
+| Типизированные рёбра | frontmatter `relations:`, `normalizeRelations`, `collectRelationEdges` | Парсер **открытый**: любой ключ → список путей. **`query rel`** — сырой `relations[edgeType]`, без алиасов (`works_at` да, `member_of` пусто). **С 1.1:** `validate` ⚠️ на неизвестный ключ (не fail). |
 | `supersedes` | top-level frontmatter, `docs/memory-hygiene.md`, `okf.mjs:219–223` | Гигиена, **не** ребро графа. Намеренно вне `relations:`. |
 | Конфликт 0.7.0 | `CHANGELOG` 0.7.0, `hygiene.mjs` `findContradictions` / `applyConflictTiebreak` | Живые пары (один `type`, Jaccard ≥ 0.34, никто никого не supersede’ит) **не выкидываются**. Порядок: authority ↓ → recency ↓ → score. Проигравший помечается `⚔ conflicts with <id>`. Stale/deprecated по умолчанию не в выдаче (`--include-superseded` — аудит). |
-| Expand 0.9.0 (G2) | `recall.mjs` `expandHits`, `okf-recall.mjs --expand`, MCP `memory_search.expand` | 1 hop, budget 5, off by default. Тянет **все** `relations` в обе стороны + **обратные** md-ссылки. Исходящие md-ссылки хита **не** тянет. Соседей печатает отдельно (`+hop`), в рейтинг хитов не мешает. Hygiene-gate тот же: deprecated / superseded / expired не тянутся. `--expand-hops > 1` уже режется до 1. |
+| Expand 0.9.0 (G2) | `recall.mjs` `expandHits`, `okf-recall.mjs --expand`, MCP `memory_search.expand` | **До 1.1:** 1 hop, budget 5; тянул **все** `relations` + inbound md-ссылки. **С 1.1:** очередь kind, алиасы, без `next`/unknown/`relations.supersedes`; канонический `kind` в `+hop` / `expanded` — §4.3. |
 | Поиск | `recall.mjs` + `bm25.mjs` + `sqlite-index.mjs` | `auto` → semantic если есть индекс и эндпоинт, иначе BM25. `hybrid` = RRF. `sqlite-vec` — только векторы (`items`: id, hash, type, title, visibility). **Таблицы рёбер в sqlite нет.** |
 | Карта связей | `okf-query.mjs` `buildLinksModel`, HTTP `/api/graph`, контракт `kind: "links"` | Уже отдаёт `edges[]` с `kind: "link" \| "relation"` и `rel: <открытый ключ>`. `supersedes` рисуется как `rel: "supersedes"`. |
 
-Документы сами говорят, что словарь открыт:
-
-> «None of these are in a closed dictionary — `relations` edge types are open by design»  
-> (`docs/knowledge-cycle.md`, около строки 173)
-
-Это и есть дыра шага 0: expand не отличает «проект → решение» от «сессия → хвост задач», и любой новый ключ молча становится ребром.
+До 1.1 документы говорили, что словарь открыт — это исправлено в
+`docs/knowledge-cycle.md` и здесь. Дыра шага 0 (expand тащил всё подряд) закрыта:
+очередь kind, алиасы, `next`/unknown не ходят.
 
 **Ключи, которые уже живут в дереве** (не нормативные — инвентарь):
 
@@ -180,15 +182,19 @@ Expand ходит сюда **последним** и только если бю�
 
 ### 4.3 Какие рёбра ходить и в каком порядке
 
-Сейчас `expandHits` сваливает все `relations` + inbound links в один `Set` и режет бюджет порядком обхода объекта. В 1.0 — очередь по типу:
+**Было до 1.1:** `expandHits` сваливал все `relations` + inbound links в один `Set`
+и резал бюджет порядком обхода объекта.
 
-1. `about`, `member_of`, `agreed_with`, `depends_on`, `informs`, `uses` — оба направления (как `rel` CLI).
+**Реализовано в 1.1:**
+
+1. `about`, `member_of`, `agreed_with`, `depends_on`, `informs`, `uses` — оба направления.
 2. `cites` — **только inbound** (кто сослался на хит).
 3. `related` — оба направления, если бюджет ещё есть.
 
 Не ходить: `next`, неизвестные ключи, `relations.supersedes`.
 
-Подпись `+hop` в 1.0 должна нести **канонический kind** (`about` / `member_of` / … / `cites`), не сырой ключ файла. Алиас нормализуется до печати. Иначе агент снова видит зоопарк.
+`+hop` / MCP `expanded` несут **канонический kind** (`about` / `member_of` / … /
+`cites`), не сырой ключ файла. Алиас нормализуется до печати.
 
 ### 4.4 Конфликт — не изобретать, стыковать с 0.7.0
 
@@ -197,7 +203,9 @@ Expand ходит сюда **последним** и только если бю�
 1. **Соседа нет, если он не live** — `isDeprecated` или `isStaleForRecall` (superseded / `superseded_by` / `invalid_at` / `valid_from`). Это уже в `expandHits`. Сохранить. `--as-of` прокидывать, как сейчас.
 2. **Живой конфликт не прячем.** 0.7.0 не дропает пару, только ставит победителя выше и вешает `⚔`. Если сосед в противоречии с сидом (тот же детектор `findContradictions`) — показать соседа и дописать ту же метку. Не подменять гигиену новым `conflicts_with`.
 3. **Tiebreak не смешивает блоки.** `applyConflictTiebreak` работает внутри ranked `results`. Блок `expanded` — не рейтинг. Двух противоречащих соседей в `+hop` не сортируем друг относительно друга и не тратим бюджет на замену: оба, с меткой, пока влезают.
-4. **`--include-superseded`.** Если вызвали аудит — expand тоже может тянуть stale, но с той же пометкой, что и recall. Без флага — нет. Сейчас expand игнорирует этот флаг (всегда live-only). В 1.0 выровнять: тот же `includeSuperseded`, что у хитов.
+4. **`--include-superseded`.** Если вызвали аудит — expand тянет stale с той же
+   пометкой, что и recall. Без флага — нет. **Сделано в 1.1** (`includeSuperseded`
+   parity в `expandHits`; MCP `include_superseded`).
 
 `reconcile` по-прежнему предлагает, не пишет. Авто-ребро «этот факт победил тот» из Jaccard — запрещено.
 
@@ -239,17 +247,13 @@ Expand ходит сюда **последним** и только если бю�
 
 ---
 
-## 6. Что пишет следующий исполнитель за день (не этот наряд)
+## 6. Что сделано в 1.1 (код принят до этого наряда)
 
-Порядок, чтобы не открывать схему заново:
-
-1. Таблица канон → алиасы в одном месте (`tools/lib/`, рядом с `normalizeRelations`). Чистые функции + тесты на `works_at`≡`member_of`, `spawned_by` как перевёрнутый `informs`, `relations.supersedes` → гигиена.
-2. `validate`: ⚠️ на ключ вне словаря и вне белого `next`.
-3. `expandHits`: очередь kind, не ходить `next`/unknown/`relations.supersedes`, подпись с каноническим kind, `includeSuperseded` как у хитов, метка `⚔` если сосед в паре с сидом.
-4. Протокол (`memory-protocol.md`): одна фраза — когда агент обязан передать `expand: true`.
-5. Тесты: существующий `recall-expand.test.mjs` остаётся зелёным на инвариантах 0.9.0; добавить kind-priority и «`next` не тянется».
-
-Контракт JSON не ломать: `expanded` по-прежнему отдельный блок. Добавить поле `kind` на элемент `expanded` — аддитивно, до 1.0 можно.
+1. `tools/lib/relation-kinds.mjs` — канон → алиасы, очередь обхода, `cites` derived.
+2. `validate` — ⚠️ на ключ вне словаря; `next` в белом списке.
+3. `expandHits` — очередь kind, запрет `next`/unknown/`relations.supersedes`, канонический `kind` в выдаче, `includeSuperseded` parity, метка `⚔` на конфликтующих соседях.
+4. `memory-protocol.md` / `json-contract.md` — когда агент обязан `expand: true`; additive `kind` на `expanded`.
+5. Тесты: `recall-expand.test.mjs`, `relation-kinds.test.mjs`.
 
 ---
 

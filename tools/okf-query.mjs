@@ -12,6 +12,7 @@ import {
 import {
   buildSupersededMap, hygieneBanner, detectSupersedeCycles, collectSupersedeEdges,
 } from './lib/hygiene.mjs';
+import { unknownRelationKindWarnings } from './lib/relation-kinds.mjs';
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -215,6 +216,8 @@ if (cmd === 'list') {
       relWarns.push(`${e.fromId} [${e.type}] → ${e.toPath} (path does not exist)`);
     }
   }
+  // unknown relation kinds → warnings (not hard fail). next is a known board key, not unknown.
+  const kindWarns = unknownRelationKindWarnings(cs);
   // work-discipline status checks → warnings (Plan/Task only); see docs/work-discipline.md
   const disciplineWarns = disciplineChecks(cs);
   // knowledge-cycle status checks → warnings (Idea only); see docs/knowledge-cycle.md
@@ -232,12 +235,16 @@ if (cmd === 'list') {
   if (errs.length) {
     console.log('❌ NOT conformant:\n' + errs.join('\n'));
     if (relWarns.length) console.log('\n⚠️ Broken relations:\n' + relWarns.join('\n'));
+    if (kindWarns.length) console.log('\n⚠️ Unknown relation kinds:\n' + kindWarns.join('\n'));
     if (supersedeWarns.length) console.log('\n⚠️ Supersede issues:\n' + supersedeWarns.join('\n'));
     process.exit(1);
   }
   console.log(`✅ OKF v0.1 conformant: ${cs.length} concepts, all have a non-empty type.`);
   if (relWarns.length) {
     console.log(`⚠️ Broken relations (${relWarns.length}):\n` + relWarns.join('\n'));
+  }
+  if (kindWarns.length) {
+    console.log(`⚠️ Unknown relation kinds (${kindWarns.length}):\n` + kindWarns.join('\n'));
   }
   if (disciplineWarns.length) {
     console.log(`⚠️ Work discipline (${disciplineWarns.length}):\n` + disciplineWarns.join('\n'));

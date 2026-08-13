@@ -50,26 +50,36 @@ samemind recall "<question>" -k 5 --expand
 either direction) and reverse wikilinks (some other doc's markdown link
 pointing *at* the hit — "who cites this", not the hit's own outbound links).
 Neighbors print after the main hits, marked `+hop`, and never affect the
-ranking of the hits above them:
+ranking of the hits above them. Each `+hop` row carries the **canonical edge
+kind** (`about`, `member_of`, `cites`, …), not the raw frontmatter alias:
 
 ```
 0.412  Project    projects/lumen — Lumen
-  +hop  Decision   projects/lumen-sync — Sync backlog  (+1 hop from projects/lumen)
+  +hop  Decision   about       projects/lumen-sync — Sync backlog  (+1 hop from projects/lumen)
 ```
 
 - Budget-capped (`--expand-budget N`, default 5), shared across all seed hits
   — not per-hit.
-- superseded/deprecated docs are never pulled in as neighbors (same hygiene
-  gate live recall already applies).
+- superseded/deprecated docs are never pulled in as neighbors unless you pass
+  `--include-superseded` (audit); expand uses the same hygiene labels as the
+  primary hits.
 - Off by default: without the flag, output is byte-identical to a plain
-  `recall`. MCP parity: `memory_search { query, expand: true, expand_budget? }`
-  returns the same neighbors in a separate `expanded` block (never merged into
-  `results`).
+  `recall`. MCP parity: `memory_search { query, expand: true, expand_budget?,
+  include_superseded? }` returns the same neighbors in a separate `expanded`
+  block (never merged into `results`). Every `expanded` row includes `kind`
+  (canonical edge kind), `hop`, and `expandedFrom`.
 
-Use it when a hit points at connected context worth knowing (project → its
-decisions/plans, person → their org/collaborators); skip it for a plain fact
-lookup. A `+hop` neighbor still needs a full read (step 3) if it actually
-informs the answer — expand only tells you it exists.
+**When the agent must pass `expand: true` (MCP) / `--expand` (CLI):** if any
+top-k hit is a question **anchor** — `Entity`, `User`, `Project`, `Plan`,
+`Decision`, `Idea`, or `Identity`. Those types sit at the center of a typed
+graph; one hop surfaces decisions, org membership, informing analysis, and
+similar context the ranking alone hides. **Do not** expand for a plain fact
+lookup (field semantics, a single Concept answer, “what does this tag mean?”).
+
+Use expand when a hit points at connected context worth knowing (project → its
+decisions/plans, person → their org/collaborators). A `+hop` neighbor still
+needs a full read (step 3) if it actually informs the answer — expand only
+tells you it exists.
 
 ### 3. Read top hits fully
 

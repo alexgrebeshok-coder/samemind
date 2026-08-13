@@ -13,11 +13,21 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const QUERY = join(HERE, 'okf-query.mjs');
+const CLI = join(HERE, '..', 'bin', 'samemind.mjs');
 
 function runQuery(root, args) {
   const r = spawnSync(process.execPath, [QUERY, ...args], {
     env: { ...process.env, OKF_ROOT: root },
     encoding: 'utf8',
+  });
+  return { code: r.status ?? 1, out: (r.stdout || '') + (r.stderr || '') };
+}
+
+function runSamemind(root, args) {
+  const r = spawnSync(process.execPath, [CLI, ...args], {
+    env: { ...process.env, OKF_ROOT: root },
+    encoding: 'utf8',
+    cwd: root,
   });
   return { code: r.status ?? 1, out: (r.stdout || '') + (r.stderr || '') };
 }
@@ -82,9 +92,50 @@ describe('normalizeRelations + parse frontmatter', () => {
     assert.deepEqual(n.empty, []);
   });
 
-  it('normalizeRelations: null/array root → {}', () => {
-    assert.deepEqual(okf.normalizeRelations(null), {});
-    assert.deepEqual(okf.normalizeRelations([]), {});
+  it('normalizeRelations: null/array root → empty own map, JSON {}', () => {
+    for (const raw of [null, []]) {
+      const n = okf.normalizeRelations(raw);
+      assert.equal(Object.getPrototypeOf(n), null);
+      assert.deepEqual(Object.keys(n), []);
+      assert.equal(JSON.stringify(n), '{}');
+    }
+  });
+
+  it('normalizeRelations: own-safe — __proto__ stays a data key, JSON shape of real edges unchanged', () => {
+    const raw = Object.create(null);
+    raw.works_at = '/entities/b.md';
+    raw.depends_on = ['/projects/p.md'];
+    raw['__proto__'] = '/entities/evil.md';
+    raw.constructor = '/entities/evil.md';
+    const n = okf.normalizeRelations(raw);
+    assert.equal(Object.getPrototypeOf(n), null);
+    assert.ok(Object.hasOwn(n, '__proto__'));
+    assert.ok(Object.hasOwn(n, 'constructor'));
+    assert.deepEqual(n.works_at, ['/entities/b.md']);
+    assert.deepEqual(n.depends_on, ['/projects/p.md']);
+    assert.deepEqual(n['__proto__'], ['/entities/evil.md']);
+    assert.deepEqual(n.constructor, ['/entities/evil.md']);
+    assert.equal({}.foo, undefined, 'Object.prototype not polluted');
+    const parsed = JSON.parse(JSON.stringify(n));
+    assert.deepEqual(parsed.works_at, ['/entities/b.md']);
+    assert.deepEqual(parsed.depends_on, ['/projects/p.md']);
+    assert.deepEqual(parsed['__proto__'], ['/entities/evil.md']);
+    assert.deepEqual(parsed.constructor, ['/entities/evil.md']);
+  });
+
+  it('parseFrontmatter: __proto__ under relations: is an own key, not a prototype write', () => {
+    const fm = okf.parseFrontmatter(
+      'type: Entity\nrelations:\n  __proto__: /entities/b.md\n  works_at: /entities/a.md\n',
+    );
+    assert.equal(Object.getPrototypeOf(fm.relations), null);
+    assert.ok(Object.hasOwn(fm.relations, '__proto__'));
+    assert.equal(fm.relations['__proto__'], '/entities/b.md');
+    assert.equal(fm.relations.works_at, '/entities/a.md');
+    const n = okf.normalizeRelations(fm.relations);
+    assert.ok(Object.hasOwn(n, '__proto__'));
+    assert.deepEqual(n['__proto__'], ['/entities/b.md']);
+    assert.deepEqual(n.works_at, ['/entities/a.md']);
+    assert.equal(JSON.stringify({ works_at: n.works_at }), '{"works_at":["/entities/a.md"]}');
   });
 
   it('parse: relations always arrays on document', () => {
@@ -244,5 +295,167 @@ describe('demo bundle has live relations', () => {
     assert.equal(code, 0, out);
     assert.match(out, /✅/);
     assert.ok(!out.includes('⚠️ Broken relations'), out);
+    assert.ok(!out.includes('Unknown relation kinds'), out);
+  });
+});
+
+describe('validate — unknown kind is warning; next / aliases / hygiene stay silent', () => {
+  let root;
+
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), 'samemind-rel-kind-'));
+    writeConcept(root, 'entities/known.md', {
+      type: 'Entity',
+      title: 'Known',
+      relations: {
+        works_at: '/entities/org.md',
+        covers: '/projects/p.md',
+        spawned_by: '/concepts/src.md',
+        next: '/projects/task.md',
+        supersedes: '/entities/old.md',
+      },
+    });
+    writeConcept(root, 'entities/org.md', { type: 'Entity', title: 'Org' });
+    writeConcept(root, 'entities/old.md', { type: 'Entity', title: 'Old' });
+    writeConcept(root, 'projects/p.md', { type: 'Project', title: 'P' });
+    writeConcept(root, 'projects/task.md', { type: 'Task', title: 'Task' });
+    writeConcept(root, 'concepts/src.md', { type: 'Concept', title: 'Src' });
+    writeConcept(root, 'entities/weird.md', {
+      type: 'Entity',
+      title: 'Weird',
+      relations: { frobnicates: '/entities/org.md' },
+    });
+  });
+
+  after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('unknown key: ✅ + ⚠️, exit 0 (soft warning, not hard fail)', () => {
+    const { code, out } = runQuery(root, ['validate']);
+    assert.equal(code, 0, out);
+    assert.match(out, /✅ OKF/);
+    assert.match(out, /Unknown relation kinds/);
+    assert.match(out, /entities\/weird \[frobnicates\] — unknown relation kind/);
+  });
+
+  it('next is known board key: no unknown warning for it', () => {
+    const { code, out } = runQuery(root, ['validate']);
+    assert.equal(code, 0, out);
+    assert.ok(!/entities\/known \[next\]/.test(out), out);
+  });
+
+  it('aliases and relations.supersedes are not unknown', () => {
+    const { code, out } = runQuery(root, ['validate']);
+    assert.equal(code, 0, out);
+    assert.ok(!/entities\/known \[(works_at|covers|spawned_by|supersedes)\]/.test(out), out);
+  });
+});
+
+describe('validate — stored cites is unknown (derived, not a relations key)', () => {
+  let root;
+
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), 'samemind-rel-cites-'));
+    writeConcept(root, 'entities/a.md', {
+      type: 'Entity',
+      title: 'A',
+      relations: { cites: '/entities/b.md' },
+    });
+    writeConcept(root, 'entities/b.md', { type: 'Entity', title: 'B' });
+  });
+
+  after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('relations.cites → unknown relation kind warning, exit 0', () => {
+    const { code, out } = runQuery(root, ['validate']);
+    assert.equal(code, 0, out);
+    assert.match(out, /✅ OKF/);
+    assert.match(out, /entities\/a \[cites\] — unknown relation kind/);
+  });
+});
+
+describe('validate — next-only bundle is silent', () => {
+  let root;
+
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), 'samemind-rel-next-'));
+    writeConcept(root, 'concepts/session.md', {
+      type: 'Session',
+      title: 'S',
+      relations: { next: '/projects/task.md' },
+    });
+    writeConcept(root, 'projects/task.md', { type: 'Task', title: 'T' });
+  });
+
+  after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('no Unknown relation kinds section, exit 0', () => {
+    const { code, out } = runQuery(root, ['validate']);
+    assert.equal(code, 0, out);
+    assert.match(out, /✅ OKF/);
+    assert.ok(!out.includes('Unknown relation kinds'), out);
+    assert.ok(!out.includes('unknown relation kind'), out);
+  });
+});
+
+describe('validate — prototype keys are unknown, soft exit', () => {
+  let root;
+
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), 'samemind-rel-proto-'));
+    const relations = Object.create(null);
+    relations.constructor = '/entities/b.md';
+    relations.toString = '/entities/b.md';
+    relations['__proto__'] = '/entities/b.md';
+    writeConcept(root, 'entities/a.md', {
+      type: 'Entity',
+      title: 'A',
+      relations,
+    });
+    writeConcept(root, 'entities/b.md', { type: 'Entity', title: 'B' });
+  });
+
+  after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('constructor / toString / __proto__: ⚠️ + exit 0 (soft)', () => {
+    const { code, out } = runQuery(root, ['validate']);
+    assert.equal(code, 0, out);
+    assert.match(out, /✅ OKF/);
+    assert.match(out, /entities\/a \[constructor\] — unknown relation kind/);
+    assert.match(out, /entities\/a \[toString\] — unknown relation kind/);
+    assert.match(out, /entities\/a \[__proto__\] — unknown relation kind/);
+  });
+});
+
+describe('validate — samemind CLI query validate', () => {
+  let root;
+
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), 'samemind-rel-cli-'));
+    writeConcept(root, 'entities/a.md', {
+      type: 'Entity',
+      title: 'A',
+      relations: { next: '/entities/b.md', frobnicates: '/entities/b.md' },
+    });
+    writeConcept(root, 'entities/b.md', { type: 'Entity', title: 'B' });
+  });
+
+  after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('samemind query validate: warns on unknown, silent on next', () => {
+    const { code, out } = runSamemind(root, ['query', 'validate']);
+    assert.equal(code, 0, out);
+    assert.match(out, /✅ OKF/);
+    assert.match(out, /entities\/a \[frobnicates\] — unknown relation kind/);
+    assert.ok(!/entities\/a \[next\]/.test(out), out);
   });
 });

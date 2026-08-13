@@ -325,7 +325,7 @@ The JSON **inside** `text` is the MCP contract. It is pretty-printed (`null, 2`)
 
 | Tool | Payload sketch |
 |------|----------------|
-| `memory_search` | `{ query, mode, warning, count, results[{ id, type, title, score, snippet, hygiene, source? }], expanded? }` |
+| `memory_search` | `{ query, mode, warning, count, results[{ id, type, title, score, snippet, hygiene, source? }], expanded? }` — see §7.1 for `expanded` shape (1.1 additive `kind`) |
 | `memory_get` | `{ found, id }` or `{ found, id, type, title, visibility, tags, content }` — full raw file in `content` |
 | `memory_list` | `{ count, items[{ id, type, title, visibility }] }` |
 | `memory_write_inbox` | `{ ok, agent, file, quarantined, matches, bytesWritten }` |
@@ -345,6 +345,42 @@ The JSON **inside** `text` is the MCP contract. It is pretty-printed (`null, 2`)
 | Purpose | UI / machine board consumers | Agent session start brief |
 
 Do **not** share types between them. MCP may evolve on its own cadence; folding MCP into the HTTP envelope without a major of the MCP tool API would be a separate decision.
+
+### 7.1 `memory_search` — `expanded` block (1.1 additive)
+
+Omitted when `expand` is false or absent — payload shape is **byte-identical to
+1.0** (no `expanded` key). When `expand: true`, neighbors appear only in
+`expanded`, never merged into `results`.
+
+Each `expanded[]` element (live wire, since 1.1):
+
+```json
+{
+  "id": "concepts/retrieval-strategy",
+  "type": "Concept",
+  "title": "Retrieval strategy",
+  "kind": "depends_on",
+  "hop": 1,
+  "expandedFrom": "projects/lumen",
+  "snippet": "…",
+  "hygiene": "optional — same labels as primary hits when include_superseded pulls stale neighbors"
+}
+```
+
+| Field | Since | Notes |
+|-------|-------|-------|
+| `id`, `type`, `title`, `snippet` | G2 (0.9+) | Unchanged |
+| `kind` | **1.1** | Canonical read-side edge kind (`about`, `member_of`, …). **Required** on every `expanded[]` row when `expand: true` (1.1+). |
+| `hop` | **1.1** | Always `1` today (1-hop ceiling) |
+| `expandedFrom` | G2 | Seed hit id this neighbor was pulled from |
+
+Input (additive, non-breaking):
+
+| Parameter | Type | Default | Parity |
+|-----------|------|---------|--------|
+| `expand` | boolean | false | CLI `--expand` |
+| `expand_budget` | integer | 5 | CLI `--expand-budget N` |
+| `include_superseded` | boolean | false | CLI `--include-superseded` — stale neighbors in `expanded` get the same hygiene labels as primary hits |
 
 ### MCP policy after 1.0
 

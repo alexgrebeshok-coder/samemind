@@ -63,12 +63,46 @@ description: unique-expand-seed-marker whose only relation targets the secret va
 visibility: internal
 tags: [leaky]
 relations:
-  touches: [/secret/vault.md]
+  uses: [/secret/vault.md]
 ---
 
 # Leaky Expand Seed
 
 Proves 1-hop expand never pulls a secret-visibility neighbor in.
+`, 'utf8');
+  writeFileSync(join(BUNDLE_DIR, 'concepts', 'stale-expand-old.md'), `---
+type: Concept
+title: Stale Expand Old
+visibility: internal
+---
+
+# Stale Expand Old
+
+Superseded neighbor for include_superseded expand parity.
+`, 'utf8');
+  writeFileSync(join(BUNDLE_DIR, 'concepts', 'stale-expand-new.md'), `---
+type: Concept
+title: Stale Expand New
+visibility: internal
+supersedes: [/concepts/stale-expand-old.md]
+---
+
+# Stale Expand New
+
+Replacement of the stale expand neighbor.
+`, 'utf8');
+  writeFileSync(join(BUNDLE_DIR, 'projects', 'stale-expand-hub.md'), `---
+type: Concept
+title: Stale Expand Hub
+description: unique-stale-expand-hub-marker
+visibility: internal
+relations:
+  uses: [/concepts/stale-expand-old.md, /concepts/stale-expand-new.md]
+---
+
+# Stale Expand Hub
+
+unique-stale-expand-hub-marker so expand can prove include_superseded plumbing.
 `, 'utf8');
 });
 
@@ -377,6 +411,9 @@ describe('MCP stdio — memory_search expand (G2 1-hop graph expand parity)', ()
       assert.ok(neighbor, JSON.stringify(payload.expanded));
       assert.equal(neighbor.hop, 1);
       assert.equal(neighbor.expandedFrom, 'projects/lumen');
+      assert.equal(neighbor.kind, 'depends_on');
+      assert.equal(typeof neighbor.id, 'string');
+      assert.equal(typeof neighbor.type, 'string');
       // expanded rows never mixed into the ranked `results` array
       assert.ok(!payload.results.some(r => r.id === 'concepts/retrieval-strategy'));
     } finally {
@@ -420,7 +457,7 @@ describe('MCP stdio — memory_search expand (G2 1-hop graph expand parity)', ()
     }
   });
 
-  it('memory_search advertises expand and expand_budget in its input schema', async () => {
+  it('memory_search advertises expand, expand_budget, and include_superseded in its input schema', async () => {
     const client = startClient();
     try {
       await initialized(client);
@@ -428,7 +465,73 @@ describe('MCP stdio — memory_search expand (G2 1-hop graph expand parity)', ()
       const search = res.result.tools.find(t => t.name === 'memory_search');
       assert.equal(search.inputSchema.properties.expand.type, 'boolean');
       assert.equal(search.inputSchema.properties.expand_budget.type, 'integer');
+      assert.equal(search.inputSchema.properties.include_superseded.type, 'boolean');
       assert.match(search.description, /expand/);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('include_superseded omitted: stale neighbor is not in expanded', async () => {
+    const client = startClient({ OKF_EMBED_URL: '', OKF_GLOBAL_ROOT: '' });
+    try {
+      await initialized(client);
+      const res = await client.request('tools/call', {
+        name: 'memory_search',
+        arguments: { query: 'unique-stale-expand-hub-marker', k: 5, expand: true },
+      });
+      const payload = toolPayload(res);
+      assert.ok(payload.results.some(r => r.id === 'projects/stale-expand-hub'), JSON.stringify(payload));
+      const ids = (payload.expanded || []).map(e => e.id);
+      assert.ok(ids.includes('concepts/stale-expand-new'), JSON.stringify(payload.expanded));
+      assert.ok(!ids.includes('concepts/stale-expand-old'), JSON.stringify(payload.expanded));
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('include_superseded: true pulls stale expanded neighbor with hygiene mark', async () => {
+    const client = startClient({ OKF_EMBED_URL: '', OKF_GLOBAL_ROOT: '' });
+    try {
+      await initialized(client);
+      const res = await client.request('tools/call', {
+        name: 'memory_search',
+        arguments: {
+          query: 'unique-stale-expand-hub-marker', k: 5, expand: true, include_superseded: true,
+        },
+      });
+      const payload = toolPayload(res);
+      const stale = (payload.expanded || []).find(e => e.id === 'concepts/stale-expand-old');
+      assert.ok(stale, JSON.stringify(payload.expanded));
+      assert.equal(stale.kind, 'uses');
+      assert.equal(stale.hop, 1);
+      assert.equal(stale.expandedFrom, 'projects/stale-expand-hub');
+      assert.match(String(stale.hygiene || ''), /superseded by/);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('expanded rows share id/type/kind/hop/expandedFrom with the CLI hop shape', async () => {
+    const client = startClient({ OKF_EMBED_URL: '', OKF_GLOBAL_ROOT: '' });
+    try {
+      await initialized(client);
+      const res = await client.request('tools/call', {
+        name: 'memory_search',
+        arguments: { query: 'lumen notes', k: 10, expand: true },
+      });
+      const payload = toolPayload(res);
+      const neighbor = payload.expanded.find(e => e.id === 'concepts/retrieval-strategy');
+      assert.ok(neighbor, JSON.stringify(payload.expanded));
+      assert.deepEqual(
+        Object.keys(neighbor).filter(k => ['id', 'type', 'kind', 'hop', 'expandedFrom'].includes(k)).sort(),
+        ['expandedFrom', 'hop', 'id', 'kind', 'type'],
+      );
+      assert.equal(neighbor.id, 'concepts/retrieval-strategy');
+      assert.equal(neighbor.type, 'Concept');
+      assert.equal(neighbor.kind, 'depends_on');
+      assert.equal(neighbor.hop, 1);
+      assert.equal(neighbor.expandedFrom, 'projects/lumen');
     } finally {
       await client.close();
     }

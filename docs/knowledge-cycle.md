@@ -170,10 +170,12 @@ built for this layer, only documented:
   `samemind query rel led_to <idea-id>` (outbound) or
   `samemind query rel led_to <plan-id> --inbound` (which idea led here).
 
-None of these are in a closed dictionary — `relations` edge types are open by
-design (`docs/work-discipline.md` documents the same for `agreed_with` /
-`covers` / `about` / `decided` / `next` / `project`). `validate` still checks
-every edge resolves to a real bundle path, regardless of its type name.
+These keys are **aliases** of the closed read-side vocabulary in
+`docs/graph-design-note.md` (`about`, `member_of`, `depends_on`, `uses`,
+`agreed_with`, `informs`, `related`, plus derived `cites` from body links).
+The parser still accepts any `relations:` key (foreign bundles stay loadable);
+`validate` warns on keys outside the dictionary and outside the board-only
+whitelist (`next`). Every edge is still checked for a resolvable bundle path.
 
 ## Reflection protocol — how an agent reacts to an immature `Idea`
 
