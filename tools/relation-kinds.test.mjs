@@ -8,6 +8,8 @@ import {
   canonicalRelationKind,
   isExpandableRelationKey,
   relationKindTraversal,
+  orientRelation,
+  unknownRelationKindWarnings,
   RELATION_KIND_TRAVERSAL,
   RELATION_WALK_ORDER,
 } from './lib/relation-kinds.mjs';
@@ -91,6 +93,7 @@ describe('isExpandableRelationKey', () => {
     const notExpandable = [
       'next', 'supersedes', 'superseded_by', 'relations.supersedes',
       'frobnicates', 'cites', '',
+      'constructor', '__proto__', 'toString',
     ];
     for (const k of expandable) assert.equal(isExpandableRelationKey(k), true, k);
     for (const k of notExpandable) assert.equal(isExpandableRelationKey(k), false, k);
@@ -134,7 +137,7 @@ describe('relationKindTraversal — directions / derived / symmetric', () => {
   }
 
   it('null for aliases, board, hygiene, unknown — lookup is by canonical walk kind', () => {
-    for (const raw of ['covers', 'works_at', 'spawned_by', 'next', 'supersedes', 'frobnicates', '', null]) {
+    for (const raw of ['covers', 'works_at', 'spawned_by', 'next', 'supersedes', 'frobnicates', '', null, 'constructor', '__proto__', 'toString']) {
       assert.equal(relationKindTraversal(raw), null, String(raw));
     }
   });
@@ -165,5 +168,58 @@ describe('traversal mutation probes', () => {
       assert.equal(spec.derived, false, kind);
       assert.equal(spec.symmetric, false, kind);
     }
+  });
+});
+
+const PROTO_KEYS = ['constructor', '__proto__', 'toString'];
+const UNKNOWN = { class: 'unknown', kind: null, reverse: false };
+
+describe('prototype keys are unknown — not inherited object slots', () => {
+  for (const raw of PROTO_KEYS) {
+    it(`${raw} → unknown / canonical null / not expandable / traversal null`, () => {
+      assert.deepEqual(classifyRelationKey(raw), UNKNOWN);
+      assert.equal(canonicalRelationKind(raw), null);
+      assert.equal(isExpandableRelationKey(raw), false);
+      assert.equal(relationKindTraversal(raw), null);
+    });
+  }
+
+  it('validate warns on constructor / __proto__ / toString (own keys)', () => {
+    const relations = Object.create(null);
+    relations.constructor = '/entities/a.md';
+    relations['__proto__'] = '/entities/a.md';
+    relations.toString = '/entities/a.md';
+    const warns = unknownRelationKindWarnings([{ id: 'entities/proto', relations }]);
+    assert.deepEqual(warns, [
+      'entities/proto [constructor] — unknown relation kind',
+      'entities/proto [__proto__] — unknown relation kind',
+      'entities/proto [toString] — unknown relation kind',
+    ]);
+  });
+});
+
+describe('orientRelation — alias reverse for expand', () => {
+  it('spawned_by flips the pair to canonical informs inbound', () => {
+    assert.deepEqual(
+      orientRelation('research-mirror-sync-mechanism', 'spawned_by', 'analysis-mirror-staleness'),
+      {
+        from: 'analysis-mirror-staleness',
+        to: 'research-mirror-sync-mechanism',
+        kind: 'informs',
+        direction: 'inbound',
+      },
+    );
+  });
+
+  it('informs keeps the written pair outbound (no flip)', () => {
+    assert.deepEqual(
+      orientRelation('analysis-mirror-staleness', 'informs', 'idea-cron-sync-adapters'),
+      {
+        from: 'analysis-mirror-staleness',
+        to: 'idea-cron-sync-adapters',
+        kind: 'informs',
+        direction: 'outbound',
+      },
+    );
   });
 });

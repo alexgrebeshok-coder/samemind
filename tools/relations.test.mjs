@@ -362,6 +362,36 @@ describe('validate — next-only bundle is silent', () => {
   });
 });
 
+describe('validate — prototype keys are unknown, soft exit', () => {
+  let root;
+
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), 'samemind-rel-proto-'));
+    const relations = Object.create(null);
+    relations.constructor = '/entities/b.md';
+    relations.toString = '/entities/b.md';
+    relations['__proto__'] = '/entities/b.md';
+    writeConcept(root, 'entities/a.md', {
+      type: 'Entity',
+      title: 'A',
+      relations,
+    });
+    writeConcept(root, 'entities/b.md', { type: 'Entity', title: 'B' });
+  });
+
+  after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('constructor / toString: ⚠️ + exit 0 (soft)', () => {
+    const { code, out } = runQuery(root, ['validate']);
+    assert.equal(code, 0, out);
+    assert.match(out, /✅ OKF/);
+    assert.match(out, /entities\/a \[constructor\] — unknown relation kind/);
+    assert.match(out, /entities\/a \[toString\] — unknown relation kind/);
+  });
+});
+
 describe('validate — samemind CLI query validate', () => {
   let root;
 
