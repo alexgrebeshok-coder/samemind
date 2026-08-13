@@ -3,6 +3,54 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0] — 2026-08-13
+
+No new features. 1.0 marks that the JSON contract stopped moving and that a dogfood week
+ran clean on a live bundle — the two conditions set for the tag.
+
+### Frozen
+
+- **JSON contract**, per `docs/json-contract.md`: changing the *form* of an existing field
+  (type, nesting, value semantics, name) after this release is a **major** version bump;
+  adding an optional field stays **minor**.
+- **Errors stay bare** — `{ error }` / `{ error, errors }`, not wrapped in the `{ contract,
+  kind, generatedAt, data }` envelope. Wrapping them later is itself a breaking change.
+- Covers CLI and HTTP `/api/*`, which share one envelope. **MCP tools are a second,
+  separate contract** under the same discipline — their result shape is not the CLI
+  envelope and must not silently become it.
+
+### Fixed
+
+- **HTTP `board` and `handoff` still shipped the machine and the whole corpus.** 0.17.0
+  announced this closed; it was closed in the CLI only. `GET /api/board` and
+  `GET /api/handoff` wrapped the raw model — absolute host paths and the full markdown body
+  of every document — because they skipped the `projectBoardJson` / `projectHandoffJson`
+  step their CLI twins apply. Both surfaces now return the same keys, byte for byte, and a
+  regression test fails if either drops the projection. Landing this **before** the tag was
+  the point: frozen, the fix would have been a major. Consumers that read `body` or `file`
+  off these two routes should fetch per document via `GET /api/concept/<id>`.
+- **The contract document had drifted from the wire.** Re-check before signing found
+  `generatedAt` marked missing on five surfaces that all carry it since 0.17.0, `proactive`
+  described as envelope-less when it is enveloped, `sessionsTotal` / `sessionNextTotal`
+  marked absent, and the SSE `ledger-snapshot` frame undocumented. Corrected.
+
+### Verified
+
+- **`samemind dogfood`** on the live bundle: 9 days without an open failure, first event
+  2026-08-03, nothing open since.
+- **Contract re-checked against live runs**, not against itself: 8/8 CLI surfaces, 13 HTTP
+  routes plus SSE, 10 error paths, 10/10 MCP tool names.
+
+### Known, not fixed
+
+- `board` / `handoff` silently ignore `--root <dir>` and read `OKF_ROOT` instead. No payload
+  shape involved, so it is a patch-level behaviour bug, not a freeze blocker.
+
+### Not in 1.0
+
+- **Graph memory — typed edges and multi-hop expand.** Design decided in
+  `docs/graph-design-note.md`, not yet built. Ships in 1.1, not here.
+
 ## [0.18.0] — 2026-08-03
 
 Memory that speaks first — without a camera.
