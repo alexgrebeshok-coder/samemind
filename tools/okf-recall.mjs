@@ -204,9 +204,9 @@ async function query(q, k, includeSecret, includeMirror, includeInbox, mode, exc
   // folded into their sort/score.
   if (expand) {
     const pool = globalHalf?.docs?.length ? [...docs, ...globalHalf.docs] : docs;
-    const extra = expandHits(hits, pool, { budget: expandBudget, asOf });
+    const extra = expandHits(hits, pool, { budget: expandBudget, asOf, includeSuperseded });
     for (const e of extra) {
-      console.log(`  +hop  ${(e.type || '').padEnd(10)} ${e.id} — ${e.title || ''}  ${e.label}`);
+      console.log(`  +hop  ${(e.type || '').padEnd(10)} ${(e.kind || '').padEnd(11)} ${e.id} — ${e.title || ''}  ${e.label}`);
     }
   }
 }

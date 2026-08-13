@@ -78,6 +78,7 @@ export const TOOLS = [
         no_global: { type: 'boolean', description: 'Skip the global personal bundle — search only this project\'s memory (default false).' },
         expand: { type: 'boolean', description: '1-hop graph expand: also return neighbors of the top hits (relations + reverse wikilinks), in a separate `expanded` block, never mixed into `results` ranking (default false).' },
         expand_budget: { type: 'integer', minimum: 1, description: `Max expanded neighbors, shared across all seed hits (default ${DEFAULT_EXPAND_BUDGET}). Only used when expand is true.` },
+        include_superseded: { type: 'boolean', description: 'Include superseded/expired neighbors in results and in `expanded` (same hygiene labels as CLI --include-superseded). Default false: stale hits and neighbors are dropped.' },
       },
       required: ['query'],
     },
@@ -179,6 +180,7 @@ export const TOOLS = [
 
 async function memorySearch({
   query, k = 5, mode = 'auto', exclude_source, no_global, expand, expand_budget,
+  include_superseded,
 } = {}) {
   if (!query || !String(query).trim()) throw new Error('memory_search: "query" is required');
   const kk = Number.isFinite(Number(k)) && Number(k) > 0 ? Math.floor(Number(k)) : 5;
@@ -193,12 +195,14 @@ async function memorySearch({
       throw new Error(`memory_search: "exclude_source" must match [a-z0-9-] (got "${excludeSource}")`);
     }
   }
+  const includeSuperseded = !!include_superseded;
   const docs = readableDocs();
   const docById = new Map(docs.map(d => [d.id, d]));
   const idx = loadIdx();
   const events = readEvents(ROOT); // Ф5: ledger-derived heat, folded into the same hygiene pass
   const projectResult = await recallSearch({
     docs, query, mode, embed, idx, k: kk, includeSecret: false, includeMirror: true, excludeSource, events,
+    includeSuperseded,
   });
 
   // U5/G-B: "Same mind" — fold in the optional global personal bundle. no_global truthy, or no
@@ -207,7 +211,7 @@ async function memorySearch({
   const globalRoot = resolveGlobalRoot({ noGlobal: !!no_global });
   const globalHalf = await searchGlobalHalf(globalRoot, docs, {
     loadOpts: { includeSecret: false, includeMirror: true }, query, mode, embed, k: kk,
-    includeSecret: false, includeMirror: true, excludeSource,
+    includeSecret: false, includeMirror: true, excludeSource, includeSuperseded,
   });
   const { hits, mode: used, warning, dedupWarnings } = mergeWithGlobal(projectResult, globalHalf, kk);
   const globalDocById = globalHalf ? new Map(globalHalf.docs.map(d => [d.id, d])) : new Map();
@@ -238,16 +242,18 @@ async function memorySearch({
   // neighbors on top of that. Kept as its own `expanded` block, never merged into `results`.
   if (doExpand) {
     const pool = globalHalf?.docs?.length ? [...docs, ...globalHalf.docs] : docs;
-    const extra = expandHits(hits, pool, { budget });
+    const extra = expandHits(hits, pool, { budget, includeSuperseded });
     out.expanded = extra.map(e => {
       const doc = docById.get(e.id) || globalDocById.get(e.id);
       return {
         id: e.id,
         type: e.type || null,
         title: e.title || null,
-        hop: 1,
+        kind: e.kind,
+        hop: e.hop ?? 1,
         expandedFrom: e.expandedFrom,
         snippet: extractSnippet(doc?.body || '', query, { contextLines: 1 }),
+        ...(e.hygiene ? { hygiene: e.hygiene } : {}),
       };
     });
   }

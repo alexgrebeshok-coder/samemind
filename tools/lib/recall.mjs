@@ -9,6 +9,12 @@ import {
   findContradictions, isDeprecated,
 } from './hygiene.mjs';
 import { displayTitle, displayType, ROOT, pathToId } from './okf.mjs';
+import {
+  RELATION_WALK_ORDER,
+  relationKindTraversal,
+  isExpandableRelationKey,
+  orientRelation,
+} from './relation-kinds.mjs';
 
 // Размерность проверяется только если OKF_EMBED_DIM задана явно. Иначе принимаем любую
 // (OpenAI text-embedding-3-* — 1536/3072, bge-m3 — 1024, …): требование фиксированной dim
@@ -636,84 +642,145 @@ function resolveLinkId(fromDoc, target, docsByFile) {
 }
 
 /**
- * G2 — 1-hop graph expand after top-k recall: pull in docs connected to a hit via a typed
- * `relations` edge (either direction — same "connected" reading the `rel` CLI command already
- * shows both ways) or a REVERSE wikilink (some other doc's markdown `[text](path.md)` link
- * pointing AT the hit — "who cites this", not the hit's own outbound links). Budget-capped
- * (shared across all seed hits, not per-hit), deduped against the seeds and against itself, and
- * subject to the same hygiene gate live recall already applies: superseded/expired
- * (`isStaleForRecall`) and `deprecated` docs are never pulled in.
+ * G2/1.1 — 1-hop graph expand after top-k recall. Walks typed `relations` and inbound
+ * markdown cites in RELATION_WALK_ORDER (§4.3): stored kinds both ways, then inbound-only
+ * `cites`, then symmetric `related` if budget remains. Aliases go through orientRelation
+ * (spawned_by → informs inbound). `next`, unknown keys, and hygiene supersede keys are
+ * not walked. Budget is shared across all seeds. Neighbors are never ranked.
  *
- * `docs` — the full parsed pool the expand graph is walked over (project docs, or project ∪
- * deduped-global docs — caller's choice; since a global doc whose id collides with a project doc
- * is already dropped upstream — see compose-roots.mjs `searchGlobalHalf` — passing the union
- * still gives "project wins" for free, no extra logic needed here).
+ * Hygiene matches hits: deprecated is never pulled; stale (`isStaleForRecall`) is dropped
+ * unless `includeSuperseded` is set, in which case the same hygieneLabel is appended.
+ * A neighbor in a findContradictions pair with its seed keeps the existing ⚔ label.
  *
- * Returns an array of hit-shaped rows `{ id, title, type, score: 0, expandedFrom, label }` —
- * `score` is not a rank (there is no ranking signal for a graph neighbor), only present so
- * callers that expect the hit shape don't have to special-case it; `label` always reads
- * `(+1 hop from <seedId>)` and is meant to print AFTER the primary results, never merged into
- * their sort. Empty hits/docs/budget → `[]`.
- *
- * ponytail: single 1-hop pass, not N-hop BFS — `--expand-hops` values above 1 are capped to 1 by
- * the CLI layer (tools/okf-recall.mjs); revisit if a real 2-hop use case shows up.
+ * Returns `{ id, title, type, score: 0, hop: 1, kind, expandedFrom, label, hygiene? }`.
+ * `label` always contains `(+1 hop from <seedId>)`. Empty hits/docs/budget → `[]`.
  */
-export function expandHits(hits, docs, { budget = DEFAULT_EXPAND_BUDGET, asOf = null } = {}) {
+export function expandHits(hits, docs, {
+  budget = DEFAULT_EXPAND_BUDGET, asOf = null, includeSuperseded = false,
+} = {}) {
   if (!hits?.length || !docs?.length || budget <= 0) return [];
 
   const docsById = new Map(docs.map(d => [d.id, d]));
   const docsByFile = new Map(docs.map(d => [d.file, d]));
   const supersededMap = buildSupersededMap(docs);
   const now = resolveAsOf(asOf);
-  const isLive = doc => !!doc && !isDeprecated(doc) && !isStaleForRecall(doc, supersededMap, { now, docsById });
+  const isAllowed = doc => {
+    if (!doc || isDeprecated(doc)) return false;
+    if (!includeSuperseded && isStaleForRecall(doc, supersededMap, { now, docsById })) return false;
+    return true;
+  };
 
-  // Reverse indices, built once over `docs` (not per-hit) — O(docs), not O(hits × docs).
-  const inboundRelations = new Map(); // toId -> Set(fromId)
-  const inboundLinks = new Map();     // toId -> Set(fromId)
+  const edgesByKind = Object.create(null);
+  for (const kind of RELATION_WALK_ORDER) {
+    if (kind === 'cites') continue;
+    edgesByKind[kind] = [];
+  }
+  const inboundCites = new Map(); // toId -> fromId[]
+
   for (const d of docs) {
-    for (const paths of Object.values(d.relations || {})) {
-      for (const p of paths) {
+    const rel = d.relations || Object.create(null);
+    for (const rawKey of Object.getOwnPropertyNames(rel)) {
+      if (!isExpandableRelationKey(rawKey)) continue;
+      const paths = rel[rawKey];
+      const list = Array.isArray(paths) ? paths : [paths];
+      for (const p of list) {
         const toId = pathToId(p);
-        if (!inboundRelations.has(toId)) inboundRelations.set(toId, new Set());
-        inboundRelations.get(toId).add(d.id);
+        if (!toId) continue;
+        const oriented = orientRelation(d.id, rawKey, toId);
+        if (!oriented || !Object.hasOwn(edgesByKind, oriented.kind)) continue;
+        edgesByKind[oriented.kind].push({ from: oriented.from, to: oriented.to });
       }
     }
     for (const l of d.links || []) {
       const toId = resolveLinkId(d, l, docsByFile);
       if (!toId) continue;
-      if (!inboundLinks.has(toId)) inboundLinks.set(toId, new Set());
-      inboundLinks.get(toId).add(d.id);
+      if (!inboundCites.has(toId)) inboundCites.set(toId, []);
+      inboundCites.get(toId).push(d.id);
     }
   }
 
-  const seen = new Set(hits.map(h => h.id)); // seeds are never re-added as "expanded"
-  const out = [];
-  for (const hit of hits) {
-    if (out.length >= budget) break;
-    const doc = docsById.get(hit.id);
-    if (!doc) continue;
-
-    const neighborIds = new Set();
-    for (const paths of Object.values(doc.relations || {})) {
-      for (const p of paths) neighborIds.add(pathToId(p)); // outbound relations
+  const seedIds = new Set(hits.map(h => h.id));
+  const conflictWithSeed = new Map(); // neighborId -> seedId it fights
+  for (const { a, b } of findContradictions(docs)) {
+    if (seedIds.has(a) && !seedIds.has(b)) {
+      if (!conflictWithSeed.has(b)) conflictWithSeed.set(b, a);
+    } else if (seedIds.has(b) && !seedIds.has(a)) {
+      if (!conflictWithSeed.has(a)) conflictWithSeed.set(a, b);
+    } else if (seedIds.has(a) && seedIds.has(b)) {
+      // both already hits — expand will not re-add either
     }
-    for (const fromId of inboundRelations.get(doc.id) || []) neighborIds.add(fromId); // inbound relations
-    for (const fromId of inboundLinks.get(doc.id) || []) neighborIds.add(fromId);     // reverse wikilinks
+  }
 
-    for (const nid of neighborIds) {
+  const seen = new Set(hits.map(h => h.id));
+  const out = [];
+
+  const pushNeighbor = (nid, seedId, kind) => {
+    if (out.length >= budget) return false;
+    if (seen.has(nid)) return true;
+    const ndoc = docsById.get(nid);
+    if (!isAllowed(ndoc)) return true;
+    seen.add(nid);
+    const marks = [];
+    if (includeSuperseded) {
+      const hyg = hygieneLabel(ndoc, supersededMap, { now });
+      if (hyg) marks.push(hyg);
+    }
+    const fightSeed = conflictWithSeed.get(nid);
+    if (fightSeed === seedId) marks.push(conflictLabel(seedId));
+    const hopLabel = `(+1 hop from ${seedId})`;
+    const hygiene = marks.join(' ');
+    out.push({
+      id: nid,
+      title: displayTitle(ndoc.fm),
+      type: displayType(ndoc.fm),
+      score: 0,
+      hop: 1,
+      kind,
+      expandedFrom: seedId,
+      label: hygiene ? `${hopLabel} ${hygiene}` : hopLabel,
+      ...(hygiene ? { hygiene } : {}),
+    });
+    return out.length < budget;
+  };
+
+  const neighborsFor = (seedId, kind, spec) => {
+    const found = [];
+    const local = new Set();
+    const add = nid => {
+      if (!nid || nid === seedId || local.has(nid)) return;
+      local.add(nid);
+      found.push(nid);
+    };
+    if (kind === 'cites') {
+      if (spec.directions.includes('inbound')) {
+        for (const fromId of inboundCites.get(seedId) || []) add(fromId);
+      }
+      return found;
+    }
+    const edges = edgesByKind[kind] || [];
+    if (spec.directions.includes('outbound')) {
+      for (const e of edges) {
+        if (e.from === seedId) add(e.to);
+      }
+    }
+    if (spec.directions.includes('inbound')) {
+      for (const e of edges) {
+        if (e.to === seedId) add(e.from);
+      }
+    }
+    return found;
+  };
+
+  for (const kind of RELATION_WALK_ORDER) {
+    if (out.length >= budget) break;
+    const spec = relationKindTraversal(kind);
+    if (!spec) continue;
+    for (const hit of hits) {
       if (out.length >= budget) break;
-      if (seen.has(nid)) continue;
-      const ndoc = docsById.get(nid);
-      if (!isLive(ndoc)) continue;
-      seen.add(nid);
-      out.push({
-        id: nid,
-        title: displayTitle(ndoc.fm),
-        type: displayType(ndoc.fm),
-        score: 0,
-        expandedFrom: hit.id,
-        label: `(+1 hop from ${hit.id})`,
-      });
+      if (!docsById.has(hit.id)) continue;
+      for (const nid of neighborsFor(hit.id, kind, spec)) {
+        if (!pushNeighbor(nid, hit.id, kind)) break;
+      }
     }
   }
   return out;
