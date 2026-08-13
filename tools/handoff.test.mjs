@@ -394,6 +394,19 @@ describe('handoff CLI --root — picks WHICH bundle to read (not a project filte
     }
   });
 
+  it('--root <symlink to a file> is rejected like the file itself', () => {
+    const link = join(tmpdir(), `samemind-handoff-filelink-${process.pid}`);
+    symlinkSync(join(bundleB, 'index.md'), link, 'file');
+    try {
+      const r = run(bundleA, '--root', link);
+      assert.notEqual(r.status, 0);
+      assert.match(r.stderr, /root is not a directory/);
+      assert.ok(!r.stdout.includes('# Handoff'), 'must not render a brief through a file symlink');
+    } finally {
+      rmSync(link, { force: true });
+    }
+  });
+
   it('--root <dangling symlink> reports "not found", not "not a directory"', () => {
     const link = join(tmpdir(), `samemind-handoff-danglink-${process.pid}`);
     symlinkSync(join(bundleB, 'no-such-target'), link, 'dir');
