@@ -424,10 +424,17 @@ in the bundle root (a committed artifact; `samemind init` seeds a placeholder);
 `--project` scopes the four task columns to one project (Plans / Ideas / Recent
 / Sessions stay portfolio-wide).
 
+`--root` and `--project` answer different questions and combine freely: `--root <dir>`
+picks **which** bundle to read (overriding `OKF_ROOT` for that run — concepts, event
+ledger, fleet registry, and the `--write` target all come from it), `--project <id>`
+filters **within** the chosen bundle.
+
 ```sh
 npx samemind board                              # print the kanban to stdout
 npx samemind board --write                      # refresh DASHBOARD.md (idempotent — safe in a hook/cron)
 npx samemind board --project /projects/lumen.md # only Lumen's tasks
+npx samemind board --root ~/other-bundle        # read a different bundle than OKF_ROOT
+npx samemind board --root ~/other-bundle --project lumen  # that bundle, Lumen's tasks only
 ```
 
 Shortened example, run against the demo bundle:
@@ -478,9 +485,9 @@ sync-mechanism research → cron-sync-adapters idea).
 | `samemind recall "<query>"` | Search: `--mode bm25\|semantic\|auto` (default `auto`). BM25 works zero-dep; semantic needs `OKF_EMBED_URL` + `index`. `--exclude-source <id>` drops an engine's own concepts (anti-echo). `--no-global` skips the personal bundle from [Global mode](#global-mode) for this call. |
 | `samemind gde "<query>"` | Human search: semantic when an index exists, BM25 fallback otherwise. `--exclude-source <id>` supported. |
 | `samemind brief [--engine <id>] [--budget <n>] [--inject <file>] [--exclude-source <id>]` | Compact Identity+User+EngineRule digest — see [Identity layer](#identity-layer) |
-| `samemind handoff [--project <path>] [--days N] [--html [--out <file>]]` | Work-state brief (tasks/plans/decisions/session) — see [docs/compaction-recipe.md](compaction-recipe.md); `--html` → self-contained page (no CDN/JS, light+dark) |
+| `samemind handoff [--root <dir>] [--project <path>] [--days N] [--html [--out <file>]]` | Work-state brief (tasks/plans/decisions/session) — see [docs/compaction-recipe.md](compaction-recipe.md); `--root` picks which bundle to read, `--project` filters within it; `--html` → self-contained page (no CDN/JS, light+dark) |
 | `samemind forget <id>` | Soft-deprecate a concept (`deprecated: true` in frontmatter) — never deletes the file. See [Memory hygiene](memory-hygiene.md) |
-| `samemind board [--write] [--project <path>] [--html [--out <file>]]` | Kanban over the work-discipline layer (Backlog / In progress / Done / Blocked+aging, Plans, Recent) plus knowledge-cycle Ideas — `--write` → `DASHBOARD.md`, `--html` → self-contained page with an SVG kanban chart — see [Board](#board) |
+| `samemind board [--root <dir>] [--write] [--project <path>] [--html [--out <file>]]` | Kanban over the work-discipline layer (Backlog / In progress / Done / Blocked+aging, Plans, Recent) plus knowledge-cycle Ideas — `--root` picks which bundle to read, `--project` filters within it; `--write` → `DASHBOARD.md`, `--html` → self-contained page with an SVG kanban chart — see [Board](#board) |
 | `samemind install --agent <id>\|all [--target <dir>]` | Wire brief+protocol into an engine's instruction file(s), idempotently — see [Compatibility](#compatibility), [docs/adapters.md](adapters.md). Unknown id needs `--file <path>` for a generic install. |
 | `samemind export <dir> [--visibility public\|internal] [--dry-run] [--to-gbrain]` | Shareable OKF-bundle (strips `secret/`/`mirror/`/`inbox/`); gbrain page mapping — see [docs/interop.md](interop.md) |
 | `samemind import <dir> [--into inbox\|concepts]` | Accept a foreign OKF-bundle (default → curated `inbox/import-<date>.md`; never overwrites) — see [docs/interop.md](interop.md) |
