@@ -1,12 +1,14 @@
-# samemind JSON contract (pre-1.0 freeze draft)
+# samemind JSON contract (frozen at 1.0)
 
-**Status:** living document for the 1.0 freeze.  
+**Status:** frozen as of v1.0.0. Changing the form of anything described here is a major version.  
 **Authority:** live CLI/`--json` output and live HTTP `/api/*` responses from this tree.  
 **Not authority:** `ui/src/api.ts` (not in the npm package; already drifts), `docs/ui-spec.md` field tables (the spec itself says wire names win).
 
 After **1.0**, changing the shapes described here is a **major** version bump. This file is the human-readable record of what “the contract” means so nobody freezes a ghost.
 
-Verified against live runs on demo root (`OKF_ROOT=demo` / `ui --root demo`) at document time. Re-check before signing 1.0.
+Verified against live runs on demo root (`OKF_ROOT=demo` / `ui --root demo`) at document time.
+
+**Re-checked 2026-08-13, before signing 1.0** — and the document had drifted from the wire it describes. Four sections said things the code stopped doing in 0.17.0 (`generatedAt` marked missing on five surfaces that all carry it; `proactive` described as envelope-less; two `*Total` fields marked absent; the SSE snapshot frame undocumented) — all corrected here. One drift was in the code, not the document: HTTP `board`/`handoff` skipped the projection their CLI twins apply and shipped absolute host paths and full document bodies; that was fixed in the code before the freeze, because freezing it would have made the fix a major. Method and raw output of the re-check: coverage was 8/8 CLI surfaces, 13 HTTP routes plus SSE, 10 error paths, 10/10 MCP tool names.
 
 ---
 
@@ -30,23 +32,24 @@ Most machine-readable surfaces wrap the payload:
 | `generatedAt` | ISO-8601 timestamp of when the response was built. **Not universal — see below.** |
 | `data` | Payload. Usually an object; for `kind: "concepts"` it is an **array**. |
 
-### Where `generatedAt` is missing
+### `generatedAt` is universal (since 0.17.0)
 
-Confirmed live (CLI unless noted):
+Confirmed live (CLI unless noted) — all eight CLI surfaces build the same
+`{ contract: 1, kind, generatedAt: new Date().toISOString(), data }` envelope:
 
 | Surface | Has `generatedAt`? |
 |---------|--------------------|
 | `board --json` | **yes** |
 | `handoff --json` | **yes** |
 | `doctor --json` | **yes** |
-| `status --json` | **no** — envelope is only `{ contract, kind, data }` |
-| `fleet status --json` | **no** |
-| `ledger status --json` | **no** |
-| `query links --json` | **no** |
-| `proactive … --json` | **n/a** — no envelope at all |
+| `status --json` | **yes** |
+| `fleet status --json` | **yes** |
+| `ledger status --json` | **yes** |
+| `query links --json` | **yes** |
+| `proactive … --json` | **yes** |
 | Every HTTP route that uses `wrap()` in `tools/lib/ui-server.mjs` | **yes** (including `/api/status`, `/api/fleet`, `/api/ledger`, `/api/graph`) |
 
-So the **same logical payload** can differ between CLI and HTTP on the single field `generatedAt`. A consumer that requires `generatedAt` on every envelope will break on CLI `status` / `fleet` / `ledger` / `links`.
+`generatedAt` was added to `status` / `fleet status` / `ledger status` / `query links` / `proactive` in 0.17.0 (see CHANGELOG). Source: `tools/status.mjs:70`, `tools/fleet.mjs:92`, `tools/ledger.mjs:61`, `tools/okf-query.mjs:198`, `tools/proactive.mjs:101` — every one literally builds the envelope with `generatedAt`. CLI and HTTP now agree on this field for every surface.
 
 ### Pretty-print vs one line
 
@@ -77,9 +80,11 @@ Parse with a real JSON parser; do not assume one line = one response.
 
 ### 2.2 CLI without envelope
 
-| Command | Shape | Notes |
-|---------|-------|-------|
-| `samemind proactive "<query>" --json` | Flat object, no `contract`/`kind` | Keys when skipped: `skipped`, `reason`, `query`, `hits`, `pack`, `tokens`, `chars`, `latencyMs`, `manualRecallsSaved`. When not skipped, also `included`, `k`. Pretty-printed. |
+None left. Every CLI `--json` surface, including `proactive`, now ships the full
+`{ contract, kind, generatedAt, data }` envelope (0.17.0). `samemind proactive "<query>" --json`
+is `{ contract: 1, kind: "proactive", generatedAt, data }` on a single line — `data` keys when
+skipped: `skipped`, `reason`, `query`, `hits`, `pack`, `tokens`, `chars`, `latencyMs`,
+`manualRecallsSaved`; when not skipped, also `included`, `k`.
 
 ### 2.3 HTTP (all via `wrap`, so always full envelope)
 
@@ -101,7 +106,7 @@ Base: `http://127.0.0.1:<port>/api/…` (loopback UI server).
 | `GET /api/voice/probe` | `voice-probe` | availability + `url` + `probe` | Never runs on render path by design. |
 | `GET /api/voice/route?text=&confidence=` | `voice-route` | intent decision + `threshold` + `quarantine` | Read-only routing. |
 | `POST /api/config` | success → `settings` | re-read settings model | Only write route. Failures: §3. |
-| `GET /api/events/stream` | SSE | each `event` data is envelope `kind: "ledger-event"` | Not a single JSON body; stream of envelopes. |
+| `GET /api/events/stream` | SSE | first frame on connect is envelope `kind: "ledger-snapshot"` (`event: snapshot`, `data.events[]`); subsequent frames are `kind: "ledger-event"` | Not a single JSON body; stream of envelopes. |
 
 ### 2.4 Nested shapes worth naming (from live wire)
 
@@ -167,14 +172,11 @@ Validation always returns **every** problem in `errors[]` (not only the first). 
 {"error":"rejected","errors":["\"voice.confidenceThreshold\" expects number","\"voice.confidenceThreshold\" must be between 0 and 1"]}
 ```
 
-### Open decision (pre-1.0)
+### Decided (frozen for 1.0): errors stay bare
 
-Errors are bare `{ error }` / `{ error, errors }` **without** `contract` / `kind` / `generatedAt`. That is the current wire. Freezing 1.0 either:
+Errors are bare `{ error }` / `{ error, errors }` **without** `contract` / `kind` / `generatedAt`. That is the current wire, confirmed uniform across every failure path in `tools/lib/ui-server.mjs` — the sole error constructor `sendJson(res, status, obj)` (`tools/lib/ui-server.mjs:60`) is called with a bare `{ error }` or `{ error, errors }` object at all 24 call sites, e.g. 400 invalid concept id (`tools/lib/ui-server.mjs:430`), 404 not found (`tools/lib/ui-server.mjs:435`, `:517`, `:526`), 403 host/origin guard (`:458`), validation reject with `errors[]` (`:268`), and 500 internal throw (`:544`). No call site ever emits an enveloped error.
 
-1. keeps bare errors (document as intentional), or  
-2. wraps errors in the same envelope (`kind: "error"`, `data: { error, errors? }`).
-
-Either way is fine; **silent** change after 1.0 is not. Marked **requires decision**.
+**Decision:** errors keep this bare form after 1.0 — it is not wrapped in `{ contract, kind, generatedAt, data }`. Moving error bodies into that envelope (`kind: "error"`) is itself a **breaking (major)** change to the error surface, not a silent patch.
 
 ---
 
@@ -188,9 +190,9 @@ Either way is fine; **silent** change after 1.0 is not. Marked **requires decisi
 | Board `overdueEnginesShown` | `OVERDUE_ENGINES_LIMIT` = 5 | **yes** — `overdueEnginesTotal` |
 | Board ledger-derived cards per column | `LEDGER_DERIVED_CAP` = 8 | **yes** — `ledgerOverflow.<col>` and `columnTotals` |
 | Board `done` (Task docs) | `doneLimit` (default 10) | Partial honesty: `doneLimit` is exposed; heading is “last N”. `columnTotals.done` counts the **shown window + ledger overflow**, not all historical done tasks. |
-| Board `sessions` | `SESSION_SUMMARY_LIMIT` = 3 | **no total** — `sessions.length` is “up to 3”, not “how many sessions exist” |
+| Board `sessions` | `SESSION_SUMMARY_LIMIT` = 3 | **yes** — `sessionsTotal` (added 0.17.0) |
 | Ideas columns | uncapped in model | lengths are full for that status filter |
-| Handoff `sessionNext` | first **5** bullets | **no total** of bullets in the section |
+| Handoff `sessionNext` | first **5** bullets | **yes** — `sessionNextTotal` (added 0.17.0) |
 | Ledger `read` (human CLI, not status --json) | default last 200 | status `--json` returns full `evs` per topic today |
 
 Rule of thumb: **never** treat `array.length` as a KPI unless a `*Total` / `columnTotals` / `overflow` field exists for that list.
@@ -267,6 +269,8 @@ Other known mismatches:
 ---
 
 ## 6. Breaking-change policy after 1.0
+
+**The rule:** changing the **form** of an existing field — its JSON type, its nesting/structure, the semantics of its value, or its name (rename or removal) — is a **major** version bump. Adding a new *optional* field is **minor**. Within any minor or patch release, no field already on a documented surface is removed or changes type.
 
 ### Breaking (requires major)
 

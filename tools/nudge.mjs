@@ -159,7 +159,10 @@ function rootFor(args) {
 
 export function parseArgs(argv = process.argv.slice(2)) {
   const [sub, ...rest] = argv;
-  const a = { subcommand: null, root: null, zone: 'default', json: false, dryRun: false, outcome: null, ref: null };
+  const a = { subcommand: null, root: null, zone: 'default', json: false, dryRun: false, outcome: null, ref: null, help: false };
+  // Every other command answers --help; this one silently ran instead, so `samemind nudge --help`
+  // printed "∅ Промолчал (disabled)". Caught by the post-publish smoke, not by any test.
+  if (argv.includes('--help') || argv.includes('-h')) { a.help = true; return a; }
 
   if (sub === 'respond') {
     a.subcommand = 'respond';
@@ -201,8 +204,20 @@ function printHuman(model) {
   console.log(`∅ Промолчал (${model.reasonCode}).`);
 }
 
+function usage() {
+  console.log(`samemind nudge — one proactive nudge: what is worth raising now, or why it stays quiet
+
+  samemind nudge [--zone <name>] [--json] [--dry-run] [--root <dir>]
+  samemind nudge respond --outcome accepted|deferred|dismissed|muted [--zone <name>] [--ref <id>]
+
+Flags: --dry-run computes the same decision and mutates nothing (the dashboard card uses it)
+       --json wraps the model in the standard { contract: 1, kind: "nudge", … } envelope
+Off by default: set vision.enabled + vision.proactivePrompts in .samemind/config.json, mode "proactive".`);
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
+  if (args.help) { usage(); return 0; }
 
   if (args.subcommand === 'respond') {
     if (!args.outcome || !VALID_OUTCOMES.has(args.outcome)) {

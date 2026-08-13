@@ -2,7 +2,7 @@
 
 samemind is a git-native markdown memory bundle for AI coding agents — identity, search, a work ledger, and a kanban board in one place, portable across engines like Claude Code, Cursor, and OpenClaw. No daemon or database required; BM25 search always works offline, semantic search is optional.
 
-**Latest: v0.18.0** — memory that speaks first, without a camera: `samemind nudge` raises an unclosed failure or a stalled blocker on its own, with a card on the dashboard and a policy that decides when speaking is welcome (hours, cooldown, daily cap, "enough for today"). Off by default; no camera, no microphone. See [CHANGELOG.md](https://github.com/alexgrebeshok-coder/samemind/blob/main/CHANGELOG.md).
+**Latest: v1.0.0** — contract frozen. No new features: 1.0 means the JSON shape stopped moving, so changing the form of an existing field is now a major version. One fix rode in ahead of the freeze — HTTP `/api/board` and `/api/handoff` had kept shipping absolute host paths and full document bodies that the CLI already stripped. See [CHANGELOG.md](https://github.com/alexgrebeshok-coder/samemind/blob/main/CHANGELOG.md) and [docs/json-contract.md](https://github.com/alexgrebeshok-coder/samemind/blob/main/docs/json-contract.md).
 
 [![ci](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml/badge.svg)](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml)
 

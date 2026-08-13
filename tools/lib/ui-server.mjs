@@ -17,8 +17,8 @@ import { readEvents, summarizeLedger, ledgerFile, ledgerDir } from './ledger.mjs
 import { readRegistry, heartbeat } from './fleet.mjs';
 import { readHealth, assessLiveness } from './health.mjs';
 import { readProjectionConfig } from './projection-config.mjs';
-import { buildBoardModel, dateOf, statusOf } from '../board.mjs';
-import { buildHandoffModel } from '../handoff.mjs';
+import { buildBoardModel, dateOf, statusOf, projectBoardJson } from '../board.mjs';
+import { buildHandoffModel, projectHandoffJson } from '../handoff.mjs';
 import { buildLinksModel } from '../okf-query.mjs';
 import { displayState } from '../status.mjs';
 import { runDoctor } from '../doctor.mjs';
@@ -129,6 +129,10 @@ async function apiDoctor(root) {
   return wrap('doctor', report);
 }
 
+// Same thin projection `board --json` applies (tools/board.mjs projectBoardJson): drops full
+// doc bodies and absolute file paths before the model goes on the wire. Without it this route
+// shipped whole markdown documents and host filesystem paths to any local caller — see the
+// regression test in ui-server-projection.test.mjs.
 function apiBoard(root) {
   const docs = load({ includeSecret: false }, root);
   const events = readEvents(root);
@@ -136,13 +140,15 @@ function apiBoard(root) {
   const registry = readRegistry(root);
   const overdueEngines = registry ? heartbeat(registry.engines, events, Date.now()).filter(e => e.overdue) : [];
   const model = buildBoardModel(docs, { now: Date.now(), openFailures, overdueEngines, ledgerTopics: topics });
-  return wrap('board', model);
+  return wrap('board', projectBoardJson(model));
 }
 
+// Same thin projection `handoff --json` applies (tools/handoff.mjs projectHandoffJson) — see
+// the comment on apiBoard above; this route had the identical defect.
 function apiHandoff(root) {
   const docs = load({ includeSecret: false, includeMirror: true }, root);
   const model = buildHandoffModel(docs, { now: new Date() });
-  return wrap('handoff', model);
+  return wrap('handoff', projectHandoffJson(model));
 }
 
 function apiFleet(root) {
