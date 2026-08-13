@@ -29,7 +29,7 @@ const healthFile = root => join(root, '.samemind', 'health.json');
  * repeats are silent. Ledger write is best-effort: a failure here must never undo the health
  * file write or fail the projection run (same secondary-side-effect contract as health itself).
  */
-function maybeAppendHealthLedger(root, previous, record) {
+export function maybeAppendHealthLedger(root, previous, record) {
   if (previous != null && previous.ok === record.ok) return null;
   const ok = !!record.ok;
   const phase = ok ? 'done' : 'fail';
@@ -37,9 +37,15 @@ function maybeAppendHealthLedger(root, previous, record) {
   const action = ok
     ? (previous && previous.ok === false ? 'projection recovered' : 'projection ok')
     : (record.lastError || 'projection failed');
-  // ref ties this transition to this exact health stamp so a retried write with the same ts
-  // does not double-append (appendEvent's ref dedup under the file lock).
-  const ref = `${HEALTH_TOPIC}:${ok ? 'ok' : 'fail'}:${record.ts}`;
+  // ref ties this TRANSITION (previous state → new state) to this exact health stamp, so a
+  // retried write of the SAME transition at the same ts does not double-append (appendEvent's
+  // ref dedup under the file lock) — but two DIFFERENT transitions landing in the same
+  // millisecond (fail→ok then, in the same ms, ok→fail) still get distinct refs. Keying only
+  // on the new state (the old `${status}:${ts}` form) collided: a third event returning to a
+  // state visited earlier in the same ms reused that earlier ref and was silently dropped as a
+  // "duplicate" — it never was one, ref carried the destination only, not the edge.
+  const prevStatus = previous == null ? 'none' : (previous.ok ? 'ok' : 'fail');
+  const ref = `${HEALTH_TOPIC}:${prevStatus}->${status}:${record.ts}`;
   return appendEvent(root, {
     actor: HEALTH_ACTOR,
     topic: HEALTH_TOPIC,

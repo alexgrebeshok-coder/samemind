@@ -236,6 +236,24 @@ describe('summarizeLedger — open failures (unit, pure)', () => {
     assert.equal(openFailures[0].ts, '2026-01-03T00:00:00Z');
   });
 
+  it('same millisecond, fail then done (stream order) → closed, not open (regression: sub-ms race)', () => {
+    const ts = '2026-01-01T00:00:00.500Z';
+    const { openFailures } = summarizeLedger([
+      ev('t1', 'fail', 'fail', ts),
+      ev('t1', 'done', 'ok', ts),
+    ]);
+    assert.equal(openFailures.length, 0);
+  });
+
+  it('same millisecond, done then fail (stream order) → still open', () => {
+    const ts = '2026-01-01T00:00:00.500Z';
+    const { openFailures } = summarizeLedger([
+      ev('t1', 'done', 'ok', ts),
+      ev('t1', 'fail', 'fail', ts),
+    ]);
+    assert.equal(openFailures.length, 1);
+  });
+
   it('multiple topics: only the ones with an unresolved fail/block appear, freshest first', () => {
     const { topics, openFailures } = summarizeLedger([
       ev('resolved', 'fail', 'fail', '2026-01-01T00:00:00Z'),
