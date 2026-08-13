@@ -370,7 +370,7 @@ Each `expanded[]` element (live wire, since 1.1):
 | Field | Since | Notes |
 |-------|-------|-------|
 | `id`, `type`, `title`, `snippet` | G2 (0.9+) | Unchanged |
-| `kind` | **1.1** | Canonical read-side edge kind (`about`, `member_of`, `depends_on`, `uses`, `agreed_with`, `informs`, `related`, `cites`). **Optional** on the wire only in the sense that pre-1.1 clients never saw `expanded`; within 1.1+ `expand: true` responses, every row carries `kind`. |
+| `kind` | **1.1** | Canonical read-side edge kind (`about`, `member_of`, …). **Required** on every `expanded[]` row when `expand: true` (1.1+). |
 | `hop` | **1.1** | Always `1` today (1-hop ceiling) |
 | `expandedFrom` | G2 | Seed hit id this neighbor was pulled from |
 

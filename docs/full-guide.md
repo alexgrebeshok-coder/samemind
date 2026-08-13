@@ -339,13 +339,15 @@ deleting history: see [docs/memory-hygiene.md](memory-hygiene.md).
 ## Relations
 
 Typed edges in frontmatter (`relations`) are a SameMind profile extension on top
-of OKF v0.1. **Writing** stays open — any key parses. **Reading** (expand,
-`validate`, `query rel` walk) uses the closed vocabulary in
-[`docs/graph-design-note.md`](graph-design-note.md): `about`, `member_of`,
+of OKF v0.1. **Writing** stays open — any key parses. **Closed vocabulary on read**
+applies to **expand** and **validate** only (see
+[`docs/graph-design-note.md`](graph-design-note.md)): `about`, `member_of`,
 `depends_on`, `uses`, `agreed_with`, `informs`, `related`, plus derived `cites`
 from markdown body links. Legacy aliases (`works_at`, `covers`, `spawned_by`, …)
-normalize on read. Values are bundle-absolute paths (`/entities/…md`) or lists
-of them; the parser always normalizes to arrays.
+normalize in expand `+hop` / MCP `expanded` output — **not** in `query rel` yet;
+pass the key stored in frontmatter (`works_at`, not `member_of`). Values are
+bundle-absolute paths (`/entities/…md`) or lists of them; the parser always
+normalizes to arrays.
 
 ```sh
 # outbound: what does Alex depend on / work at?

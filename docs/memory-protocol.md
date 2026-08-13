@@ -66,8 +66,8 @@ kind** (`about`, `member_of`, `cites`, …), not the raw frontmatter alias:
 - Off by default: without the flag, output is byte-identical to a plain
   `recall`. MCP parity: `memory_search { query, expand: true, expand_budget?,
   include_superseded? }` returns the same neighbors in a separate `expanded`
-  block (never merged into `results`). Each `expanded` row includes optional
-  `kind` (canonical edge kind), `hop`, and `expandedFrom`.
+  block (never merged into `results`). Every `expanded` row includes `kind`
+  (canonical edge kind), `hop`, and `expandedFrom`.
 
 **When the agent must pass `expand: true` (MCP) / `--expand` (CLI):** if any
 top-k hit is a question **anchor** — `Entity`, `User`, `Project`, `Plan`,

@@ -1,7 +1,8 @@
 # Граф памяти 1.0 — типы рёбер и expand
 
-**Статус:** реализовано в коде 1.1 (`tools/lib/relation-kinds.mjs`, `expandHits`,
-`validate`). Нота — канон решения, не черновик.  
+**Статус:** expand + validate реализованы в 1.1 (`relation-kinds.mjs`, `expandHits`,
+`unknownRelationKindWarnings`). **`query rel` — сырые ключи** (канонический обход —
+отдельный срез). Нота — канон решения.  
 **Дата:** 2026-08-12 (код: 1.1.0)  
 **Наряд:** Н4 / `n4-samemind-graph-1208`  
 **Аудитория:** директор (приёмка) и Саша.
@@ -12,18 +13,20 @@
 
 ## 0. Что уже есть в коде (не выдумывать)
 
-В продукте граф **уже есть**. С 1.1 словарь **закрыт на чтении** (expand,
-validate, `query rel`); парсер по-прежнему принимает любой ключ. Формулировка наряда «только `[[wiki]]` без типа и направления» — про восприятие, не про репозиторий. По коду на момент принятия:
+В продукте граф **уже есть**. С 1.1 словарь **закрыт на чтении** для **expand** и
+**validate**; парсер и **`query rel` по-прежнему сырые ключи**. Таблица §0 —
+инвентарь на старт наряда; пометки «до 1.1» / «с 1.1» отделяют историю от
+текущего кода.
 
 | Слой | Где | Что делает |
 |---|---|---|
 | Хранение | markdown + YAML frontmatter, `tools/lib/okf.mjs` `parse()` / `load()` | Узел = файл. Источник правды — файлы бандла, не БД. |
 | Markdown-ссылки | `okf.mjs:214` | Из тела (вне code/inline-code) вытаскиваются только `[text](path.md)`. Это и есть «wikilink» продукта. |
 | `[[wiki]]` | комментарий `okf.mjs:306–307` | Формат зеркал Claude Code. `validate`/`links` их **не** разбирают. В живом бандле ~30 штук, большинство не резолвится в id концепта (`[[skill-lifecycle]]`, `[[x]]`, `[[ссылок]]`). В `demo/` — 0. |
-| Типизированные рёбра | frontmatter `relations:`, `normalizeRelations`, `collectRelationEdges` | Словарь **открытый**: любой ключ → список путей. `samemind query rel <type> <id>` ходит в обе стороны. `validate` ругается на битую цель, **не** на неизвестный тип. |
+| Типизированные рёбра | frontmatter `relations:`, `normalizeRelations`, `collectRelationEdges` | Парсер **открытый**: любой ключ → список путей. **`query rel`** — сырой `relations[edgeType]`, без алиасов (`works_at` да, `member_of` пусто). **С 1.1:** `validate` ⚠️ на неизвестный ключ (не fail). |
 | `supersedes` | top-level frontmatter, `docs/memory-hygiene.md`, `okf.mjs:219–223` | Гигиена, **не** ребро графа. Намеренно вне `relations:`. |
 | Конфликт 0.7.0 | `CHANGELOG` 0.7.0, `hygiene.mjs` `findContradictions` / `applyConflictTiebreak` | Живые пары (один `type`, Jaccard ≥ 0.34, никто никого не supersede’ит) **не выкидываются**. Порядок: authority ↓ → recency ↓ → score. Проигравший помечается `⚔ conflicts with <id>`. Stale/deprecated по умолчанию не в выдаче (`--include-superseded` — аудит). |
-| Expand 0.9.0 (G2) | `recall.mjs` `expandHits`, `okf-recall.mjs --expand`, MCP `memory_search.expand` | 1 hop, budget 5, off by default. Тянет **все** `relations` в обе стороны + **обратные** md-ссылки. Исходящие md-ссылки хита **не** тянет. Соседей печатает отдельно (`+hop`), в рейтинг хитов не мешает. Hygiene-gate тот же: deprecated / superseded / expired не тянутся. `--expand-hops > 1` уже режется до 1. |
+| Expand 0.9.0 (G2) | `recall.mjs` `expandHits`, `okf-recall.mjs --expand`, MCP `memory_search.expand` | **До 1.1:** 1 hop, budget 5; тянул **все** `relations` + inbound md-ссылки. **С 1.1:** очередь kind, алиасы, без `next`/unknown/`relations.supersedes`; канонический `kind` в `+hop` / `expanded` — §4.3. |
 | Поиск | `recall.mjs` + `bm25.mjs` + `sqlite-index.mjs` | `auto` → semantic если есть индекс и эндпоинт, иначе BM25. `hybrid` = RRF. `sqlite-vec` — только векторы (`items`: id, hash, type, title, visibility). **Таблицы рёбер в sqlite нет.** |
 | Карта связей | `okf-query.mjs` `buildLinksModel`, HTTP `/api/graph`, контракт `kind: "links"` | Уже отдаёт `edges[]` с `kind: "link" \| "relation"` и `rel: <открытый ключ>`. `supersedes` рисуется как `rel: "supersedes"`. |
 
@@ -179,15 +182,19 @@ Expand ходит сюда **последним** и только если бю�
 
 ### 4.3 Какие рёбра ходить и в каком порядке
 
-Сейчас `expandHits` сваливает все `relations` + inbound links в один `Set` и режет бюджет порядком обхода объекта. В 1.0 — очередь по типу:
+**Было до 1.1:** `expandHits` сваливал все `relations` + inbound links в один `Set`
+и резал бюджет порядком обхода объекта.
 
-1. `about`, `member_of`, `agreed_with`, `depends_on`, `informs`, `uses` — оба направления (как `rel` CLI).
+**Реализовано в 1.1:**
+
+1. `about`, `member_of`, `agreed_with`, `depends_on`, `informs`, `uses` — оба направления.
 2. `cites` — **только inbound** (кто сослался на хит).
 3. `related` — оба направления, если бюджет ещё есть.
 
 Не ходить: `next`, неизвестные ключи, `relations.supersedes`.
 
-Подпись `+hop` в 1.0 должна нести **канонический kind** (`about` / `member_of` / … / `cites`), не сырой ключ файла. Алиас нормализуется до печати. Иначе агент снова видит зоопарк.
+`+hop` / MCP `expanded` несут **канонический kind** (`about` / `member_of` / … /
+`cites`), не сырой ключ файла. Алиас нормализуется до печати.
 
 ### 4.4 Конфликт — не изобретать, стыковать с 0.7.0
 

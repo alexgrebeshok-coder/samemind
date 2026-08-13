@@ -12,9 +12,10 @@ walk, and MCP/CLI parity — **no** graph DB, n-hop, or parser hard-fail.
 
 - **Closed read-side relation dictionary** (`tools/lib/relation-kinds.mjs`): canonical
   kinds `about`, `member_of`, `depends_on`, `uses`, `agreed_with`, `informs`,
-  `related`, plus derived inbound-only `cites`. Legacy frontmatter keys normalize
-  via aliases (`works_at` → `member_of`, `spawned_by` reverse of `informs`, …).
-  Parser stays open; unknown keys get a `validate` **warning**, not a hard fail.
+  `related`, plus derived inbound-only `cites`. Legacy keys normalize via aliases in
+  **expand output** (`works_at` → `member_of`, …). **`query rel` still matches raw
+  stored keys** — canonical rel walk is a later slice. Parser stays open; unknown
+  keys get a `validate` **warning**, not a hard fail.
 - **`expandHits` kind queue** — walks high-signal kinds first; skips `next`, unknown
   keys, and `relations.supersedes` (hygiene, not a neighbor). CLI `+hop` rows and
   MCP `expanded[]` carry canonical `kind`, `hop`, `expandedFrom`.
