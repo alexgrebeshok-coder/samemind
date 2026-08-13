@@ -642,21 +642,24 @@ function resolveLinkId(fromDoc, target, docsByFile) {
 }
 
 /**
- * G2/1.1 — 1-hop graph expand after top-k recall. Walks typed `relations` and inbound
- * markdown cites in RELATION_WALK_ORDER (§4.3): stored kinds both ways, then inbound-only
- * `cites`, then symmetric `related` if budget remains. Aliases go through orientRelation
+ * G2/1.1 — 1-hop graph expand after top-k recall. Walks typed `relations` and markdown
+ * cites in RELATION_WALK_ORDER (§4.3) via relationKindTraversal: stored kinds both ways,
+ * then `cites` (dictionary inbound-only), then symmetric `related` if budget remains.
+ * Aliases go through orientRelation
  * (spawned_by → informs inbound). `next`, unknown keys, and hygiene supersede keys are
  * not walked. Budget is shared across all seeds. Neighbors are never ranked.
  *
  * Hygiene matches hits: deprecated is never pulled; stale (`isStaleForRecall`) is dropped
  * unless `includeSuperseded` is set, in which case the same hygieneLabel is appended.
- * A neighbor in a findContradictions pair with its seed keeps the existing ⚔ label.
+ * A neighbor in a findContradictions pair with any top-k seed keeps the existing ⚔
+ * label, even if a different seed pulled it.
  *
  * Returns `{ id, title, type, score: 0, hop: 1, kind, expandedFrom, label, hygiene? }`.
  * `label` always contains `(+1 hop from <seedId>)`. Empty hits/docs/budget → `[]`.
  */
 export function expandHits(hits, docs, {
   budget = DEFAULT_EXPAND_BUDGET, asOf = null, includeSuperseded = false,
+  kindTraversal = relationKindTraversal,
 } = {}) {
   if (!hits?.length || !docs?.length || budget <= 0) return [];
 
@@ -672,10 +675,8 @@ export function expandHits(hits, docs, {
 
   const edgesByKind = Object.create(null);
   for (const kind of RELATION_WALK_ORDER) {
-    if (kind === 'cites') continue;
     edgesByKind[kind] = [];
   }
-  const inboundCites = new Map(); // toId -> fromId[]
 
   for (const d of docs) {
     const rel = d.relations || Object.create(null);
@@ -694,8 +695,7 @@ export function expandHits(hits, docs, {
     for (const l of d.links || []) {
       const toId = resolveLinkId(d, l, docsByFile);
       if (!toId) continue;
-      if (!inboundCites.has(toId)) inboundCites.set(toId, []);
-      inboundCites.get(toId).push(d.id);
+      edgesByKind.cites.push({ from: d.id, to: toId });
     }
   }
 
@@ -726,7 +726,7 @@ export function expandHits(hits, docs, {
       if (hyg) marks.push(hyg);
     }
     const fightSeed = conflictWithSeed.get(nid);
-    if (fightSeed === seedId) marks.push(conflictLabel(seedId));
+    if (fightSeed) marks.push(conflictLabel(fightSeed));
     const hopLabel = `(+1 hop from ${seedId})`;
     const hygiene = marks.join(' ');
     out.push({
@@ -751,12 +751,6 @@ export function expandHits(hits, docs, {
       local.add(nid);
       found.push(nid);
     };
-    if (kind === 'cites') {
-      if (spec.directions.includes('inbound')) {
-        for (const fromId of inboundCites.get(seedId) || []) add(fromId);
-      }
-      return found;
-    }
     const edges = edgesByKind[kind] || [];
     if (spec.directions.includes('outbound')) {
       for (const e of edges) {
@@ -773,7 +767,7 @@ export function expandHits(hits, docs, {
 
   for (const kind of RELATION_WALK_ORDER) {
     if (out.length >= budget) break;
-    const spec = relationKindTraversal(kind);
+    const spec = kindTraversal(kind);
     if (!spec) continue;
     for (const hit of hits) {
       if (out.length >= budget) break;

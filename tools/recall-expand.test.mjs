@@ -10,6 +10,7 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { expandHits, DEFAULT_EXPAND_BUDGET } from './lib/recall.mjs';
+import { relationKindTraversal } from './lib/relation-kinds.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OKF_RECALL = join(HERE, 'okf-recall.mjs');
@@ -339,6 +340,51 @@ describe('expandHits — 1.1 kind queue (mutation probes)', () => {
     assert.equal(extra[0].kind, 'uses');
     assert.match(extra[0].label, /⚔ conflicts with concepts\/retrieval-strategy/);
     assert.notEqual(extra[0].kind, 'conflicts_with');
+  });
+
+  it('conflict with any top-k seed keeps ⚔ even when another seed pulled the neighbor', () => {
+    const seed = mkDoc('concepts/retrieval-strategy', {
+      title: 'Retrieval strategy',
+      tags: ['memory'],
+    });
+    const peer = mkDoc('concepts/retrieval-approach', {
+      title: 'Retrieval approach',
+      tags: ['memory'],
+    });
+    const hub = mkDoc('entities/unrelated-hub', {
+      type: 'Entity',
+      title: 'Unrelated hub',
+      relations: { uses: ['/concepts/retrieval-approach.md'] },
+    });
+    const extra = expandHits(
+      [{ id: seed.id, score: 1 }, { id: hub.id, score: 0.9 }],
+      [seed, peer, hub],
+    );
+    const row = extra.find(e => e.id === 'concepts/retrieval-approach');
+    assert.ok(row, JSON.stringify(extra));
+    assert.equal(row.expandedFrom, 'entities/unrelated-hub');
+    assert.equal(row.kind, 'uses');
+    assert.match(row.label, /⚔ conflicts with concepts\/retrieval-strategy/);
+    assert.notEqual(row.kind, 'conflicts_with');
+  });
+
+  it('cites follows spec.directions — outbound in traversal would pull the hit own links', () => {
+    const hub = mkDoc('entities/hub', { links: ['/entities/cited.md'] });
+    const cited = mkDoc('entities/cited');
+    const hits = [{ id: hub.id, score: 1 }];
+    assert.deepEqual(expandHits(hits, [hub, cited]), []);
+    assert.ok(!relationKindTraversal('cites').directions.includes('outbound'));
+
+    const extra = expandHits(hits, [hub, cited], {
+      kindTraversal: kind => {
+        const spec = relationKindTraversal(kind);
+        if (kind !== 'cites' || !spec) return spec;
+        return { ...spec, directions: ['outbound'] };
+      },
+    });
+    assert.equal(extra.length, 1);
+    assert.equal(extra[0].id, 'entities/cited');
+    assert.equal(extra[0].kind, 'cites');
   });
 });
 
