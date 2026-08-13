@@ -18,7 +18,10 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
-import { writeHealth, readHealth, assessLiveness } from './lib/health.mjs';
+import {
+  writeHealth, readHealth, assessLiveness, maybeAppendHealthLedger, HEALTH_TOPIC,
+} from './lib/health.mjs';
+import { readEvents } from './lib/ledger.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PROJECT_CLI = join(HERE, 'project.mjs');
@@ -85,6 +88,66 @@ describe('writeHealth / readHealth', () => {
     try {
       writeHealth(root, { ok: true, targets: [] });
       assert.deepEqual(readdirSync(join(root, '.samemind')), ['health.json']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── unit: maybeAppendHealthLedger — ref keys the TRANSITION, not just the destination state ───
+// (regression: same-ms fail→ok→fail collapsed to 2 events — the second `fail`'s ref matched the
+// first `fail`'s ref, both computed from state+ts only, so appendEvent's dedup silently ate a
+// real third event). Time is injected via `record.ts`/`previous.ts` — never Date.now() — so the
+// test doesn't depend on the machine being fast enough to land two writes in one millisecond.
+describe('maybeAppendHealthLedger — same-millisecond transitions', () => {
+  it('fail → ok → fail, all at the SAME ts → three events (each a real transition)', () => {
+    const root = tmp('health-ledger');
+    try {
+      const ts = '2026-01-01T00:00:00.500Z';
+      const none = null;
+      const fail1 = { ts, ok: false, lastError: 'boom' };
+      const ok1 = { ts, ok: true, lastError: null };
+      const fail2 = { ts, ok: false, lastError: 'boom again' };
+      maybeAppendHealthLedger(root, none, fail1);   // none  → fail
+      maybeAppendHealthLedger(root, fail1, ok1);     // fail  → ok
+      maybeAppendHealthLedger(root, ok1, fail2);     // ok    → fail (same ts as fail1!)
+      const events = readEvents(root).filter(e => e.topic === HEALTH_TOPIC);
+      assert.equal(events.length, 3, 'each transition is a distinct real event, none dropped as a dup');
+      assert.deepEqual(events.map(e => e.status), ['fail', 'ok', 'fail']);
+      const refs = new Set(events.map(e => e.ref));
+      assert.equal(refs.size, 3, 'three transitions → three distinct refs, even at one shared ts');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('a genuine retry — same previous, same record, same ts — still dedups to one event', () => {
+    const root = tmp('health-ledger');
+    try {
+      const previous = { ts: '2026-01-01T00:00:00.000Z', ok: false };
+      const record = { ts: '2026-01-01T00:00:00.500Z', ok: true, lastError: null };
+      maybeAppendHealthLedger(root, previous, record);
+      maybeAppendHealthLedger(root, previous, record); // exact same transition, retried
+      const events = readEvents(root).filter(e => e.topic === HEALTH_TOPIC);
+      assert.equal(events.length, 1, 'identical transition retried is still one event, not two');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── unit: writeHealth retry idempotency — the state-diff short-circuit, not ref dedup ───
+describe('writeHealth — retrying the same outcome never double-appends', () => {
+  it('two writeHealth calls with the same ok/lastError append the ledger event only once', () => {
+    const root = tmp('health-retry');
+    try {
+      writeHealth(root, { ok: false, lastError: 'boom' });
+      writeHealth(root, { ok: false, lastError: 'boom' }); // retry of the same failure
+      const events = readEvents(root).filter(e => e.topic === HEALTH_TOPIC);
+      // previous.ok === record.ok short-circuits maybeAppendHealthLedger BEFORE it even builds a
+      // ref — writeHealth persists health.json before touching the ledger, so the second call
+      // already sees the first call's outcome as `previous` and never reaches appendEvent at all.
+      assert.equal(events.length, 1, 'retry of an unchanged outcome is a no-op on the ledger');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

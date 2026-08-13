@@ -29,15 +29,24 @@ ran clean on a live bundle — the two conditions set for the tag.
   regression test fails if either drops the projection. Landing this **before** the tag was
   the point: frozen, the fix would have been a major. Consumers that read `body` or `file`
   off these two routes should fetch per document via `GET /api/concept/<id>`.
-- **A failure closed in the same millisecond stayed open forever.** `summarizeLedger`
-  compared timestamp *strings* with `>=`, so when a `fail` and the `done`/`ok` that closes it
-  landed in the same millisecond, the topic never cleared. Order inside one millisecond now
-  comes from position in the stream, not from comparing equal strings. This is the metric
-  `dogfood` reports on — a phantom open failure would have broken the very gate that decides
-  whether a release is allowed. The bug was one-directional (it could only invent an open
-  failure, never hide a real one), so past clean-week verdicts stand. Caught by the release
-  gate itself on Node 20; the same test had passed twice on Node 22, where the two writes
-  never collided.
+- **Two places treated a timestamp as if it were unique.** It is not: two ledger writes in
+  the same millisecond carry the same stamp, and both defects only appear when they collide.
+  1. `summarizeLedger` compared timestamp *strings* with `>=`, so a `fail` and the `done`/`ok`
+     that closes it, written in the same millisecond, left the topic open forever. Order
+     inside one millisecond now comes from position in the stream.
+  2. The health ledger's dedup `ref` was built from the destination state and the stamp
+     (`health:fail:<ts>`) but not from the transition, so in a `fail → ok → fail` sequence
+     inside one millisecond the third event collided with the first and was silently dropped
+     as a retry. The `ref` now carries the transition (`health:ok->fail:<ts>`); a genuine
+     retry still dedups, a genuine new transition no longer does.
+
+  This is the metric `dogfood` reports, and `dogfood` is the gate that decides whether a
+  release may ship — a phantom open failure breaks the instrument that measures readiness.
+  Defect 1 was one-directional (it could invent an open failure, never hide a real one), so
+  past clean-week verdicts stand. Both were caught by the release gate itself on Node 20,
+  after passing on Node 22 where the writes never collided. The rest of the tree was swept
+  for the same class — timestamps used as identity, dedup key, map key or filename — and the
+  remaining sites are display ordering, where ties are equivalent by construction.
 - **The contract document had drifted from the wire.** Re-check before signing found
   `generatedAt` marked missing on five surfaces that all carry it since 0.17.0, `proactive`
   described as envelope-less when it is enveloped, `sessionsTotal` / `sessionNextTotal`
