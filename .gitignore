@@ -28,5 +28,12 @@ node_modules/
 # and are local audit scratch, not repo content. Summary result JSONs (small, one per run) ARE
 # committed as evidence.
 bench/longmemeval/results/**/*.jsonl
+
+# board --write output and the event ledger at the repo's own bundle root — local dogfood
+# scratch from running samemind on itself, not repo content. Root-anchored on purpose:
+# demo/DASHBOARD.md and demo/ledger/events.jsonl are tracked fixtures shipped in the npm
+# package and must stay tracked.
+/DASHBOARD.md
+/ledger/
 __pycache__/
 *.pyc
