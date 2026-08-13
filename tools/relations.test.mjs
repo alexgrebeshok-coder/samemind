@@ -311,6 +311,31 @@ describe('validate — unknown kind is warning; next / aliases / hygiene stay si
   });
 });
 
+describe('validate — stored cites is unknown (derived, not a relations key)', () => {
+  let root;
+
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), 'samemind-rel-cites-'));
+    writeConcept(root, 'entities/a.md', {
+      type: 'Entity',
+      title: 'A',
+      relations: { cites: '/entities/b.md' },
+    });
+    writeConcept(root, 'entities/b.md', { type: 'Entity', title: 'B' });
+  });
+
+  after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('relations.cites → unknown relation kind warning, exit 0', () => {
+    const { code, out } = runQuery(root, ['validate']);
+    assert.equal(code, 0, out);
+    assert.match(out, /✅ OKF/);
+    assert.match(out, /entities\/a \[cites\] — unknown relation kind/);
+  });
+});
+
 describe('validate — next-only bundle is silent', () => {
   let root;
 

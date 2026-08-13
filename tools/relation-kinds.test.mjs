@@ -7,6 +7,8 @@ import {
   classifyRelationKey,
   canonicalRelationKind,
   isExpandableRelationKey,
+  relationKindTraversal,
+  RELATION_KIND_TRAVERSAL,
   RELATION_WALK_ORDER,
 } from './lib/relation-kinds.mjs';
 
@@ -102,5 +104,66 @@ describe('RELATION_WALK_ORDER', () => {
       'cites',
       'related',
     ]);
+  });
+
+  it('is the same dictionary as RELATION_KIND_TRAVERSAL (no second walk table)', () => {
+    assert.deepEqual(Object.keys(RELATION_KIND_TRAVERSAL), [...RELATION_WALK_ORDER]);
+  });
+});
+
+// Spec table from docs/graph-design-note.md §4.3. Literals from the note, not recomputed
+// from the implementation (so flipping a direction / derived / symmetric goes red).
+const TRAVERSAL_CASES = [
+  ['about',       { kind: 'about',       directions: ['outbound', 'inbound'], derived: false, symmetric: false }],
+  ['member_of',   { kind: 'member_of',   directions: ['outbound', 'inbound'], derived: false, symmetric: false }],
+  ['agreed_with', { kind: 'agreed_with', directions: ['outbound', 'inbound'], derived: false, symmetric: false }],
+  ['depends_on',  { kind: 'depends_on',  directions: ['outbound', 'inbound'], derived: false, symmetric: false }],
+  ['informs',     { kind: 'informs',     directions: ['outbound', 'inbound'], derived: false, symmetric: false }],
+  ['uses',        { kind: 'uses',        directions: ['outbound', 'inbound'], derived: false, symmetric: false }],
+  ['cites',       { kind: 'cites',       directions: ['inbound'],             derived: true,  symmetric: false }],
+  ['related',     { kind: 'related',     directions: ['outbound', 'inbound'], derived: false, symmetric: true }],
+];
+
+describe('relationKindTraversal — directions / derived / symmetric', () => {
+  for (const [kind, expected] of TRAVERSAL_CASES) {
+    it(`${kind} → ${expected.directions.join('+')}${expected.derived ? ' derived' : ''}${expected.symmetric ? ' symmetric' : ''}`, () => {
+      const spec = relationKindTraversal(kind);
+      assert.deepEqual(spec, expected);
+      assert.equal(RELATION_KIND_TRAVERSAL[kind], spec);
+    });
+  }
+
+  it('null for aliases, board, hygiene, unknown — lookup is by canonical walk kind', () => {
+    for (const raw of ['covers', 'works_at', 'spawned_by', 'next', 'supersedes', 'frobnicates', '', null]) {
+      assert.equal(relationKindTraversal(raw), null, String(raw));
+    }
+  });
+});
+
+describe('traversal mutation probes', () => {
+  it('cites outbound — derived walk stays inbound-only', () => {
+    const spec = relationKindTraversal('cites');
+    assert.ok(!spec.directions.includes('outbound'), 'cites must not walk outbound');
+    assert.deepEqual([...spec.directions], ['inbound']);
+    assert.equal(spec.derived, true);
+    assert.equal(spec.symmetric, false);
+  });
+
+  it('related non-symmetric — weak neighbor stays symmetric both ways', () => {
+    const spec = relationKindTraversal('related');
+    assert.equal(spec.symmetric, true);
+    assert.deepEqual([...spec.directions], ['outbound', 'inbound']);
+    assert.equal(spec.derived, false);
+    assert.equal(RELATION_WALK_ORDER.at(-1), 'related');
+  });
+
+  it('missing typed inbound — six stored kinds walk both directions', () => {
+    for (const kind of ['about', 'member_of', 'agreed_with', 'depends_on', 'informs', 'uses']) {
+      const spec = relationKindTraversal(kind);
+      assert.ok(spec.directions.includes('inbound'), `${kind} inbound`);
+      assert.ok(spec.directions.includes('outbound'), `${kind} outbound`);
+      assert.equal(spec.derived, false, kind);
+      assert.equal(spec.symmetric, false, kind);
+    }
   });
 });

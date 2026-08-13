@@ -2,12 +2,35 @@
 // Source: docs/graph-design-note.md §§2–4. Parser (normalizeRelations) stays open;
 // this module classifies keys on read. Expand and validate consume these helpers.
 
+function freezeTraversal(kind, directions, { derived = false, symmetric = false } = {}) {
+  return Object.freeze({
+    kind,
+    directions: Object.freeze([...directions]),
+    derived,
+    symmetric,
+  });
+}
+
+// Single dictionary: walk order is insertion order. Expand must consume this, not fork in recall.
+// Source: graph-design-note.md §4.3 — typed both ways, cites inbound-only derived, related last + symmetric.
+export const RELATION_KIND_TRAVERSAL = Object.freeze({
+  about: freezeTraversal('about', ['outbound', 'inbound']),
+  member_of: freezeTraversal('member_of', ['outbound', 'inbound']),
+  agreed_with: freezeTraversal('agreed_with', ['outbound', 'inbound']),
+  depends_on: freezeTraversal('depends_on', ['outbound', 'inbound']),
+  informs: freezeTraversal('informs', ['outbound', 'inbound']),
+  uses: freezeTraversal('uses', ['outbound', 'inbound']),
+  cites: freezeTraversal('cites', ['inbound'], { derived: true }),
+  related: freezeTraversal('related', ['outbound', 'inbound'], { symmetric: true }),
+});
+
 /** Expand walk order from graph-design-note.md §4.3. cites is derived from body links, not relations:. */
-export const RELATION_WALK_ORDER = Object.freeze([
-  'about', 'member_of', 'agreed_with', 'depends_on', 'informs', 'uses',
-  'cites',
-  'related',
-]);
+export const RELATION_WALK_ORDER = Object.freeze(Object.keys(RELATION_KIND_TRAVERSAL));
+
+/** Traversal spec for a canonical walk kind, or null. Not an alias classifier. */
+export function relationKindTraversal(kind) {
+  return RELATION_KIND_TRAVERSAL[kind] ?? null;
+}
 
 // Stored edge aliases → canonical kind + whether the written key is the reverse of the canon.
 const EDGE_ALIASES = Object.freeze({
