@@ -13,11 +13,21 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const QUERY = join(HERE, 'okf-query.mjs');
+const CLI = join(HERE, '..', 'bin', 'samemind.mjs');
 
 function runQuery(root, args) {
   const r = spawnSync(process.execPath, [QUERY, ...args], {
     env: { ...process.env, OKF_ROOT: root },
     encoding: 'utf8',
+  });
+  return { code: r.status ?? 1, out: (r.stdout || '') + (r.stderr || '') };
+}
+
+function runSamemind(root, args) {
+  const r = spawnSync(process.execPath, [CLI, ...args], {
+    env: { ...process.env, OKF_ROOT: root },
+    encoding: 'utf8',
+    cwd: root,
   });
   return { code: r.status ?? 1, out: (r.stdout || '') + (r.stderr || '') };
 }
@@ -244,5 +254,111 @@ describe('demo bundle has live relations', () => {
     assert.equal(code, 0, out);
     assert.match(out, /✅/);
     assert.ok(!out.includes('⚠️ Broken relations'), out);
+    assert.ok(!out.includes('Unknown relation kinds'), out);
+  });
+});
+
+describe('validate — unknown kind is warning; next / aliases / hygiene stay silent', () => {
+  let root;
+
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), 'samemind-rel-kind-'));
+    writeConcept(root, 'entities/known.md', {
+      type: 'Entity',
+      title: 'Known',
+      relations: {
+        works_at: '/entities/org.md',
+        covers: '/projects/p.md',
+        spawned_by: '/concepts/src.md',
+        next: '/projects/task.md',
+        supersedes: '/entities/old.md',
+      },
+    });
+    writeConcept(root, 'entities/org.md', { type: 'Entity', title: 'Org' });
+    writeConcept(root, 'entities/old.md', { type: 'Entity', title: 'Old' });
+    writeConcept(root, 'projects/p.md', { type: 'Project', title: 'P' });
+    writeConcept(root, 'projects/task.md', { type: 'Task', title: 'Task' });
+    writeConcept(root, 'concepts/src.md', { type: 'Concept', title: 'Src' });
+    writeConcept(root, 'entities/weird.md', {
+      type: 'Entity',
+      title: 'Weird',
+      relations: { frobnicates: '/entities/org.md' },
+    });
+  });
+
+  after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('unknown key: ✅ + ⚠️, exit 0 (soft warning, not hard fail)', () => {
+    const { code, out } = runQuery(root, ['validate']);
+    assert.equal(code, 0, out);
+    assert.match(out, /✅ OKF/);
+    assert.match(out, /Unknown relation kinds/);
+    assert.match(out, /entities\/weird \[frobnicates\] — unknown relation kind/);
+  });
+
+  it('next is known board key: no unknown warning for it', () => {
+    const { code, out } = runQuery(root, ['validate']);
+    assert.equal(code, 0, out);
+    assert.ok(!/entities\/known \[next\]/.test(out), out);
+  });
+
+  it('aliases and relations.supersedes are not unknown', () => {
+    const { code, out } = runQuery(root, ['validate']);
+    assert.equal(code, 0, out);
+    assert.ok(!/entities\/known \[(works_at|covers|spawned_by|supersedes)\]/.test(out), out);
+  });
+});
+
+describe('validate — next-only bundle is silent', () => {
+  let root;
+
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), 'samemind-rel-next-'));
+    writeConcept(root, 'concepts/session.md', {
+      type: 'Session',
+      title: 'S',
+      relations: { next: '/projects/task.md' },
+    });
+    writeConcept(root, 'projects/task.md', { type: 'Task', title: 'T' });
+  });
+
+  after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('no Unknown relation kinds section, exit 0', () => {
+    const { code, out } = runQuery(root, ['validate']);
+    assert.equal(code, 0, out);
+    assert.match(out, /✅ OKF/);
+    assert.ok(!out.includes('Unknown relation kinds'), out);
+    assert.ok(!out.includes('unknown relation kind'), out);
+  });
+});
+
+describe('validate — samemind CLI query validate', () => {
+  let root;
+
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), 'samemind-rel-cli-'));
+    writeConcept(root, 'entities/a.md', {
+      type: 'Entity',
+      title: 'A',
+      relations: { next: '/entities/b.md', frobnicates: '/entities/b.md' },
+    });
+    writeConcept(root, 'entities/b.md', { type: 'Entity', title: 'B' });
+  });
+
+  after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('samemind query validate: warns on unknown, silent on next', () => {
+    const { code, out } = runSamemind(root, ['query', 'validate']);
+    assert.equal(code, 0, out);
+    assert.match(out, /✅ OKF/);
+    assert.match(out, /entities\/a \[frobnicates\] — unknown relation kind/);
+    assert.ok(!/entities\/a \[next\]/.test(out), out);
   });
 });

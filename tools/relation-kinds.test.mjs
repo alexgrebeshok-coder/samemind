@@ -1,0 +1,106 @@
+#!/usr/bin/env node
+// relation-kinds.test.mjs — closed read-side relation vocabulary (graph-design-note.md §§2–4).
+// Parser stays open; this module only classifies. Run: node --test tools/relation-kinds.test.mjs
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  classifyRelationKey,
+  canonicalRelationKind,
+  isExpandableRelationKey,
+  RELATION_WALK_ORDER,
+} from './lib/relation-kinds.mjs';
+
+// Spec table from docs/graph-design-note.md §§2–3. Expected values are literals from the note,
+// not recomputed from the implementation (so dropping an alias or flipping a class goes red).
+const CLASSIFY_CASES = [
+  ['about',            { class: 'edge',    kind: 'about',      reverse: false }],
+  ['covers',           { class: 'edge',    kind: 'about',      reverse: false }],
+  ['project',          { class: 'edge',    kind: 'about',      reverse: false }],
+  ['member_of',        { class: 'edge',    kind: 'member_of',  reverse: false }],
+  ['works_at',         { class: 'edge',    kind: 'member_of',  reverse: false }],
+  ['part_of',          { class: 'edge',    kind: 'member_of',  reverse: false }],
+  ['depends_on',       { class: 'edge',    kind: 'depends_on', reverse: false }],
+  ['uses',             { class: 'edge',    kind: 'uses',       reverse: false }],
+  ['agreed_with',      { class: 'edge',    kind: 'agreed_with', reverse: false }],
+  ['informs',          { class: 'edge',    kind: 'informs',    reverse: false }],
+  ['led_to',           { class: 'edge',    kind: 'informs',    reverse: false }],
+  ['decided',          { class: 'edge',    kind: 'informs',    reverse: false }],
+  ['spawned_by',       { class: 'edge',    kind: 'informs',    reverse: true }],
+  ['related',          { class: 'edge',    kind: 'related',    reverse: false }],
+  ['next',             { class: 'board',   kind: 'next',       reverse: false }],
+  ['supersedes',       { class: 'hygiene', kind: 'supersedes', reverse: false }],
+  ['superseded_by',    { class: 'hygiene', kind: 'supersedes', reverse: true }],
+  ['relations.supersedes', { class: 'hygiene', kind: 'supersedes', reverse: false }],
+  ['frobnicates',      { class: 'unknown', kind: null,        reverse: false }],
+];
+
+describe('classifyRelationKey — canon / alias / reverse / class', () => {
+  for (const [raw, expected] of CLASSIFY_CASES) {
+    it(`${raw} → ${expected.class}/${expected.kind}${expected.reverse ? ' reverse' : ''}`, () => {
+      assert.deepEqual(classifyRelationKey(raw), expected);
+    });
+  }
+
+  it('null/empty/whitespace → unknown', () => {
+    for (const raw of [null, undefined, '', '   ']) {
+      assert.deepEqual(classifyRelationKey(raw), { class: 'unknown', kind: null, reverse: false });
+    }
+  });
+
+  it('normalizes case and relations. prefix', () => {
+    assert.deepEqual(classifyRelationKey('Works_At'), {
+      class: 'edge', kind: 'member_of', reverse: false,
+    });
+    assert.deepEqual(classifyRelationKey('relations.superseded_by'), {
+      class: 'hygiene', kind: 'supersedes', reverse: true,
+    });
+  });
+});
+
+describe('canonicalRelationKind', () => {
+  it('maps aliases to stored edge kinds', () => {
+    assert.equal(canonicalRelationKind('covers'), 'about');
+    assert.equal(canonicalRelationKind('project'), 'about');
+    assert.equal(canonicalRelationKind('works_at'), 'member_of');
+    assert.equal(canonicalRelationKind('part_of'), 'member_of');
+    assert.equal(canonicalRelationKind('led_to'), 'informs');
+    assert.equal(canonicalRelationKind('decided'), 'informs');
+    assert.equal(canonicalRelationKind('spawned_by'), 'informs');
+    assert.equal(canonicalRelationKind('about'), 'about');
+  });
+
+  it('returns null for board, hygiene, unknown', () => {
+    assert.equal(canonicalRelationKind('next'), null);
+    assert.equal(canonicalRelationKind('supersedes'), null);
+    assert.equal(canonicalRelationKind('superseded_by'), null);
+    assert.equal(canonicalRelationKind('relations.supersedes'), null);
+    assert.equal(canonicalRelationKind('frobnicates'), null);
+    assert.equal(canonicalRelationKind('cites'), null);
+  });
+});
+
+describe('isExpandableRelationKey', () => {
+  it('true only for stored graph edges (not board / hygiene / unknown / cites)', () => {
+    const expandable = [
+      'about', 'covers', 'project', 'member_of', 'works_at', 'part_of',
+      'depends_on', 'uses', 'agreed_with', 'informs', 'led_to', 'decided',
+      'spawned_by', 'related',
+    ];
+    const notExpandable = [
+      'next', 'supersedes', 'superseded_by', 'relations.supersedes',
+      'frobnicates', 'cites', '',
+    ];
+    for (const k of expandable) assert.equal(isExpandableRelationKey(k), true, k);
+    for (const k of notExpandable) assert.equal(isExpandableRelationKey(k), false, k);
+  });
+});
+
+describe('RELATION_WALK_ORDER', () => {
+  it('matches graph-design-note.md §4.3 (typed edges, then cites, related last)', () => {
+    assert.deepEqual([...RELATION_WALK_ORDER], [
+      'about', 'member_of', 'agreed_with', 'depends_on', 'informs', 'uses',
+      'cites',
+      'related',
+    ]);
+  });
+});
