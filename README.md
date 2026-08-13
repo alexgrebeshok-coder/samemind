@@ -219,7 +219,7 @@ Details and finding ids: [`docs/spec/`](docs/spec/) (doctor contract).
 | Command | Job |
 |---------|-----|
 | `setup` / `install` | Wire engines + MCP |
-| `recall` / `gde` | Search (BM25 / optional semantic) |
+| `recall` / `gde` | Search (BM25 / optional semantic); `--expand` for 1-hop neighbors; `--include-superseded` for audit |
 | `brief` / `handoff` | Identity + work-state across sessions |
 | `board` | Kanban over tasks/plans/ideas |
 | `capture` | Pull engine transcripts → `inbox/` |

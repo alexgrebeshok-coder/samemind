@@ -3,6 +3,33 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.0] — 2026-08-13
+
+Graph read path 1.1: closed relation vocabulary on expand/validate, kind-priority
+walk, and MCP/CLI parity — **no** graph DB, n-hop, or parser hard-fail.
+
+### Added
+
+- **Closed read-side relation dictionary** (`tools/lib/relation-kinds.mjs`): canonical
+  kinds `about`, `member_of`, `depends_on`, `uses`, `agreed_with`, `informs`,
+  `related`, plus derived inbound-only `cites`. Legacy frontmatter keys normalize
+  via aliases (`works_at` → `member_of`, `spawned_by` reverse of `informs`, …).
+  Parser stays open; unknown keys get a `validate` **warning**, not a hard fail.
+- **`expandHits` kind queue** — walks high-signal kinds first; skips `next`, unknown
+  keys, and `relations.supersedes` (hygiene, not a neighbor). CLI `+hop` rows and
+  MCP `expanded[]` carry canonical `kind`, `hop`, `expandedFrom`.
+- **MCP `memory_search.include_superseded`** — parity with CLI `--include-superseded`
+  for both primary hits and `expanded` neighbors (same hygiene labels).
+- **Docs:** `memory-protocol.md` (when agents must pass `expand: true`),
+  `json-contract.md` §7.1 (`expanded.kind`), `knowledge-cycle.md` (closed-on-read),
+  `graph-design-note.md` (status → implemented).
+
+### Unchanged (by design)
+
+- Without `--expand` / `expand: false`, recall output stays byte-identical to 1.0.
+- CLI/HTTP JSON envelope (`contract`, `kind`, `generatedAt`, `data`) — unchanged.
+- No Neo4j, no sqlite edge table, no `[[wiki]]` parsing, no auto-expand in CLI.
+
 ## [1.0.1] — 2026-08-13
 
 A patch. No JSON form changed: the `{ contract, kind, generatedAt, data }` envelope and every

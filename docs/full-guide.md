@@ -339,9 +339,13 @@ deleting history: see [docs/memory-hygiene.md](memory-hygiene.md).
 ## Relations
 
 Typed edges in frontmatter (`relations`) are a SameMind profile extension on top
-of OKF v0.1. Edge types are open — no fixed vocabulary. Values are
-bundle-absolute paths (`/entities/…md`) or lists of them; the parser always
-normalizes to arrays.
+of OKF v0.1. **Writing** stays open — any key parses. **Reading** (expand,
+`validate`, `query rel` walk) uses the closed vocabulary in
+[`docs/graph-design-note.md`](graph-design-note.md): `about`, `member_of`,
+`depends_on`, `uses`, `agreed_with`, `informs`, `related`, plus derived `cites`
+from markdown body links. Legacy aliases (`works_at`, `covers`, `spawned_by`, …)
+normalize on read. Values are bundle-absolute paths (`/entities/…md`) or lists
+of them; the parser always normalizes to arrays.
 
 ```sh
 # outbound: what does Alex depend on / work at?
@@ -349,11 +353,17 @@ OKF_ROOT=demo node tools/okf-query.mjs rel works_at entities/alex-doe
 
 # inbound: who works at Acme Labs?
 OKF_ROOT=demo node tools/okf-query.mjs rel works_at acme-labs --inbound
+
+# recall with 1-hop graph expand (budget 5, off by default)
+OKF_ROOT=demo node tools/okf-recall.mjs "Lumen" -k 3 --expand
+# audit: include superseded neighbors in hits and +hop rows
+OKF_ROOT=demo node tools/okf-recall.mjs "Lumen" -k 3 --expand --include-superseded
 ```
 
 `links` counts relation edges alongside markdown links; `validate` reports
-broken relation targets as **warnings** (path missing) without failing
-conformant type checks.
+broken relation targets and **unknown relation kinds** as **warnings** (path
+missing / key outside dictionary) without failing conformant type checks. Board
+convention `next` is whitelisted — not unknown, not expandable.
 
 ## Identity layer
 
