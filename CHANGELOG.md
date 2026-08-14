@@ -3,6 +3,39 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.1] — 2026-08-14
+
+A patch. Closes the hole 1.1.0's smoke test found: `query` and `recall` are the
+last two read commands that had not been fixed to honor `--root` — same defect
+class 1.0.1 already fixed for `board` and `handoff`.
+
+### Fixed
+
+- **`--root` in `query` and `recall` did not select a bundle.** Both commands parsed
+  the flag and then ignored it, reading `OKF_ROOT`/cwd regardless — `query --root
+  ./other-bundle` or `recall --root ./other-bundle "<query>"` silently reported on
+  the wrong bundle, exit 0, no sign anything was off.
+- **A `--root` that is not a directory now errors by name** instead of returning
+  a quiet empty result. A missing flag value (`--root` at end of line, or right
+  before another flag) now errors "needs a value" instead of falling back silently.
+
+### Changed
+
+- **An unknown flag on `query` / `recall` is now an error with a non-zero exit.**
+  Previously any unrecognized `-`-prefixed argument was silently ignored — same
+  change 1.0.1 made for `board`/`handoff`.
+- **`--root` combined with an explicit `--mode semantic`/`--mode hybrid` now
+  refuses** (the embeddings index is pinned to the default bundle, not to
+  `--root`) rather than silently ranking against the wrong bundle's vectors.
+  `--mode auto` degrades to BM25 with a stderr note instead of refusing. Plain
+  `--root` or `--root` with `--mode bm25` are unaffected — BM25 is correct
+  against any bundle.
+
+### Internal
+
+- `resolveBundleRoot` — previously two byte-identical copies in `board.mjs` and
+  `handoff.mjs` — now lives once in `tools/lib/bundle-root.mjs`, with four callers.
+
 ## [1.1.0] — 2026-08-13
 
 Graph read path 1.1: closed relation vocabulary on expand/validate, kind-priority
