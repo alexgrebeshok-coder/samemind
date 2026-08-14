@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // okf-query.mjs — структурные запросы по OKF-bundle (list/type/tag/get/links/rel/validate). Без зависимостей.
 //   list | type <T> | tag <t> | get <id> | links [--json] | rel <type> <id> [--inbound] | validate
-//     [--include-secret] [--include-inbox]
+//     [--root <dir>] [--include-secret] [--include-inbox]
 import { readFileSync, existsSync } from 'node:fs';
 import { relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,18 +13,44 @@ import {
   buildSupersededMap, hygieneBanner, detectSupersedeCycles, collectSupersedeEdges,
 } from './lib/hygiene.mjs';
 import { unknownRelationKindWarnings } from './lib/relation-kinds.mjs';
+import { resolveBundleRoot } from './lib/bundle-root.mjs';
 
-const args = process.argv.slice(2);
-const cmd = args[0];
-const includeSecret = args.includes('--include-secret');
-// inbox is raw material awaiting curation (see issue #4) — excluded like secret/mirror by
-// default; --include-inbox opt-in surfaces it for inspection (validate will then flag its
-// missing `type`, which is expected — inbox notes are not graph concepts).
-const includeInbox = args.includes('--include-inbox');
-const inboundOnly = args.includes('--inbound');
-const jsonOut = args.includes('--json');
-const all = load({ includeSecret, includeInbox });
-const cs = all.filter(d => !d.reserved);
+/**
+ * Argv → { cmd, rest, root, includeSecret, includeInbox, inbound, json }.
+ * `cmd` is the first non-flag token anywhere in argv; `rest` collects every other non-flag
+ * token in order (subcommand positionals: `type <T>`, `tag <t>`, `get <id>`, `rel <type> <id>`)
+ * — flags can appear before/after/between positionals, same as board.mjs/handoff.mjs.
+ * Unknown flag (starts with '-') is a loud error + non-zero exit, not a silent no-op — same
+ * family as the nudge --help bug (samemind fixed 09.08) and the 1.0.1 --root fix for
+ * board/handoff: a flag that looks accepted but does nothing lets `query --root ./other-bundle`
+ * "succeed" while quietly reporting on the wrong bundle.
+ */
+export function parseArgs(argv) {
+  const out = {
+    cmd: null, rest: [], root: null,
+    includeSecret: false, includeInbox: false, inbound: false, json: false,
+  };
+  const value = (i, flag) => {
+    const v = argv[i];
+    if (v === undefined || v.startsWith('-')) throw new Error(`${flag} needs a value`);
+    return v;
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--root') out.root = value(++i, '--root');
+    else if (a === '--include-secret') out.includeSecret = true;
+    // inbox is raw material awaiting curation (see issue #4) — excluded like secret/mirror by
+    // default; --include-inbox opt-in surfaces it for inspection (validate will then flag its
+    // missing `type`, which is expected — inbox notes are not graph concepts).
+    else if (a === '--include-inbox') out.includeInbox = true;
+    else if (a === '--inbound') out.inbound = true;
+    else if (a === '--json') out.json = true;
+    else if (a.startsWith('-')) throw new Error(`unknown flag "${a}" (query: list|type|tag|get|links|rel|validate)`);
+    else if (out.cmd === null) out.cmd = a;
+    else out.rest.push(a);
+  }
+  return out;
+}
 
 function formatRow(d) {
   return `${d.id}  — ${d.fm.title || ''}`;
@@ -41,11 +67,12 @@ function formatRow(d) {
  * category — kept alongside `edges`/`broken` so `renderLinksText` can reproduce the exact
  * summary line without re-walking the bundle.
  *
- * `root` (2nd param, default ROOT): the bundle root every path/link resolve below is relative
- * to. Needed because `docs` (from lib/okf.mjs `load()`) can come from an arbitrary `--root`, not
- * just the OKF_ROOT-derived module ROOT — see tools/lib/ui-server.mjs `apiGraph`, which passes
- * its server's own root here so `/api/graph` resolves against the bundle it was started on
- * instead of always ROOT. Byte-identical when root === ROOT (the untouched default the CLI uses).
+ * `root` (2nd param, default ROOT via resolveLink/collectRelationEdges/collectSupersedeEdges):
+ * the bundle root every path/link resolve below is relative to. Needed because `docs` (from
+ * lib/okf.mjs `load()`) can come from an arbitrary `--root`, not just the OKF_ROOT-derived
+ * module ROOT — see tools/lib/ui-server.mjs `apiGraph`, which passes its server's own root here
+ * so `/api/graph` resolves against the bundle it was started on instead of always ROOT.
+ * Byte-identical when root === ROOT (the untouched default the CLI uses).
  */
 export function buildLinksModel(docs, { root = ROOT } = {}) {
   const cs = (docs || []).filter(d => !d.reserved);
@@ -104,7 +131,7 @@ export function renderLinksText(model) {
   ].join('\n');
 }
 
-function resolveDoc(q) {
+function resolveDoc(all, q) {
   const hits = findById(all, q);
   if (hits.length > 1) {
     console.error(`ambiguous: ${hits.length} matches for "${q}":\n` + hits.map(d => d.id).join('\n'));
@@ -119,6 +146,15 @@ function resolveDoc(q) {
 // re-run the whole dispatch against the importing process's own argv.
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
+try {
+  const { cmd, rest, root: rootArg, includeSecret, includeInbox, inbound: inboundOnly, json: jsonOut } =
+    parseArgs(process.argv.slice(2));
+  // One root for the whole run: concepts, links and relation resolution all resolve against
+  // it, so `query --root B` can never report on A's concepts under B's ids.
+  const bundleRoot = resolveBundleRoot(rootArg);
+  const all = load({ includeSecret, includeInbox }, bundleRoot);
+  const cs = all.filter(d => !d.reserved);
+
 if (cmd === 'list') {
   const rows = cs.map(d =>
     `${(d.fm.type || '∅').padEnd(10)} ${(d.fm.visibility || '?').padEnd(9)} ${d.id}  — ${d.fm.title || ''}`);
@@ -126,19 +162,19 @@ if (cmd === 'list') {
   console.log(`# ${rows.length} concepts${tiers}\n` + rows.sort().join('\n'));
 
 } else if (cmd === 'type') {
-  const t = (args[1] || '').toLowerCase();
+  const t = (rest[0] || '').toLowerCase();
   console.log(cs.filter(d => (d.fm.type || '').toLowerCase() === t)
-    .map(d => `${d.id} — ${d.fm.title || ''}`).join('\n') || `no concepts with type=${args[1]}`);
+    .map(d => `${d.id} — ${d.fm.title || ''}`).join('\n') || `no concepts with type=${rest[0]}`);
 
 } else if (cmd === 'tag') {
-  const t = (args[1] || '').toLowerCase();
+  const t = (rest[0] || '').toLowerCase();
   console.log(cs.filter(d => (d.fm.tags || []).map(x => x.toLowerCase()).includes(t))
-    .map(d => `${d.id} — ${d.fm.title || ''}`).join('\n') || `no concepts with tag ${args[1]}`);
+    .map(d => `${d.id} — ${d.fm.title || ''}`).join('\n') || `no concepts with tag ${rest[0]}`);
 
 } else if (cmd === 'get') {
-  const hit = resolveDoc(args[1]);
+  const hit = resolveDoc(all, rest[0]);
   if (!hit) {
-    console.log(`not found: ${args[1]}`);
+    console.log(`not found: ${rest[0]}`);
   } else {
     const supersededMap = buildSupersededMap(cs);
     const banner = hygieneBanner(hit, supersededMap);
@@ -147,14 +183,14 @@ if (cmd === 'list') {
 
 } else if (cmd === 'rel') {
   // rel <type> <id> [--inbound]
-  const edgeType = args[1];
-  const idArg = args.filter((a, i) => i >= 2 && !a.startsWith('--'))[0];
+  const edgeType = rest[0];
+  const idArg = rest[1];
   if (!edgeType || !idArg) {
     console.log('Usage: okf-query rel <type> <id> [--inbound]\n'
       + '  Outbound edges (from → to) and an "Inbound" section (who references id with this type).');
     process.exit(1);
   }
-  const hit = resolveDoc(idArg);
+  const hit = resolveDoc(all, idArg);
   if (!hit) {
     console.log(`not found: ${idArg}`);
     process.exit(1);
@@ -194,7 +230,7 @@ if (cmd === 'list') {
   }
 
 } else if (cmd === 'links') {
-  const model = buildLinksModel(all);
+  const model = buildLinksModel(all, { root: bundleRoot });
   if (jsonOut) {
     console.log(JSON.stringify({ contract: 1, kind: 'links', generatedAt: new Date().toISOString(), data: model }));
   } else {
@@ -209,7 +245,7 @@ if (cmd === 'list') {
   }
   // broken relation edges → warnings (not hard fail)
   const relWarns = [];
-  for (const e of collectRelationEdges(cs)) {
+  for (const e of collectRelationEdges(cs, bundleRoot)) {
     if (!e.resolved) {
       relWarns.push(`${e.fromId} [${e.type}] → ${e.toPath} (outside bundle)`);
     } else if (!e.exists) {
@@ -224,7 +260,7 @@ if (cmd === 'list') {
   const knowledgeWarns = knowledgeChecks(cs);
   // supersedes: show chains for visibility, warn (not fail) on dangling targets and cycles —
   // same severity as broken relations above (see docs/memory-hygiene.md).
-  const supersedeEdges = collectSupersedeEdges(cs);
+  const supersedeEdges = collectSupersedeEdges(cs, bundleRoot);
   const supersedeChains = supersedeEdges.map(e =>
     `${e.fromId} supersedes ${e.toId}${e.exists ? '' : ' (target not found)'}`);
   const supersedeWarns = supersedeEdges.filter(e => !e.exists)
@@ -261,6 +297,10 @@ if (cmd === 'list') {
 
 } else {
   console.log('Commands: list | type <T> | tag <t> | get <id> | links [--json] | rel <type> <id> [--inbound] | validate'
-    + '   [--include-secret] [--include-inbox]');
+    + '   [--root <dir>] [--include-secret] [--include-inbox]');
+}
+} catch (e) {
+  console.error('Error:', e.message);
+  process.exit(1);
 }
 }

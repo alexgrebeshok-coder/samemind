@@ -31,13 +31,13 @@
 // The board is a pure function of parsed docs (lib/okf.mjs `load()`); `now` is injectable
 // so aging/davnost is deterministic in tests. No volatile timestamp is baked into the
 // output, so `--write` is idempotent: same bundle state → same bytes.
-import { join, dirname, resolve } from 'node:path';
-import { statSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load, ROOT, pathToId } from './lib/okf.mjs';
 import { atomicWriteFileSync } from '../lib/atomic-write.mjs';
 import { readEvents, summarizeLedger } from './lib/ledger.mjs';
 import { readRegistry, heartbeat } from './lib/fleet.mjs';
+import { resolveBundleRoot } from './lib/bundle-root.mjs';
 
 export const DASHBOARD_NAME = 'DASHBOARD.md';
 
@@ -534,30 +534,6 @@ export function parseArgs(argv) {
     else if (a.startsWith('-')) throw new Error(`unknown flag "${a}" — see: samemind board --help`);
   }
   return out;
-}
-
-/**
- * Physical bundle root for one run: --root wins over OKF_ROOT (the module-level ROOT).
- *
- * A path that exists is not enough — it has to be a directory. `walk()` swallows the ENOTDIR
- * from `readdirSync` on a regular file and returns [], so `--root ./notes.md` used to print a
- * cheerful empty board instead of saying the root was not a bundle. `statSync` follows symlinks
- * on purpose: a symlink to a directory is a perfectly good bundle root (bundles get symlinked
- * into place), while a symlink to a file or a dangling one is not.
- */
-export function resolveBundleRoot(rootArg) {
-  if (!rootArg) return ROOT;
-  const root = resolve(rootArg);
-  let st;
-  try {
-    st = statSync(root);
-  } catch {
-    throw new Error(`root not found: ${root} (pass --root <dir> or set OKF_ROOT)`);
-  }
-  if (!st.isDirectory()) {
-    throw new Error(`root is not a directory: ${root} (--root takes an OKF-bundle directory)`);
-  }
-  return root;
 }
 
 /** Board file path inside a bundle root. */
