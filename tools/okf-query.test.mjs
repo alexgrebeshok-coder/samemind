@@ -9,7 +9,7 @@
 // node --test tools/okf-query.test.mjs
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, existsSync, symlinkSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -174,5 +174,152 @@ describe('CLI — query links (demo bundle, golden snapshot)', () => {
 
     const text = runCli(['links'], DEMO);
     assert.equal(renderLinksText(payload.data) + '\n', text.stdout);
+  });
+});
+
+// ─────────────────────── CLI: --root (F1/1.1.1 — was silently ignored) ───────────────────────
+// query never had --root before this: the flag parsed to nothing, and the run silently fell
+// back to OKF_ROOT/cwd — same defect class 1.0.1 already fixed once for board/handoff (samemind
+// 09.08). Semantics here are the shared tools/lib/bundle-root.mjs `resolveBundleRoot`, verbatim.
+
+describe('query CLI --root — picks WHICH bundle, wins over OKF_ROOT, rejects a bad path loudly', () => {
+  let bundleA, bundleB;
+  before(() => {
+    bundleA = mkdtempSync(join(tmpdir(), 'samemind-query-rootA-'));
+    bundleB = mkdtempSync(join(tmpdir(), 'samemind-query-rootB-'));
+    runInit({ targetDir: bundleA });
+    runInit({ targetDir: bundleB });
+    writeFileSync(join(bundleA, 'concepts', 'only-a.md'), '---\ntype: Concept\ntitle: OnlyInA\n---\n\nA\n', 'utf8');
+    writeFileSync(join(bundleB, 'concepts', 'only-b.md'), '---\ntype: Concept\ntitle: OnlyInB\n---\n\nB\n', 'utf8');
+  });
+  after(() => {
+    rmSync(bundleA, { recursive: true, force: true });
+    rmSync(bundleB, { recursive: true, force: true });
+  });
+
+  it('--root A and --root B give different `list` results (red before the fix: both were byte-identical, silently reading OKF_ROOT)', () => {
+    const a = runCli(['list', '--root', bundleA], bundleA);
+    const b = runCli(['list', '--root', bundleB], bundleA);
+    assert.equal(a.code, 0, a.stdout + a.stderr);
+    assert.equal(b.code, 0, b.stdout + b.stderr);
+    assert.ok(a.stdout.includes('OnlyInA') && !a.stdout.includes('OnlyInB'));
+    assert.ok(b.stdout.includes('OnlyInB') && !b.stdout.includes('OnlyInA'));
+  });
+
+  it('--root wins over OKF_ROOT pointing at a third bundle', () => {
+    const { code, stdout } = runCli(['list', '--root', bundleB], bundleA);
+    assert.equal(code, 0, stdout);
+    assert.ok(stdout.includes('OnlyInB'), 'read the --root bundle');
+    assert.ok(!stdout.includes('OnlyInA'), 'OKF_ROOT must not win over an explicit --root');
+  });
+
+  it('--root also switches which bundle `validate`/`links`/`rel` resolve relations against', () => {
+    const validate = runCli(['validate', '--root', bundleB], bundleA);
+    assert.equal(validate.code, 0, validate.stdout + validate.stderr);
+    assert.match(validate.stdout, /1 concepts/);
+    const links = runCli(['links', '--root', bundleB], bundleA);
+    assert.equal(links.code, 0, links.stdout);
+    assert.match(links.stdout, /Concepts: 1/);
+  });
+
+  it('--root <missing dir> → nonzero exit with an explicit error, not a silent OKF_ROOT fallback', () => {
+    const { code, stderr } = runCli(['list', '--root', join(bundleB, 'no-such-dir')], bundleA);
+    assert.notEqual(code, 0);
+    assert.match(stderr, /root not found/);
+  });
+
+  it('--root <regular file> → nonzero exit, not an empty/wrong result', () => {
+    const file = join(bundleB, 'index.md');
+    assert.ok(existsSync(file), 'fixture: a regular file to point --root at');
+    const { code, stderr } = runCli(['list', '--root', file], bundleA);
+    assert.notEqual(code, 0, 'a file is not a bundle root');
+    assert.match(stderr, /root is not a directory/);
+  });
+
+  it('--root <symlink to a directory> is accepted', () => {
+    const link = join(tmpdir(), `samemind-query-rootlink-${process.pid}`);
+    symlinkSync(bundleB, link, 'dir');
+    try {
+      const { code, stdout } = runCli(['list', '--root', link], bundleA);
+      assert.equal(code, 0, stdout);
+      assert.ok(stdout.includes('OnlyInB'), 'reads through the symlink to B');
+    } finally {
+      rmSync(link, { force: true });
+    }
+  });
+
+  it('--root <symlink to a file> is rejected like the file itself', () => {
+    const link = join(tmpdir(), `samemind-query-filelink-${process.pid}`);
+    symlinkSync(join(bundleB, 'index.md'), link, 'file');
+    try {
+      const { code, stderr } = runCli(['list', '--root', link], bundleA);
+      assert.notEqual(code, 0);
+      assert.match(stderr, /root is not a directory/);
+    } finally {
+      rmSync(link, { force: true });
+    }
+  });
+
+  it('--root <dangling symlink> reports "not found", not "not a directory"', () => {
+    const link = join(tmpdir(), `samemind-query-danglink-${process.pid}`);
+    symlinkSync(join(bundleB, 'no-such-target'), link, 'dir');
+    try {
+      const { code, stderr } = runCli(['list', '--root', link], bundleA);
+      assert.notEqual(code, 0);
+      assert.match(stderr, /root not found/);
+    } finally {
+      rmSync(link, { force: true });
+    }
+  });
+
+  it('--root with no value exits nonzero instead of falling back silently', () => {
+    const { code, stderr } = runCli(['list', '--root'], bundleA);
+    assert.notEqual(code, 0);
+    assert.match(stderr, /--root needs a value/);
+  });
+
+  it('--root swallowing the next flag as its value is rejected', () => {
+    const { code, stderr } = runCli(['list', '--root', '--json'], bundleA);
+    assert.notEqual(code, 0);
+    assert.match(stderr, /--root needs a value/);
+  });
+});
+
+describe('query CLI — unknown flag is a loud error; every documented flag still works', () => {
+  let root;
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), 'samemind-query-flags-'));
+    runInit({ targetDir: root });
+    writeFileSync(join(root, 'concepts', 'a.md'),
+      '---\ntype: Concept\ntitle: A\ntags: [x]\nrelations:\n  related: [/concepts/b.md]\n---\n\nA\n', 'utf8');
+    writeFileSync(join(root, 'concepts', 'b.md'), '---\ntype: Concept\ntitle: B\n---\n\nB\n', 'utf8');
+  });
+  after(() => { rmSync(root, { recursive: true, force: true }); });
+
+  it('an unknown flag (e.g. --bogus) exits nonzero with a clear stderr message', () => {
+    const { code, stderr } = runCli(['list', '--bogus'], root);
+    assert.notEqual(code, 0);
+    assert.match(stderr, /unknown flag "--bogus"/);
+  });
+
+  it('an unknown flag before the subcommand is also rejected (cmd resolution stays flag-position-independent)', () => {
+    const { code, stderr } = runCli(['--bogus', 'list'], root);
+    assert.notEqual(code, 0);
+    assert.match(stderr, /unknown flag "--bogus"/);
+  });
+
+  it('every flag/subcommand query documents today still works', () => {
+    assert.equal(runCli(['list'], root).code, 0);
+    assert.equal(runCli(['list', '--include-secret', '--include-inbox'], root).code, 0);
+    assert.equal(runCli(['type', 'Concept'], root).code, 0);
+    assert.equal(runCli(['tag', 'x'], root).code, 0);
+    assert.equal(runCli(['get', 'concepts/a'], root).code, 0);
+    const rel = runCli(['rel', 'related', 'concepts/a'], root);
+    assert.equal(rel.code, 0, rel.stdout);
+    assert.match(rel.stdout, /concepts\/b/);
+    assert.equal(runCli(['rel', 'related', 'concepts/a', '--inbound'], root).code, 0);
+    assert.equal(runCli(['links'], root).code, 0);
+    assert.equal(runCli(['links', '--json'], root).code, 0);
+    assert.equal(runCli(['validate'], root).code, 0);
   });
 });

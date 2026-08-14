@@ -22,10 +22,9 @@
 //          one line to stdout — a versioned foundation for a future UI. Incompatible with --html.
 //
 // Target size ≤ ~2000 tokens (~8000 chars). Each line carries a path citation.
-import { statSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { load, asPathList, pathToId, ROOT } from './lib/okf.mjs';
+import { load, asPathList, pathToId } from './lib/okf.mjs';
+import { resolveBundleRoot } from './lib/bundle-root.mjs';
 
 export const DEFAULT_DAYS = 14;
 export const DEFAULT_BUDGET_TOKENS = 2000;
@@ -448,27 +447,6 @@ export function parseArgs(argv) {
     else if (a.startsWith('-')) throw new Error(`unknown flag "${a}" — see: samemind handoff --help`);
   }
   return out;
-}
-
-/**
- * Physical bundle root for one run: --root wins over OKF_ROOT (the module-level ROOT).
- * Existing is not enough — it must be a directory (see board.mjs `resolveBundleRoot` for why
- * a regular file slipped through as an empty bundle). `statSync` follows symlinks, so a symlink
- * to a directory is accepted and a symlink to a file or a dangling one is not.
- */
-export function resolveBundleRoot(rootArg) {
-  if (!rootArg) return ROOT;
-  const root = resolve(rootArg);
-  let st;
-  try {
-    st = statSync(root);
-  } catch {
-    throw new Error(`root not found: ${root} (pass --root <dir> or set OKF_ROOT)`);
-  }
-  if (!st.isDirectory()) {
-    throw new Error(`root is not a directory: ${root} (--root takes an OKF-bundle directory)`);
-  }
-  return root;
 }
 
 async function main() {

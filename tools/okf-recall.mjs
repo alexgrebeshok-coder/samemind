@@ -1,8 +1,18 @@
 #!/usr/bin/env node
 // okf-recall.mjs — search over an OKF bundle: semantic (any OpenAI-compatible embeddings endpoint)
 //   or a local BM25 fallback with no network and no dependencies. The embeddings index is local.
-//   node tools/okf-recall.mjs index [--include-mirror] [--include-secret] [--include-inbox]   # build the semantic index (needs OKF_EMBED_URL)
-//   node tools/okf-recall.mjs "<query>" [-k N] [--mode bm25|semantic|hybrid|auto] [--include-mirror] [--include-secret] [--include-inbox] [--no-global]
+//   node tools/okf-recall.mjs index [--root <dir>] [--include-mirror] [--include-secret] [--include-inbox]   # build the semantic index (needs OKF_EMBED_URL)
+//   node tools/okf-recall.mjs "<query>" [-k N] [--mode bm25|semantic|hybrid|auto] [--root <dir>] [--include-mirror] [--include-secret] [--include-inbox] [--no-global]
+// --root <dir>  which bundle to read: the physical OKF-bundle root, same meaning the flag carries
+//               in board/handoff/status/nudge/service/query. Overrides OKF_ROOT for this run.
+//               Known gap (F1b, 1.1.1): the *embeddings* index cache (tools/.index/) stays pinned
+//               to the module-level ROOT regardless of --root — BM25 is fully correct against the
+//               selected bundle either way, so plain --root or --root with --mode bm25 both just
+//               work. `--mode semantic`/`--mode hybrid` together with a --root that differs from
+//               the default bundle is refused (nonzero exit, explicit error) instead of silently
+//               ranking with the WRONG bundle's vectors; `--mode auto` (the default) degrades to
+//               bm25 with a stderr note instead of refusing, since auto never explicitly asked for
+//               semantics. See the `query()` comment below for the real fix this stands in for.
 // Modes: auto (default) — semantic if an index exists and the endpoint answers, otherwise BM25;
 //        bm25 — always local keyword/BM25; semantic — strictly semantic (no silent fallback);
 //        hybrid (Ф3) — BM25 ⊕ semantic fused via Reciprocal Rank Fusion (k=60, see lib/recall.mjs
@@ -42,9 +52,18 @@ import {
 import { readEvents } from './lib/ledger.mjs';
 import { resolveGlobalRoot, searchGlobalHalf, mergeWithGlobal } from './lib/compose-roots.mjs';
 import { atomicWriteJsonSync } from '../lib/atomic-write.mjs';
+import { resolveBundleRoot } from './lib/bundle-root.mjs';
 
 const EMBED_URL = process.env.OKF_EMBED_URL || DEFAULT_EMBED_URL;
 const MODEL = process.env.OKF_EMBED_MODEL || DEFAULT_MODEL;
+// F1b (1.1.1 follow-up): pinned to the module-level ROOT, NOT to any `--root` a caller passes —
+// this is THE place a real fix would parameterize by root (mirror tools/lib/compose-roots.mjs
+// `idxDirFor`, which already keys the *global* bundle's index dir this same way). Two
+// consequences today: `query()` below refuses/degrades `--mode semantic|hybrid` against a
+// foreign --root instead of silently reading this dir's vectors (see its comment); `buildIndex()`
+// below writes a foreign --root's docs into THIS dir too (`index --root <other-bundle>` pollutes
+// the default bundle's index with another bundle's ids) — not guarded, out of scope for this
+// patch (nobody reported it silently returning wrong results the way search does).
 const IDX_DIR = join(ROOT, 'tools', '.index');
 const IDX = join(IDX_DIR, 'embeddings.json');
 const IDX_DB = join(IDX_DIR, 'index.db');
@@ -92,7 +111,21 @@ export function saveIdx(idx) {
 
 const MODES = ['bm25', 'semantic', 'hybrid', 'auto'];
 
+// Every flag this CLI recognizes today — kept as one list so the unknown-flag pass below (added
+// for --root, F1/1.1.1) has a single source of truth instead of drifting from the indexOf checks
+// above it. `-k`/`--root`/... are BOTH the flag token AND (for value flags) consume the next argv
+// slot — that slot is tracked separately via each `*i` index below, same as this file always did.
+const BOOL_FLAGS = ['--include-secret', '--include-mirror', '--include-inbox', '--include-superseded', '--no-global', '--expand'];
+const VALUE_FLAGS = ['--root', '-k', '--mode', '--exclude-source', '--as-of', '--expand-hops', '--expand-budget'];
+
 export function parseArgs(argv = process.argv.slice(2)) {
+  // --root <dir>: same meaning/semantics the flag carries in board/handoff/status/nudge/
+  // service/query — picks WHICH bundle this run reads, overriding OKF_ROOT. Resolved to a real,
+  // existing directory later by resolveBundleRoot(); here we only pull the raw value and reject
+  // a missing one, same "needs a value" contract board.mjs/handoff.mjs use for their own --root.
+  const ri = argv.indexOf('--root');
+  const root = ri >= 0 ? argv[ri + 1] : null;
+  if (ri >= 0 && (root === undefined || root.startsWith('-'))) throw new Error('--root needs a value');
   const includeSecret = argv.includes('--include-secret');
   const includeMirror = argv.includes('--include-mirror');
   const includeInbox = argv.includes('--include-inbox');
@@ -124,21 +157,27 @@ export function parseArgs(argv = process.argv.slice(2)) {
   }
   const ebi = argv.indexOf('--expand-budget');
   const expandBudget = ebi >= 0 ? (parseInt(argv[ebi + 1], 10) || DEFAULT_EXPAND_BUDGET) : DEFAULT_EXPAND_BUDGET;
-  const positional = argv.filter((a, i) => !a.startsWith('-')
-    && !(ki >= 0 && i === ki + 1)
-    && !(mi >= 0 && i === mi + 1)
-    && !(ei >= 0 && i === ei + 1)
-    && !(ai >= 0 && i === ai + 1)
-    && !(ehi >= 0 && i === ehi + 1)
-    && !(ebi >= 0 && i === ebi + 1));
+  const valueSlot = new Set([ri, ki, mi, ei, ai, ehi, ebi].filter(idx => idx >= 0).map(idx => idx + 1));
+  // Unknown flag (starts with '-') is a loud error + non-zero exit, not a silent no-op — same
+  // family as the nudge --help bug (samemind fixed 09.08) and the 1.0.1 --root fix for
+  // board/handoff: `recall --root ./other-bundle` silently doing nothing with an unrecognized
+  // flag lets the run "succeed" while quietly searching the wrong bundle.
+  const positional = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (valueSlot.has(i)) continue; // consumed as some flag's value above
+    if (BOOL_FLAGS.includes(a) || VALUE_FLAGS.includes(a)) continue; // the flag token itself
+    if (a.startsWith('-')) throw new Error(`unknown flag "${a}"`);
+    positional.push(a);
+  }
   return {
     positional, k, includeSecret, includeMirror, includeInbox, mode, excludeSource, noGlobal,
-    includeSuperseded, asOf, expand, expandBudget,
+    includeSuperseded, asOf, expand, expandBudget, root,
   };
 }
 
-async function buildIndex(includeSecret, includeMirror, includeInbox) {
-  const docs = load({ includeSecret, includeMirror, includeInbox }).filter(d => !d.reserved);
+async function buildIndex(includeSecret, includeMirror, includeInbox, root = ROOT) {
+  const docs = load({ includeSecret, includeMirror, includeInbox }, root).filter(d => !d.reserved);
   const store = await openBackend();
   if (store) {
     const { built, reused, total } = await syncVecStore(store, docs, embed, { includeSecret, includeMirror });
@@ -158,16 +197,53 @@ async function buildIndex(includeSecret, includeMirror, includeInbox) {
 }
 
 async function query(q, k, includeSecret, includeMirror, includeInbox, mode, excludeSource, noGlobal, {
-  includeSuperseded = false, asOf = null, expand = false, expandBudget = DEFAULT_EXPAND_BUDGET,
+  includeSuperseded = false, asOf = null, expand = false, expandBudget = DEFAULT_EXPAND_BUDGET, root = ROOT,
 } = {}) {
-  // BM25 ranks over concept bodies, so we load the bundle in every mode.
-  const docs = load({ includeSecret, includeMirror, includeInbox }).filter(d => !d.reserved);
+  // BM25 ranks over concept bodies, so we load the bundle in every mode. `root` (--root, default
+  // module ROOT) picks WHICH bundle's docs/ledger this run reads — same one root.mjs semantics
+  // board.mjs/handoff.mjs use. Known gap (not fixed here, see F1/1.1.1 report): the *embeddings*
+  // index (IDX/IDX_DB below) stays pinned to the module-level ROOT regardless of `root` — a
+  // `--root`-selected bundle other than ROOT gets correct BM25 results (recallSearch computes
+  // BM25 straight from `docs`) but semantic/hybrid mode would still consult ROOT's own index.
+  // tools/lib/compose-roots.mjs `searchRoot`/`idxDirFor` already solve this per-root indexing
+  // problem for the *global* half of multi-root recall — reusing it for the project half too is
+  // the real fix, left for a follow-up naряд rather than folded into this one.
+  const docs = load({ includeSecret, includeMirror, includeInbox }, root).filter(d => !d.reserved);
+
+  // F1b (1.1.1 follow-up) — close the silence above instead of building the real fix.
+  // `mode` here is the raw user request (bm25 stays bm25, semantic/hybrid stay themselves, auto
+  // resolves later inside recallSearch); `projectMode` is what actually reaches the PROJECT-half
+  // recallSearch call below. `--mode semantic`/`--mode hybrid` is an explicit ask for the
+  // embeddings index — against a foreign `root` this code cannot honor it (it would silently rank
+  // with ROOT's own vectors while printing `root`'s docs/ids — a foreign hit even keeps its
+  // stale cached title via finalizeRanked's `c.title` fallback, since its id isn't in `docs`),
+  // so it refuses outright rather than return a plausible-looking wrong list. `auto` never
+  // explicitly asked for semantics — it's "best effort, degrade quietly" by contract (see its own
+  // fallback warnings below) — so it degrades to bm25 with a loud stderr note instead of failing
+  // a call nobody meant as a semantic request. `root === ROOT` (no --root, or --root pointing at
+  // the same bundle the index was built for) is the untouched default path — byte-identical.
+  let projectMode = mode;
+  if (root !== ROOT) {
+    if (mode === 'semantic' || mode === 'hybrid') {
+      throw new Error(
+        `--mode ${mode} does not support --root yet (the semantic index is pinned to the default `
+        + `bundle, not ${root}) — use --mode bm25, or drop --root and run from inside that bundle`,
+      );
+    }
+    if (mode === 'auto') {
+      console.error(
+        `note: --root given — auto uses bm25 only here (semantic index is pinned to the default `
+        + `bundle, not ${root})`,
+      );
+      projectMode = 'bm25';
+    }
+  }
   const store = await openBackend();
   const idx = store ? null : loadIdx();
   const projectResult = await recallSearch({
-    docs, query: q, mode, embed, idx: idx || { items: {} }, k, includeSecret, includeMirror, excludeSource,
+    docs, query: q, mode: projectMode, embed, idx: idx || { items: {} }, k, includeSecret, includeMirror, excludeSource,
     vecStore: store, vecSearch: store ? searchVecStore : null, vecCount: store ? vecStoreCount : null,
-    events: readEvents(ROOT), // Ф5: tiered heat, same hygiene pass
+    events: readEvents(root), // Ф5: tiered heat, same hygiene pass
     includeSuperseded, asOf,
   });
   if (store) closeVecStore(store);
@@ -213,18 +289,26 @@ async function query(q, k, includeSecret, includeMirror, includeInbox, mode, exc
 
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
-  const {
-    positional, k, includeSecret, includeMirror, includeInbox, mode, excludeSource, noGlobal,
-    includeSuperseded, asOf, expand, expandBudget,
-  } = parseArgs();
+  // `mode` is read again in the catch below for the semantic-search hint — kept outside the try
+  // (default 'auto') so a parseArgs()/resolveBundleRoot() throw (bad --mode, bad --root, unknown
+  // flag) still gets that hint instead of crashing on a read of an unset variable.
+  let mode = 'auto';
   try {
-    if (positional[0] === 'index') await buildIndex(includeSecret, includeMirror, includeInbox);
-    else if (positional.length) {
-      await query(positional.join(' '), k, includeSecret, includeMirror, includeInbox, mode, excludeSource, noGlobal, {
-        includeSuperseded, asOf, expand, expandBudget,
-      });
+    const opts = parseArgs();
+    mode = opts.mode;
+    // One root for the whole run: docs and the ledger (Ф5 heat) both resolve against it — same
+    // "--root wins over OKF_ROOT" contract board.mjs/handoff.mjs/okf-query.mjs use.
+    const bundleRoot = resolveBundleRoot(opts.root);
+    if (opts.positional[0] === 'index') {
+      await buildIndex(opts.includeSecret, opts.includeMirror, opts.includeInbox, bundleRoot);
+    } else if (opts.positional.length) {
+      await query(
+        opts.positional.join(' '), opts.k, opts.includeSecret, opts.includeMirror, opts.includeInbox,
+        opts.mode, opts.excludeSource, opts.noGlobal,
+        { includeSuperseded: opts.includeSuperseded, asOf: opts.asOf, expand: opts.expand, expandBudget: opts.expandBudget, root: bundleRoot },
+      );
     } else {
-      console.log('Usage: okf-recall.mjs index | "<query>" [-k N] [--mode bm25|semantic|hybrid|auto] [--include-mirror] [--include-secret] [--include-inbox] [--include-superseded] [--as-of <ISO>] [--exclude-source <id>] [--no-global] [--expand] [--expand-hops 1] [--expand-budget N]');
+      console.log('Usage: okf-recall.mjs index | "<query>" [-k N] [--mode bm25|semantic|hybrid|auto] [--root <dir>] [--include-mirror] [--include-secret] [--include-inbox] [--include-superseded] [--as-of <ISO>] [--exclude-source <id>] [--no-global] [--expand] [--expand-hops 1] [--expand-budget N]');
     }
   } catch (e) {
     console.error('Error:', e.message);
