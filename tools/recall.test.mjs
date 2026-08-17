@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import {
   stripLinks, docText, contentHash, cosine, passesTier, rankByQuery,
   storageOf, storagesPresent, syncIndex, rankByKeywords, recallSearch, fetchEmbedding,
-  sourceMatches, rrfFuse, fetchRerank, resolveEmbedConfig,
+  sourceMatches, rrfFuse, fetchRerank, resolveEmbedConfig, finalizeRanked,
 } from './lib/recall.mjs';
 
 // Deterministic mock-embed: 3-dim bag of words (enough for unit tests).
@@ -780,5 +780,49 @@ describe('resolveEmbedConfig — env > <root>/.samemind/config.json > <globalHom
       globalThis.fetch = saved;
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('recall — Э7.2c: relevance dominates, hygiene modulates (corridor 0.75–1.25)', () => {
+  const heatEvents = Array.from({ length: 6 }, (_, i) => ({
+    topic: 'concepts/boosted', ts: new Date(Date.now() - i * 60_000).toISOString(),
+  }));
+  const docs = [
+    { id: 'concepts/plain', reserved: false, supersedes: [],
+      fm: { title: 'Plain', type: 'Concept', visibility: 'internal' }, body: 'plain fact' },
+    { id: 'concepts/boosted', reserved: false, supersedes: [],
+      fm: { title: 'Boosted', type: 'Concept', visibility: 'internal', importance: '5' }, body: 'boosted fact' },
+    { id: 'concepts/low-imp', reserved: false, supersedes: [],
+      fm: { title: 'Low', type: 'Concept', visibility: 'internal', importance: '1' }, body: 'low fact' },
+    { id: 'concepts/deprecated', reserved: false, supersedes: [],
+      fm: { title: 'Old', type: 'Concept', visibility: 'internal', deprecated: true }, body: 'stale fact' },
+  ];
+  const cand = (id, rawScore) => ({ id, title: id, type: 'Concept', visibility: 'internal', rawScore });
+
+  it('(a) high rawScore without boost beats low rawScore with a heavy boost', () => {
+    // importance 5 × max heat = raw ×2.5, capped at 1.25 → 0.78×1.0 > 0.60×1.25.
+    // Pre-Э7.2c this ranked the other way: 0.60 × 2.5 = 1.5 > 0.78 (golden gq-001 pattern).
+    const out = finalizeRanked([cand('concepts/plain', 0.78), cand('concepts/boosted', 0.60)],
+      { k: 2, docs, events: heatEvents });
+    assert.equal(out[0].id, 'concepts/plain');
+    assert.equal(out[1].id, 'concepts/boosted');
+    assert.ok(Math.abs(out[1].score - 0.60 * 1.25) < 1e-9, 'boost capped at MODULATION_MAX');
+  });
+
+  it('(b) ~equal rawScore → hygiene decides the order', () => {
+    const boosted = finalizeRanked([cand('concepts/plain', 0.778), cand('concepts/boosted', 0.777)],
+      { k: 2, docs, events: heatEvents });
+    assert.equal(boosted[0].id, 'concepts/boosted', 'corridor-max modulation flips a near-tie');
+
+    const sunk = finalizeRanked([cand('concepts/plain', 0.778), cand('concepts/low-imp', 0.777)],
+      { k: 2, docs });
+    assert.equal(sunk[0].id, 'concepts/plain', 'corridor-min modulation loses a near-tie');
+  });
+
+  it('(c) demotion stays outside the corridor: deprecated loses despite the higher rawScore', () => {
+    const out = finalizeRanked([cand('concepts/deprecated', 0.90), cand('concepts/plain', 0.50)],
+      { k: 2, docs });
+    assert.equal(out[0].id, 'concepts/plain');
+    assert.ok(out.find(h => h.id === 'concepts/deprecated').score < 0.35, 'SUPERSEDED_PENALTY not clamped away');
   });
 });
