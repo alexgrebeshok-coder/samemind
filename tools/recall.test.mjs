@@ -9,8 +9,9 @@ import { tmpdir } from 'node:os';
 import {
   stripLinks, docText, contentHash, cosine, passesTier, rankByQuery,
   storageOf, storagesPresent, syncIndex, rankByKeywords, recallSearch, fetchEmbedding,
-  sourceMatches, rrfFuse, fetchRerank, resolveEmbedConfig,
+  sourceMatches, rrfFuse, fetchRerank, resolveEmbedConfig, finalizeRanked,
 } from './lib/recall.mjs';
+import { findContradictions } from './lib/hygiene.mjs';
 
 // Deterministic mock-embed: 3-dim bag of words (enough for unit tests).
 function mockEmbed(text) {
@@ -519,6 +520,79 @@ describe('recall — hybrid mode preserves Э6 hygiene (superseded excluded / de
   });
 });
 
+// Э7.2e — «семантический магнит»: conflict-tiebreak (Э6/6.1) на ГЛУБИНЕ ПУЛА делал дальнобойные
+// свопы (обмен позициями с проигравшим), и победитель конфликт-пары из глубины сырого порядка
+// (в живом корпусе — cos #178/212) телепортировал на #1 ноги ОБЕИХ ног гибрида; RRF честно
+// усиливал этот скрамбл с двух сторон (hybrid 0.575 при обеих соло-ногах 0.925). Ноги гибрида
+// теперь отдают fusion сырой порядок (tiebreak:false); tiebreak остаётся механизмом презентации
+// top-k (пере applies на финальном срезе в recallSearch, и в соло-режимах как раньше).
+describe('recall — Э7.2e: hybrid legs feed RRF raw relevance order, not tiebreak-scrambled', () => {
+  // 8 концептов одного типа; запрос — ПАРАФРАЗ (как в golden-40): не содержит слов заголовков.
+  // docR — релевантный: тело несёт токены запроса (bm25 #1), вектор сонаправлен (cos #1).
+  // docM — «магнит»: заголовок-близнец docR (Jaccard 3/4 = 0.75 ≥ 0.34 → конфликт-пара),
+  // authority 5 против 1 → ВЫИГРЫВАЕТ пару; к запросу пересечения нет (bm25-нога его
+  // отфильтрует по rawScore=0, косинус #8/8) — ровно форма магнита живого корпуса.
+  const mk = (id, title, body, extra) => ({
+    id: `concepts/${id}`, reserved: false, supersedes: [],
+    fm: { title, type: 'Concept', visibility: 'internal', ...extra },
+    body,
+  });
+  const docs = [
+    mk('deploy-gateway', 'Deploy Gateway Flow', 'background service race condition agent shared', { authority: 1 }),
+    mk('deploy-gateway-twist', 'Deploy Gateway Flow Twist', 'twist variation notes', { authority: 5 }),
+    ...['alpha beta', 'gamma delta', 'epsilon zeta', 'eta theta', 'iota kappa', 'lambda mu']
+      .map((t, i) => mk(`filler-${i}`, t, `${t} filler body ${i}`, {})),
+  ];
+  const query = 'background service race condition';
+  const idx = { items: Object.fromEntries(docs.map((d, i) => [d.id, {
+    visibility: 'internal', type: 'Concept', title: d.fm.title,
+    // docR — cos 1.0; магнит — 0.0 (сырой ранг #8/8); филлеры — монотонно между ними.
+    vector: d.id === 'concepts/deploy-gateway' ? [1, 0]
+      : d.id === 'concepts/deploy-gateway-twist' ? [0, 1]
+      : [0.99 - i * 0.1, 0.05],
+  }])) };
+  const embed = async () => [1, 0];
+
+  it('пред-условие: конфликт-пара живая, магнит выигрывает её по authority', () => {
+    const pairs = findContradictions(docs);
+    assert.ok(pairs.some(p =>
+      (p.a === 'concepts/deploy-gateway' && p.b === 'concepts/deploy-gateway-twist')
+      || (p.a === 'concepts/deploy-gateway-twist' && p.b === 'concepts/deploy-gateway')));
+  });
+
+  it('pool depth + tiebreak скрамблит семантическую ногу (магнит #1) — дефект Э7.2e', () => {
+    // Дефолтный tiebreak на глубине пула: магнит выигрывает пару и ОБМЕНИВАЕТСЯ позициями
+    // с docR (#1) → телепорт на #1 ноги при нулевой релевантности.
+    const scrambled = rankByQuery(idx.items, [1, 0], { k: docs.length, docs });
+    assert.equal(scrambled[0].id, 'concepts/deploy-gateway-twist');
+    // tiebreak:false — сырой порядок: docR #1, магнит последний.
+    const raw = rankByQuery(idx.items, [1, 0], { k: docs.length, docs, tiebreak: false });
+    assert.equal(raw[0].id, 'concepts/deploy-gateway');
+    assert.equal(raw[raw.length - 1].id, 'concepts/deploy-gateway-twist');
+  });
+
+  it('hybrid: магнит не телепортирует в top-5, релевантный #1; fusion ест сырой порядок', async () => {
+    const r = await recallSearch({ docs, query, mode: 'hybrid', idx, embed, k: 5 });
+    assert.equal(r.mode, 'hybrid');
+    assert.equal(r.hits[0].id, 'concepts/deploy-gateway');
+    assert.ok(!r.hits.some(h => h.id === 'concepts/deploy-gateway-twist'),
+      'магнит вне топ-5: у него нет ни одного честного попадания в ногах');
+  });
+
+  it('tiebreak остаётся презентационным: semantic-соло top-k по-прежнему упорядочивает пару', async () => {
+    const r = await recallSearch({ docs, query, mode: 'semantic', idx, embed, k: 5 });
+    // магнит по косинусу #8/8 — в топ-5 не попадает; но сам механизм не отключён:
+    // проверяем на k=8 — пара в топ-8, победитель(authority) сверху с меткой ⚔ у проигравшего.
+    const r8 = await recallSearch({ docs, query, mode: 'semantic', idx, embed, k: 8 });
+    const m = r8.hits.findIndex(h => h.id === 'concepts/deploy-gateway-twist');
+    const rel = r8.hits.findIndex(h => h.id === 'concepts/deploy-gateway');
+    if (m >= 0 && rel >= 0) { // оба в выдаче → презентационный своп должен был сработать
+      assert.ok(m < rel, 'победитель пары выше проигравшего в презентации');
+      assert.match(r8.hits[rel].label, /⚔/);
+    }
+  });
+});
+
 describe('recall — hybrid mode falls back to BM25, never throws', () => {
   const docs = [
     { id: 'projects/lumen', reserved: false, fm: { title: 'Lumen Notes App', type: 'Project', visibility: 'internal', tags: ['lumen', 'notes'] }, body: 'Core of the Lumen notes editor.' },
@@ -780,5 +854,77 @@ describe('resolveEmbedConfig — env > <root>/.samemind/config.json > <globalHom
       globalThis.fetch = saved;
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('recall — Э7.2c/Э7.2d: relevance dominates, hygiene only sinks (corridor 0.75–1.0)', () => {
+  const heatEvents = Array.from({ length: 6 }, (_, i) => ({
+    topic: 'concepts/boosted', ts: new Date(Date.now() - i * 60_000).toISOString(),
+  }));
+  const docs = [
+    { id: 'concepts/plain', reserved: false, supersedes: [],
+      fm: { title: 'Plain', type: 'Concept', visibility: 'internal' }, body: 'plain fact' },
+    { id: 'concepts/boosted', reserved: false, supersedes: [],
+      fm: { title: 'Boosted', type: 'Concept', visibility: 'internal', importance: '5' }, body: 'boosted fact' },
+    { id: 'concepts/low-imp', reserved: false, supersedes: [],
+      fm: { title: 'Low', type: 'Concept', visibility: 'internal', importance: '1' }, body: 'low fact' },
+    { id: 'concepts/deprecated', reserved: false, supersedes: [],
+      fm: { title: 'Old', type: 'Concept', visibility: 'internal', deprecated: true }, body: 'stale fact' },
+  ];
+  const cand = (id, rawScore) => ({ id, title: id, type: 'Concept', visibility: 'internal', rawScore });
+
+  it('(a) high rawScore without boost beats low rawScore with a heavy boost', () => {
+    // importance 5 × max heat = raw ×2.5, capped at 1.0 (Э7.2d) → 0.78×1.0 > 0.60×1.0.
+    // Pre-Э7.2c this ranked the other way: 0.60 × 2.5 = 1.5 > 0.78 (golden gq-001 pattern).
+    const out = finalizeRanked([cand('concepts/plain', 0.78), cand('concepts/boosted', 0.60)],
+      { k: 2, docs, events: heatEvents });
+    assert.equal(out[0].id, 'concepts/plain');
+    assert.equal(out[1].id, 'concepts/boosted');
+    assert.ok(Math.abs(out[1].score - 0.60 * 1.0) < 1e-9, 'boost capped at MODULATION_MAX=1.0');
+  });
+
+  it('(b) ~equal rawScore → hygiene decides the order', () => {
+    // Э7.2d: ceiling 1.0 — a boost can no longer flip a near-tie upward (that flip WAS the
+    // Э7.2c defect: engine cards 0.68×1.25 outranked the expected 0.78 concept). Raw decides;
+    // hygiene only sinks via the corridor-min side, which the second case below still shows.
+    const boosted = finalizeRanked([cand('concepts/plain', 0.778), cand('concepts/boosted', 0.777)],
+      { k: 2, docs, events: heatEvents });
+    assert.equal(boosted[0].id, 'concepts/plain', 'Э7.2d ceiling 1.0: boost no longer flips a near-tie');
+
+    const sunk = finalizeRanked([cand('concepts/plain', 0.778), cand('concepts/low-imp', 0.777)],
+      { k: 2, docs });
+    assert.equal(sunk[0].id, 'concepts/plain', 'corridor-min modulation loses a near-tie');
+  });
+
+  it('(p) property: a boosted doc NEVER outranks a doc with a higher rawScore (no demotion)', () => {
+    // Э7.2d invariant, every boost source and gap: for rawHi > rawLo,
+    // score(clean@rawHi) >= score(boosted@rawLo) — hygiene modulates down or not at all.
+    const oldTs = new Date(Date.now() - 800 * 86_400_000).toISOString(); // past DECAY_FULL_DAYS
+    for (const imp of ['1', '2', '3', '4', '5']) {
+      for (const heat of [false, true]) {
+        for (const ts of [null, oldTs]) {
+          const grid = [
+            ...docs.filter(d => d.id !== 'concepts/boosted'),
+            { id: 'concepts/boosted', reserved: false, supersedes: [],
+              fm: { title: 'Boosted', type: 'Concept', visibility: 'internal', importance: imp,
+                ...(ts ? { timestamp: ts } : {}) }, body: 'boosted fact' },
+          ];
+          for (const [rawLo, rawHi] of [[0.10, 0.11], [0.50, 0.51], [0.60, 0.78], [0.77, 0.771], [0.20, 0.90]]) {
+            const out = finalizeRanked(
+              [cand('concepts/plain', rawHi), cand('concepts/boosted', rawLo)],
+              { k: 2, docs: grid, events: heat ? heatEvents : [] });
+            assert.equal(out[0].id, 'concepts/plain',
+              `imp=${imp} heat=${heat} aged=${!!ts}: boosted raw ${rawLo} must not beat raw ${rawHi}`);
+          }
+        }
+      }
+    }
+  });
+
+  it('(c) demotion stays outside the corridor: deprecated loses despite the higher rawScore', () => {
+    const out = finalizeRanked([cand('concepts/deprecated', 0.90), cand('concepts/plain', 0.50)],
+      { k: 2, docs });
+    assert.equal(out[0].id, 'concepts/plain');
+    assert.ok(out.find(h => h.id === 'concepts/deprecated').score < 0.35, 'SUPERSEDED_PENALTY not clamped away');
   });
 });

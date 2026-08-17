@@ -97,8 +97,14 @@ semantic/cosine) and in `gde` — one hygiene layer, shared by every ranker
 ```
 finalScore = rawScore(query, doc) × hygieneMultiplier(doc)
 
-hygieneMultiplier(doc) = supersededPenalty × importanceMultiplier × decayMultiplier × heatMultiplier
+hygieneMultiplier(doc) = supersededPenalty × clamp(importanceMultiplier × decayMultiplier × heatMultiplier, 0.75, 1.0)
 ```
+
+Э7.2c/Э7.2d — relevance dominates, hygiene modulates: modulation
+(importance × decay × heat) is clamped into a `0.75–1.0` corridor. Since Э7.2d
+the ceiling is 1.0 — hygiene never boosts, it only sinks (a boosted `raw 0.68`
+used to beat a clean `raw 0.78`). Demotion (`supersededPenalty`) stays
+outside the corridor and keeps its full force.
 
 `heatMultiplier` (Ф5, optional — see "Tiered heat" below) defaults to `1.0`
 (no-op) unless a `heatIndex` from the event ledger is passed in; every call

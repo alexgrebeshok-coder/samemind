@@ -209,10 +209,16 @@ export function applyConflictTiebreak(hits, docs) {
  * `includeSuperseded` (default false) — when false, drop isStaleForRecall hits; when true, keep them
  * demoted via SUPERSEDED_PENALTY (audit / history).
  * `asOf` — ISO date or epoch ms for temporal bounds (default: now). See resolveAsOf.
+ * `tiebreak` (default true) — Э7.2e: skip the Э6/6.1 conflict swap. The tiebreak is a TOP-HITS
+ * mechanism (order + label a contradiction pair the user is about to see); at pool depth (hybrid
+ * legs fetch k=docs.length) its pairwise swaps cascade — a fresh doc in many pairs bubbles from
+ * rank ~180 to #1 on recency alone, destroying the relevance order RRF is about to consume. Legs
+ * feeding a fusion must pass raw relevance order; the hybrid path re-applies the tiebreak to the
+ * final top-k, so presented hits keep their conflict ordering and labels either way.
  */
 export function finalizeRanked(candidates, {
   k = 5, includeSecret = false, includeMirror = false, docs = [], excludeSource = null, events = [],
-  includeSuperseded = false, asOf = null,
+  includeSuperseded = false, asOf = null, tiebreak = true,
 } = {}) {
   const docsById = new Map(docs.map(d => [d.id, d]));
   const supersededMap = buildSupersededMap(docs);
@@ -242,7 +248,7 @@ export function finalizeRanked(candidates, {
     })
     .sort((a, b) => b.score - a.score)
     .slice(0, k);
-  return applyConflictTiebreak(ranked, docs);
+  return tiebreak ? applyConflictTiebreak(ranked, docs) : ranked;
 }
 
 /**
@@ -393,7 +399,7 @@ export function keywordScore(text, query) {
  *  Без сети, без зависимостей. Используется и gde, и okf-recall — один механизм фолбэба. */
 export function rankByKeywords(docs, query, {
   k = 5, includeSecret = false, includeMirror = true, excludeSource = null, events = [],
-  includeSuperseded = false, asOf = null,
+  includeSuperseded = false, asOf = null, tiebreak = true,
 } = {}) {
   const now = resolveAsOf(asOf);
   const docsById = new Map(docs.map(d => [d.id, d]));
@@ -423,7 +429,8 @@ export function rankByKeywords(docs, query, {
     .filter(r => r.rawScore > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, k);
-  return applyConflictTiebreak(ranked, docs);
+  // Э7.2e: legs feeding a RRF fusion pass tiebreak:false (raw relevance order) — see finalizeRanked.
+  return tiebreak ? applyConflictTiebreak(ranked, docs) : ranked;
 }
 
 const FALLBACK_WARN_OFF = 'semantic off, BM25 fallback — set OKF_EMBED_URL for semantic search';
@@ -541,9 +548,9 @@ export async function recallSearch({
   const hasIndex = useVec
     ? (vecCount ? vecCount(vecStore) > 0 : true)
     : !!(idx && idx.items && Object.keys(idx.items).length > 0);
-  const semanticRank = (qv, kk) => (useVec
-    ? vecSearch(vecStore, qv, { ...rankOpts, k: kk, docs })
-    : rankByQuery(idx.items, qv, { ...rankOpts, k: kk, docs }));
+  const semanticRank = (qv, kk, extra = {}) => (useVec
+    ? vecSearch(vecStore, qv, { ...rankOpts, k: kk, docs, ...extra })
+    : rankByQuery(idx.items, qv, { ...rankOpts, k: kk, docs, ...extra }));
 
   if (mode === 'bm25') return { hits: bm25(), mode: 'bm25', warning: null };
 
@@ -566,9 +573,13 @@ export async function recallSearch({
     }
     try {
       const poolK = Math.max(docs.length, 1);
-      const bm25Full = rankByKeywords(docs, query, { ...rankOpts, k: poolK });
+      // Э7.2e: legs feed the fusion RAW relevance order (tiebreak:false) — at pool depth the
+      // Э6/6.1 long-range swaps let a conflict-pair winner deep in raw order (cos #178/212 in the
+      // golden corpus) teleport to a leg's #1, and RRF then amplifies the same scramble from both
+      // legs. The tiebreak is re-applied to the final top-k below (presentation-only, as designed).
+      const bm25Full = rankByKeywords(docs, query, { ...rankOpts, k: poolK, tiebreak: false });
       const qv = await embed(query);
-      const semFull = semanticRank(qv, poolK);
+      const semFull = semanticRank(qv, poolK, { tiebreak: false });
       const fused = rrfFuse([bm25Full, semFull]);
       const reranked = await maybeRerank(query, fused, docs);
       // Э6/6.1: hybrid path bypasses finalizeRanked's post-slice tiebreak — apply here too.
