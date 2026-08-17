@@ -430,13 +430,20 @@ describe('heat — hygieneMultiplier folds heat in as one additive pass (Ф5)', 
     assert.equal(hygieneMultiplier({ id: 'concepts/untouched', fm: { type: 'Concept' } }, map, { now: NOW_MS, heatIndex: idx }), 1);
   });
 
-  it('a hot doc is boosted above its importance/decay-only score', () => {
-    const doc = { id: 'concepts/hot', fm: { type: 'Concept' } };
+  it('heat lifts a below-ceiling doc toward (never above) 1.0; a neutral doc stays 1.0 (Э7.2d)', () => {
     const map = new Map();
-    const idx = buildHeatIndex([{ topic: 'concepts/hot', ts: NOW.toISOString() }]);
-    const withoutHeat = hygieneMultiplier(doc, map, { now: NOW_MS });
-    const withHeat = hygieneMultiplier(doc, map, { now: NOW_MS, heatIndex: idx });
-    assert.ok(withHeat > withoutHeat);
+    // 5 touches = full frequency credit (HEAT_FREQ_SATURATION) → heatMultiplier 1.5
+    const idx = buildHeatIndex(Array.from({ length: 5 },
+      () => ({ topic: 'concepts/hot', ts: NOW.toISOString() })));
+    // Neutral doc: importance/decay product is already 1.0 — heat cannot push past MODULATION_MAX.
+    const neutral = { id: 'concepts/hot', fm: { type: 'Concept' } };
+    assert.equal(hygieneMultiplier(neutral, map, { now: NOW_MS, heatIndex: idx }), 1);
+    // Below the ceiling (importance 2 → 0.667) heat still lifts — toward 1.0, never beyond.
+    const demoted = { id: 'concepts/hot', fm: { type: 'Concept', importance: '2' } };
+    const withoutHeat = hygieneMultiplier(demoted, map, { now: NOW_MS });
+    const withHeat = hygieneMultiplier(demoted, map, { now: NOW_MS, heatIndex: idx });
+    assert.ok(withHeat > withoutHeat, 'heat still offsets a below-ceiling modulation');
+    assert.ok(withHeat <= 1, 'never above MODULATION_MAX=1.0');
   });
 });
 
@@ -456,12 +463,17 @@ describe('heat — recall: a frequently-touched fact outranks an untouched one (
   // concepts/hot: 5 ledger touches right now. concepts/cold: never appears in the ledger.
   const events = Array.from({ length: 5 }, () => ({ topic: 'concepts/hot', ts: new Date().toISOString() }));
 
-  it('rankByKeywords (bm25): identical raw relevance, but the hot fact ranks first', () => {
+  it('rankByKeywords (bm25): identical raw relevance — neutral docs tie; heat decides only below the ceiling (Э7.2d)', () => {
     const ranked = rankByKeywords(docs, 'deploy service', { k: 5, events });
-    assert.equal(ranked[0].id, 'concepts/hot');
-    assert.equal(ranked[1].id, 'concepts/cold');
     assert.ok(Math.abs(ranked[0].rawScore - ranked[1].rawScore) < 1e-9); // same raw BM25 relevance
-    assert.ok(ranked[0].score > ranked[1].score); // only heat tells them apart
+    assert.ok(Math.abs(ranked[0].score - ranked[1].score) < 1e-9); // both at ceiling 1.0 — boost can't differentiate
+
+    // Below the ceiling (importance 2 on both) heat still tells them apart (Ф5 value kept):
+    const dim = docs.map(d => ({ ...d, fm: { ...d.fm, importance: '2' } }));
+    const ranked2 = rankByKeywords(dim, 'deploy service', { k: 5, events });
+    assert.equal(ranked2[0].id, 'concepts/hot');
+    assert.equal(ranked2[1].id, 'concepts/cold');
+    assert.ok(ranked2[0].score > ranked2[1].score); // heat lifts hot 0.667×1.5→1.0, cold floors at 0.75
   });
 
   it('without an events option, both facts tie (heat is a no-op — backward compatible)', () => {

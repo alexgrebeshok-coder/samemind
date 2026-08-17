@@ -3,6 +3,27 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.2] — 2026-08-17
+
+A patch. Fixes hybrid ranking: on the golden-40 corpus hybrid recall@5 was
+0.275 against BM25's 0.925 — the ranker, not the retrieval, was broken.
+
+### Fixed
+
+- **Hygiene modulation only ever sinks.** Positive relevance-hygiene
+  modulation is now capped at 1.0 (was clamped to 0.75–1.25, letting
+  hygiene-promoted docs outrank pure relevance and pollute top-5).
+- **RRF now consumes each leg's raw order.** The conflict tiebreak that
+  ran at pool depth reordered legs before fusion, scrambling RRF ranks;
+  the tiebreak is skipped there and legs feed RRF in their native order.
+- **Defect: conflict-tiebreak swaps** of equal-score docs between legs
+  no longer leak into the fused ranking.
+
+### Internal
+
+- +8 tests covering hygiene cap, raw-order RRF, and regression locks
+  on the golden weak spots.
+
 ## [1.1.1] — 2026-08-14
 
 A patch. Closes the hole 1.1.0's smoke test found: `query` and `recall` are the
