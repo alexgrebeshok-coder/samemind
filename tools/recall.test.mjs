@@ -11,6 +11,7 @@ import {
   storageOf, storagesPresent, syncIndex, rankByKeywords, recallSearch, fetchEmbedding,
   sourceMatches, rrfFuse, fetchRerank, resolveEmbedConfig, finalizeRanked,
 } from './lib/recall.mjs';
+import { findContradictions } from './lib/hygiene.mjs';
 
 // Deterministic mock-embed: 3-dim bag of words (enough for unit tests).
 function mockEmbed(text) {
@@ -516,6 +517,79 @@ describe('recall — hybrid mode preserves Э6 hygiene (superseded excluded / de
     assert.equal(r.mode, 'hybrid');
     assert.equal(r.hits[0].id, 'concepts/new');
     assert.match(r.hits[1].label, /superseded/);
+  });
+});
+
+// Э7.2e — «семантический магнит»: conflict-tiebreak (Э6/6.1) на ГЛУБИНЕ ПУЛА делал дальнобойные
+// свопы (обмен позициями с проигравшим), и победитель конфликт-пары из глубины сырого порядка
+// (в живом корпусе — cos #178/212) телепортировал на #1 ноги ОБЕИХ ног гибрида; RRF честно
+// усиливал этот скрамбл с двух сторон (hybrid 0.575 при обеих соло-ногах 0.925). Ноги гибрида
+// теперь отдают fusion сырой порядок (tiebreak:false); tiebreak остаётся механизмом презентации
+// top-k (пере applies на финальном срезе в recallSearch, и в соло-режимах как раньше).
+describe('recall — Э7.2e: hybrid legs feed RRF raw relevance order, not tiebreak-scrambled', () => {
+  // 8 концептов одного типа; запрос — ПАРАФРАЗ (как в golden-40): не содержит слов заголовков.
+  // docR — релевантный: тело несёт токены запроса (bm25 #1), вектор сонаправлен (cos #1).
+  // docM — «магнит»: заголовок-близнец docR (Jaccard 3/4 = 0.75 ≥ 0.34 → конфликт-пара),
+  // authority 5 против 1 → ВЫИГРЫВАЕТ пару; к запросу пересечения нет (bm25-нога его
+  // отфильтрует по rawScore=0, косинус #8/8) — ровно форма магнита живого корпуса.
+  const mk = (id, title, body, extra) => ({
+    id: `concepts/${id}`, reserved: false, supersedes: [],
+    fm: { title, type: 'Concept', visibility: 'internal', ...extra },
+    body,
+  });
+  const docs = [
+    mk('deploy-gateway', 'Deploy Gateway Flow', 'background service race condition agent shared', { authority: 1 }),
+    mk('deploy-gateway-twist', 'Deploy Gateway Flow Twist', 'twist variation notes', { authority: 5 }),
+    ...['alpha beta', 'gamma delta', 'epsilon zeta', 'eta theta', 'iota kappa', 'lambda mu']
+      .map((t, i) => mk(`filler-${i}`, t, `${t} filler body ${i}`, {})),
+  ];
+  const query = 'background service race condition';
+  const idx = { items: Object.fromEntries(docs.map((d, i) => [d.id, {
+    visibility: 'internal', type: 'Concept', title: d.fm.title,
+    // docR — cos 1.0; магнит — 0.0 (сырой ранг #8/8); филлеры — монотонно между ними.
+    vector: d.id === 'concepts/deploy-gateway' ? [1, 0]
+      : d.id === 'concepts/deploy-gateway-twist' ? [0, 1]
+      : [0.99 - i * 0.1, 0.05],
+  }])) };
+  const embed = async () => [1, 0];
+
+  it('пред-условие: конфликт-пара живая, магнит выигрывает её по authority', () => {
+    const pairs = findContradictions(docs);
+    assert.ok(pairs.some(p =>
+      (p.a === 'concepts/deploy-gateway' && p.b === 'concepts/deploy-gateway-twist')
+      || (p.a === 'concepts/deploy-gateway-twist' && p.b === 'concepts/deploy-gateway')));
+  });
+
+  it('pool depth + tiebreak скрамблит семантическую ногу (магнит #1) — дефект Э7.2e', () => {
+    // Дефолтный tiebreak на глубине пула: магнит выигрывает пару и ОБМЕНИВАЕТСЯ позициями
+    // с docR (#1) → телепорт на #1 ноги при нулевой релевантности.
+    const scrambled = rankByQuery(idx.items, [1, 0], { k: docs.length, docs });
+    assert.equal(scrambled[0].id, 'concepts/deploy-gateway-twist');
+    // tiebreak:false — сырой порядок: docR #1, магнит последний.
+    const raw = rankByQuery(idx.items, [1, 0], { k: docs.length, docs, tiebreak: false });
+    assert.equal(raw[0].id, 'concepts/deploy-gateway');
+    assert.equal(raw[raw.length - 1].id, 'concepts/deploy-gateway-twist');
+  });
+
+  it('hybrid: магнит не телепортирует в top-5, релевантный #1; fusion ест сырой порядок', async () => {
+    const r = await recallSearch({ docs, query, mode: 'hybrid', idx, embed, k: 5 });
+    assert.equal(r.mode, 'hybrid');
+    assert.equal(r.hits[0].id, 'concepts/deploy-gateway');
+    assert.ok(!r.hits.some(h => h.id === 'concepts/deploy-gateway-twist'),
+      'магнит вне топ-5: у него нет ни одного честного попадания в ногах');
+  });
+
+  it('tiebreak остаётся презентационным: semantic-соло top-k по-прежнему упорядочивает пару', async () => {
+    const r = await recallSearch({ docs, query, mode: 'semantic', idx, embed, k: 5 });
+    // магнит по косинусу #8/8 — в топ-5 не попадает; но сам механизм не отключён:
+    // проверяем на k=8 — пара в топ-8, победитель(authority) сверху с меткой ⚔ у проигравшего.
+    const r8 = await recallSearch({ docs, query, mode: 'semantic', idx, embed, k: 8 });
+    const m = r8.hits.findIndex(h => h.id === 'concepts/deploy-gateway-twist');
+    const rel = r8.hits.findIndex(h => h.id === 'concepts/deploy-gateway');
+    if (m >= 0 && rel >= 0) { // оба в выдаче → презентационный своп должен был сработать
+      assert.ok(m < rel, 'победитель пары выше проигравшего в презентации');
+      assert.match(r8.hits[rel].label, /⚔/);
+    }
   });
 });
 
