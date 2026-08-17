@@ -783,7 +783,7 @@ describe('resolveEmbedConfig — env > <root>/.samemind/config.json > <globalHom
   });
 });
 
-describe('recall — Э7.2c: relevance dominates, hygiene modulates (corridor 0.75–1.25)', () => {
+describe('recall — Э7.2c/Э7.2d: relevance dominates, hygiene only sinks (corridor 0.75–1.0)', () => {
   const heatEvents = Array.from({ length: 6 }, (_, i) => ({
     topic: 'concepts/boosted', ts: new Date(Date.now() - i * 60_000).toISOString(),
   }));
@@ -800,23 +800,51 @@ describe('recall — Э7.2c: relevance dominates, hygiene modulates (corridor 0.
   const cand = (id, rawScore) => ({ id, title: id, type: 'Concept', visibility: 'internal', rawScore });
 
   it('(a) high rawScore without boost beats low rawScore with a heavy boost', () => {
-    // importance 5 × max heat = raw ×2.5, capped at 1.25 → 0.78×1.0 > 0.60×1.25.
+    // importance 5 × max heat = raw ×2.5, capped at 1.0 (Э7.2d) → 0.78×1.0 > 0.60×1.0.
     // Pre-Э7.2c this ranked the other way: 0.60 × 2.5 = 1.5 > 0.78 (golden gq-001 pattern).
     const out = finalizeRanked([cand('concepts/plain', 0.78), cand('concepts/boosted', 0.60)],
       { k: 2, docs, events: heatEvents });
     assert.equal(out[0].id, 'concepts/plain');
     assert.equal(out[1].id, 'concepts/boosted');
-    assert.ok(Math.abs(out[1].score - 0.60 * 1.25) < 1e-9, 'boost capped at MODULATION_MAX');
+    assert.ok(Math.abs(out[1].score - 0.60 * 1.0) < 1e-9, 'boost capped at MODULATION_MAX=1.0');
   });
 
   it('(b) ~equal rawScore → hygiene decides the order', () => {
+    // Э7.2d: ceiling 1.0 — a boost can no longer flip a near-tie upward (that flip WAS the
+    // Э7.2c defect: engine cards 0.68×1.25 outranked the expected 0.78 concept). Raw decides;
+    // hygiene only sinks via the corridor-min side, which the second case below still shows.
     const boosted = finalizeRanked([cand('concepts/plain', 0.778), cand('concepts/boosted', 0.777)],
       { k: 2, docs, events: heatEvents });
-    assert.equal(boosted[0].id, 'concepts/boosted', 'corridor-max modulation flips a near-tie');
+    assert.equal(boosted[0].id, 'concepts/plain', 'Э7.2d ceiling 1.0: boost no longer flips a near-tie');
 
     const sunk = finalizeRanked([cand('concepts/plain', 0.778), cand('concepts/low-imp', 0.777)],
       { k: 2, docs });
     assert.equal(sunk[0].id, 'concepts/plain', 'corridor-min modulation loses a near-tie');
+  });
+
+  it('(p) property: a boosted doc NEVER outranks a doc with a higher rawScore (no demotion)', () => {
+    // Э7.2d invariant, every boost source and gap: for rawHi > rawLo,
+    // score(clean@rawHi) >= score(boosted@rawLo) — hygiene modulates down or not at all.
+    const oldTs = new Date(Date.now() - 800 * 86_400_000).toISOString(); // past DECAY_FULL_DAYS
+    for (const imp of ['1', '2', '3', '4', '5']) {
+      for (const heat of [false, true]) {
+        for (const ts of [null, oldTs]) {
+          const grid = [
+            ...docs.filter(d => d.id !== 'concepts/boosted'),
+            { id: 'concepts/boosted', reserved: false, supersedes: [],
+              fm: { title: 'Boosted', type: 'Concept', visibility: 'internal', importance: imp,
+                ...(ts ? { timestamp: ts } : {}) }, body: 'boosted fact' },
+          ];
+          for (const [rawLo, rawHi] of [[0.10, 0.11], [0.50, 0.51], [0.60, 0.78], [0.77, 0.771], [0.20, 0.90]]) {
+            const out = finalizeRanked(
+              [cand('concepts/plain', rawHi), cand('concepts/boosted', rawLo)],
+              { k: 2, docs: grid, events: heat ? heatEvents : [] });
+            assert.equal(out[0].id, 'concepts/plain',
+              `imp=${imp} heat=${heat} aged=${!!ts}: boosted raw ${rawLo} must not beat raw ${rawHi}`);
+          }
+        }
+      }
+    }
   });
 
   it('(c) demotion stays outside the corridor: deprecated loses despite the higher rawScore', () => {

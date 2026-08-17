@@ -16,8 +16,8 @@ export const IMPORTANCE_MAX = 5;
 export const DECAY_AFTER_DAYS = 180;         // no penalty before this age
 export const DECAY_FULL_DAYS = 720;          // penalty bottoms out at DECAY_MIN_MULTIPLIER here
 export const DECAY_MIN_MULTIPLIER = 0.6;
-export const MODULATION_MIN = 0.75;          // Э7.2c — relevance dominates, hygiene modulates:
-export const MODULATION_MAX = 1.25;          // positive modulation lives in this narrow corridor
+export const MODULATION_MIN = 0.75;          // Э7.2d — hygiene only ever sinks: positive
+export const MODULATION_MAX = 1.0;           // modulation is capped at 1.0 (boost went 1.25→1.0)
 export const TIMELESS_TYPES = new Set(['Identity', 'User', 'EngineRule']); // never decay
 const DAY_MS = 86_400_000;
 
@@ -301,10 +301,10 @@ export function heatMultiplier(doc, heatIndex, now = Date.now()) {
 export function hygieneMultiplier(doc, supersededMap, { now = Date.now(), heatIndex = null } = {}) {
   let m = 1;
   if (isDeprecated(doc) || isSuperseded(doc, supersededMap) || isTemporallySuperseded(doc, now)) m *= SUPERSEDED_PENALTY;
-  // Э7.2c — релевантность доминирует, гигиена модулирует: положительная модуляция
-  // (importance × decay × heat) зажата в коридор MODULATION_MIN..MAX, чтобы бустованный док
-  // не обгонял заметно более релевантный (raw 0.6 × буст 2.5 больше не бьёт raw 0.78).
-  // Демоция (superseded/deprecated) — вне коридора, полную силу сохраняет.
+  // Э7.2c/Э7.2d — релевантность доминирует, гигиена модулирует: модуляция
+  // (importance × decay × heat) зажата в коридор MODULATION_MIN..MAX. С Э7.2d потолок 1.0 —
+  // гигиена никогда не повышает (бустованный raw 0.68 больше не бьёт чистый raw 0.78),
+  // топит только протухшее. Демоция (superseded/deprecated) — вне коридора, полную силу сохраняет.
   const modulation = Math.min(MODULATION_MAX, Math.max(MODULATION_MIN,
     importanceMultiplier(doc) * decayMultiplier(doc, now)
       * (heatIndex ? heatMultiplier(doc, heatIndex, now) : 1)));
