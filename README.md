@@ -1,6 +1,6 @@
 # samemind
 
-**Switch engines, same mind: file-based memory for AI coding agents.** A git-native markdown bundle — identity, search, a work ledger, and a kanban board in one place — portable across Claude Code, Cursor, Codex, OpenClaw and other engines. No daemon or database required; BM25 search always works offline, semantic search is optional. Wire-compatible with [Google OKF v0.1](docs/interop.md).
+**Use Claude Code in the morning, Cursor by day, opencode at night — and every agent remembers your decisions, your projects, your context.** It's just markdown in your git: read it with your eyes, edit it by hand, own it forever. Golden-40 recall@5 **0.925** on the live bundle; `samemind install` wires **12 engines**; weekly **`review`** keeps stale facts from living as equals of their corrections. Wire-compatible with [Google OKF v0.1](docs/interop.md).
 
 [![ci](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml/badge.svg)](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml)
 
