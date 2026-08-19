@@ -195,6 +195,64 @@ describe('review — CLI human-gate', () => {
     assert.ok(existsSync(join(root, 'archive/concepts/move-me.md')));
   });
 
+  it('apply --plan archive twice is idempotent (no archive/archive/, second run skips)', () => {
+    const root = tmpRoot('samemind-review-apply-archive-idem-');
+    writeConcept(root, 'concepts/move-me.md', { type: 'Concept', title: 'Move' });
+    const plan = join(root, 'plan.txt');
+    writeFileSync(plan, 'concepts/move-me archive\n');
+
+    const first = runCli(root, ['apply', '--plan', plan]);
+    assert.equal(first.code, 0, first.out);
+    assert.ok(existsSync(join(root, 'archive/concepts/move-me.md')));
+
+    const second = runCli(root, ['apply', '--plan', plan]);
+    assert.equal(second.code, 0, second.out);
+    assert.match(second.out, /skip: already archived/);
+    assert.equal(existsSync(join(root, 'archive/archive/concepts/move-me.md')), false);
+    assert.ok(existsSync(join(root, 'archive/concepts/move-me.md')));
+  });
+
+  it('apply --plan full plan is byte-for-byte idempotent on second run', () => {
+    const root = tmpRoot('samemind-review-apply-idem-full-');
+    writeConcept(root, 'concepts/to-archive.md', { type: 'Concept', title: 'Archive me' });
+    writeConcept(root, 'concepts/to-forget.md', { type: 'Concept', title: 'Forget me' });
+    writeConcept(root, 'concepts/merge-src.md', {
+      type: 'Concept', title: 'Retrieval idea', tags: ['memory'],
+    });
+    writeConcept(root, 'concepts/merge-dst.md', {
+      type: 'Concept', title: 'Retrieval approach', tags: ['memory'],
+    });
+    writeConcept(root, 'concepts/untouched.md', { type: 'Concept', title: 'Keep' });
+    const plan = join(root, 'plan.txt');
+    writeFileSync(plan, [
+      'concepts/to-archive archive',
+      'concepts/to-forget forget',
+      'concepts/merge-src merge concepts/merge-dst',
+      'concepts/untouched keep',
+    ].join('\n') + '\n');
+
+    const paths = [
+      'concepts/to-forget.md',
+      'concepts/merge-src.md',
+      'concepts/merge-dst.md',
+      'concepts/untouched.md',
+      'archive/concepts/to-archive.md',
+    ];
+    const snap = () => snapshotFiles(root, paths.filter(p => existsSync(join(root, p))));
+
+    const first = runCli(root, ['apply', '--plan', plan]);
+    assert.equal(first.code, 0, first.out);
+    const afterFirst = snap();
+
+    const second = runCli(root, ['apply', '--plan', plan]);
+    assert.equal(second.code, 0, second.out);
+    assert.match(second.out, /skip: already archived/);
+    assert.match(second.out, /skip: already deprecated/);
+    assert.match(second.out, /skip: already merged/);
+    assert.deepEqual(snap(), afterFirst);
+    assert.equal(existsSync(join(root, 'archive/archive/concepts/to-archive.md')), false);
+  });
+
   it('bin/samemind.mjs routes review to tools/review.mjs', () => {
     const root = tmpRoot('samemind-review-bin-');
     const r = spawnSync(process.execPath, [BIN, 'review'], {

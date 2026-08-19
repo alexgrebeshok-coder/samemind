@@ -307,6 +307,13 @@ after an explicit choice — interactive prompts or a plan file passed to
 `archive/` preserving its relative path; `merge` sets `superseded_by` on the
 source toward the named target. No auto-deletions, no cron wiring in MVP.
 
+**Idempotent re-apply:** running the same plan twice must not move files twice or
+mutate canon again. `review apply` resolves ids against the **live** tree only
+(`findLiveById` — archived copies are never matched by basename suffix). A second
+run is a no-op (exit 0) with an explicit skip line per action already done:
+`skip: already archived` · `skip: already deprecated` · `skip: already merged`.
+No `archive/archive/…` nesting, no refreshed `deprecated_on` timestamps.
+
 ## Worked example
 
 `demo/concepts/embed-model-bge-m3.md` (dated 2025-09-01 — old enough to also

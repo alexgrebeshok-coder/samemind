@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { ROOT, load, findById } from './lib/okf.mjs';
+import { ROOT, load, findLiveById } from './lib/okf.mjs';
 import { readEvents } from './lib/ledger.mjs';
 import { buildHeatIndex } from './lib/hygiene.mjs';
 import { resolveBundleRoot } from './lib/bundle-root.mjs';
@@ -89,30 +89,73 @@ function archiveDoc(doc, root) {
   return { id: doc.id, archivedTo: destRel.replace(/\.md$/, '').replace(/\\/g, '/') };
 }
 
-function resolveOne(all, id) {
-  const hits = findById(all, id);
-  if (!hits.length) throw new Error(`not found: ${id}`);
+function planIdPath(id) {
+  return String(id).replace(/^archive\//, '');
+}
+
+function liveConceptFile(root, id) {
+  return join(root, `${planIdPath(id)}.md`);
+}
+
+function archivedConceptFile(root, id) {
+  return join(root, 'archive', `${planIdPath(id)}.md`);
+}
+
+function isAlreadyArchived(root, id) {
+  return !existsSync(liveConceptFile(root, id)) && existsSync(archivedConceptFile(root, id));
+}
+
+function resolveLive(all, id) {
+  const hits = findLiveById(all, id);
+  if (!hits.length) return null;
   if (hits.length > 1) {
     throw new Error(`ambiguous: ${hits.length} matches for "${id}":\n${hits.map(d => d.id).join('\n')}`);
   }
   return hits[0];
 }
 
+function mergeAlreadyApplied(doc, targetDoc) {
+  const want = `/${targetDoc.id}`.replace(/\.md$/, '');
+  return doc.supersededBy.some(p => {
+    const norm = (p.startsWith('/') ? p : `/${p}`).replace(/\.md$/, '');
+    return norm === want;
+  });
+}
+
 function applyDecision(decision, { root, docs }) {
   const { id, action, target } = decision;
   if (action === 'keep') return { id, action, status: 'skipped' };
 
-  const doc = resolveOne(docs, id);
-  if (action === 'forget') {
-    const r = forget(id, { docs });
-    return { id, action, status: 'ok', deprecatedOn: r.deprecatedOn };
-  }
   if (action === 'archive') {
+    const doc = resolveLive(docs, id);
+    if (!doc) {
+      if (isAlreadyArchived(root, id)) return { id, action, status: 'skip: already archived' };
+      throw new Error(`not found: ${id}`);
+    }
     const r = archiveDoc(doc, root);
     return { id, action, status: 'ok', ...r };
   }
+
+  const doc = resolveLive(docs, id);
+  if (!doc) {
+    if (isAlreadyArchived(root, id)) return { id, action, status: 'skip: already archived' };
+    throw new Error(`not found: ${id}`);
+  }
+
+  if (action === 'forget') {
+    const raw = readFileSync(doc.file, 'utf8');
+    if (/^deprecated:\s*true\s*$/m.test(raw)) {
+      return { id, action, status: 'skip: already deprecated' };
+    }
+    const r = forget(id, { docs });
+    return { id, action, status: 'ok', deprecatedOn: r.deprecatedOn };
+  }
   if (action === 'merge') {
-    const targetDoc = resolveOne(docs, target);
+    const targetDoc = resolveLive(docs, target);
+    if (!targetDoc) throw new Error(`not found: ${target}`);
+    if (mergeAlreadyApplied(doc, targetDoc)) {
+      return { id, action, status: 'skip: already merged', target: targetDoc.id };
+    }
     const targetPath = `/${targetDoc.id}.md`;
     withFileLock(doc.file, () => {
       const raw = readFileSync(doc.file, 'utf8');
