@@ -5,17 +5,15 @@
 
 [![ci](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml/badge.svg)](https://github.com/alexgrebeshok-coder/samemind/actions/workflows/ci.yml)
 
-**Your personal universal memory for every AI agent. Switch engines. Same mind.**
-
-Wire-compatible with [Google's Open Knowledge Format](interop.md) (OKF
-v0.1) — the piece no git+markdown memory tool has — and identity, an
-append-only work-ledger, and a kanban board live in the same plain-markdown
-bundle, with no integration glue between them.
-
-Also git-native: no database or daemon required, just one bundle that every
-agent you run — Claude Code, OpenClaw, Hermes, opencode, Codex, Cursor, and
-the rest — can read and write. An opt-in event-driven daemon is available to
-keep engine files projected automatically — see [docs/service.md](service.md).
+Use Claude Code in the morning, Cursor by day, opencode at night — and every
+agent remembers your decisions, your projects, your context. It's just markdown
+in your git: read it with your eyes, edit it by hand, own it forever. Identity,
+an append-only work-ledger, and a kanban board live in the same plain-markdown
+bundle — wire-compatible with [Google's Open Knowledge Format](interop.md) (OKF
+v0.1). Golden-40 recall@5 **0.925**; `samemind install` wires **12 engines**;
+weekly **`review`** keeps stale facts from living as equals of their
+corrections. No database or daemon required — an opt-in event-driven daemon
+can keep engine files projected; see [docs/service.md](service.md).
 
 ## Why samemind (vs. the git-markdown crowd)
 
