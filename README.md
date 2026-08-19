@@ -234,6 +234,7 @@ Details and finding ids: [`docs/spec/`](docs/spec/) (doctor contract).
 | `serve` | MCP: `memory_search`, `memory_get`, `memory_write_inbox`, … (stdio default, `--http` for local HTTP) |
 | `proactive` | Active Memory prototype: auto top-k recall pack before an answer (`-k`, `--json`, `--force`) |
 | `forget` / `export` / `import` | Hygiene + OKF packs |
+| `review` | Weekly guided bundle revision — candidates only until `review apply --plan` |
 
 Full table and env vars: [docs/full-guide.md § Tools](docs/full-guide.md#tools).
 

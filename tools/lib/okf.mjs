@@ -367,12 +367,29 @@ export function collectRelationEdges(docs, root = ROOT) {
   return edges;
 }
 
+/** True when a concept id lives under archive/ (already moved out of the live tree). */
+export function isArchivedId(id) {
+  return String(id).startsWith('archive/');
+}
+
 /** Find a concept by id (exact) or basename suffix — same rules as okf-query get. */
 export function findById(docs, q) {
   const needle = String(q || '').replace(/\.md$/, '');
   const exact = docs.filter(d => d.id === needle);
   if (exact.length) return exact;
   return docs.filter(d => d.id.endsWith('/' + needle) || d.id === needle);
+}
+
+/**
+ * Like findById but only matches concepts outside archive/. Use for review apply and any
+ * mutation that targets the live tree — prevents suffix-matching an archived copy on re-apply.
+ */
+export function findLiveById(docs, q) {
+  const live = docs.filter(d => !isArchivedId(d.id));
+  const needle = String(q || '').replace(/\.md$/, '');
+  const exact = live.filter(d => d.id === needle);
+  if (exact.length) return exact;
+  return live.filter(d => d.id.endsWith('/' + needle) || d.id === needle);
 }
 
 /**

@@ -277,6 +277,43 @@ runs to act on a proposal. `--write` only saves the combined report under
 `inbox/_reflect-report.md`. Not wired into cron/launchd — a manual (or
 human-triggered) run.
 
+## Weekly review (`samemind review`, Ф7.4)
+
+Guided ~10-minute pass over the bundle: surfaces hygiene candidates from signals
+the package already computes — no new storage, no silent writes.
+
+```sh
+npx samemind review [--stale-days 60] [--json]
+npx samemind review apply --plan decisions.txt
+npx samemind review --interactive   # prompt per candidate, then apply
+```
+
+**Candidate buckets** (each concept at most once, reasons merged):
+
+| Bucket | Rule | Default suggestion |
+|---|---|---|
+| Stale | Untouched > `--stale-days` (default 60) **and** decay penalty active or zero ledger heat | `forget` |
+| Conflict | Same-type title/tag similarity, no `supersedes`/`superseded_by` yet (Э6 `findContradictions`) | `merge` |
+| Unarchived superseded | Named by another's `supersedes`, or `deprecated`, still outside `archive/` | `archive` |
+| Orphan | No inbound md-link / relation / `supersedes` edge (`query links` graph) | `archive` |
+
+Output: one line per candidate — reason, age, connections, suggested action
+(`keep` / `merge` / `archive` / `forget`). `--json` for machines.
+
+**Human-gate (product DNA):** `review` alone never edits canon. Actions run only
+after an explicit choice — interactive prompts or a plan file passed to
+`review apply --plan <file>` (one decision per line: `id action [target]`).
+`forget` uses the existing soft-deprecate path; `archive` moves the file under
+`archive/` preserving its relative path; `merge` sets `superseded_by` on the
+source toward the named target. No auto-deletions, no cron wiring in MVP.
+
+**Idempotent re-apply:** running the same plan twice must not move files twice or
+mutate canon again. `review apply` resolves ids against the **live** tree only
+(`findLiveById` — archived copies are never matched by basename suffix). A second
+run is a no-op (exit 0) with an explicit skip line per action already done:
+`skip: already archived` · `skip: already deprecated` · `skip: already merged`.
+No `archive/archive/…` nesting, no refreshed `deprecated_on` timestamps.
+
 ## Worked example
 
 `demo/concepts/embed-model-bge-m3.md` (dated 2025-09-01 — old enough to also
