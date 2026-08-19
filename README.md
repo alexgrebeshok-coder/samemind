@@ -71,6 +71,7 @@ Same bundle root = same mind: engine A drops a note in `inbox/`, engine B finds 
 | `serve` | MCP server: `memory_search`, `memory_get`, `memory_write_inbox`, … (stdio; `--http`) |
 | `nudge` / `proactive` | One thing worth raising; auto recall pack before an answer |
 | `forget` / `export` / `import` | Hygiene + OKF packs |
+| `review` | Weekly memory review — stale/conflict/superseded/orphan candidates, human-gated apply |
 
 Full table, env vars, JSON contract: [docs/full-guide.md](docs/full-guide.md).
 
