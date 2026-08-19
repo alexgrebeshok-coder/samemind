@@ -3,6 +3,25 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.0] — 2026-08-19
+
+A minor. Adds the `samemind review` command — a weekly memory review that
+surfaces hygiene candidates from signals the bundle already computes, so a
+stale fact stops living as an equal of its correction. Nothing is ever
+deleted: the append-only spirit stays intact.
+
+### Added
+
+- **`samemind review`** — weekly memory review: stale / conflict / superseded /
+  orphan candidates from existing bundle signals; apply is human-gated
+  (`apply --plan <file>` or `--interactive`); plans are idempotent (re-apply
+  skips already archived / deprecated / merged ids). See docs/memory-hygiene.md.
+
+### Internal
+
+- +13 tests (tools/review.test.mjs) covering the four candidate buckets,
+  plan apply, and idempotent re-apply.
+
 ## [1.1.2] — 2026-08-17
 
 A patch. Fixes hybrid ranking: on the golden-40 corpus hybrid recall@5 was
