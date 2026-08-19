@@ -11,6 +11,7 @@
 //   npx samemind forget <id>             → tools/forget.mjs      (soft-deprecate; never deletes — see docs/memory-hygiene.md)
 //   npx samemind reconcile [...]         → tools/reconcile.mjs   (Ф2 bi-temporal supersede proposals; human-gate, never writes canon)
 //   npx samemind reflect [...]           → tools/reflect.mjs     (Ф5 reconcile+consolidate+heat report; human-gate, never writes canon)
+//   npx samemind review [...]            → tools/review.mjs      (Ф7.4 weekly hygiene review; apply only on explicit human plan)
 //   npx samemind install --agent <id>    → tools/install.mjs     (wire brief+protocol into an engine's instruction file)
 //   npx samemind export <dir> [...]      → tools/export.mjs      (shareable OKF-bundle / --to-gbrain; no secrets)
 //   npx samemind import <dir> [...]      → tools/import.mjs      (accept foreign OKF; default → inbox)
@@ -45,6 +46,7 @@ const ROUTES = {
   forget: 'tools/forget.mjs',
   reconcile: 'tools/reconcile.mjs',
   reflect: 'tools/reflect.mjs',
+  review: 'tools/review.mjs',
   install: 'tools/install.mjs',
   project: 'tools/project.mjs',
   status: 'tools/status.mjs',
@@ -81,6 +83,7 @@ function usage() {
   console.log('  forget <id>           mark a concept deprecated (deprecated: true) — never deletes the file, see docs/memory-hygiene.md');
   console.log('  reconcile [...]       Ф2 bi-temporal supersede proposals (--dir <subpath> --write) — human-gate, prints/saves a report, never writes canon');
   console.log('  reflect [...]         Ф5 reconcile+consolidate+heat proposal report (--write) — human-gate, prints/saves a report, never writes canon');
+  console.log('  review [...]          Ф7.4 weekly hygiene review: stale/conflicts/unarchived/orphans (--stale-days N, --json); apply --plan <file> or --interactive — explicit human-gate only');
   console.log('  install --agent <id>  wire brief+protocol into an engine\'s instruction file (--list — list them; --agent all — into all existing ones)');
   console.log('  project [...]         project curated FACTS into an engine instruction file (between samemind:project markers): --engine <id> | config targets, --source canon|bundle, --budget <n>, --dry-run');
   console.log('  status [...]          is memory projection alive: reads .samemind/health.json written by `project` (--root <dir>, --json)');
