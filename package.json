@@ -1,7 +1,7 @@
 {
   "name": "samemind",
   "version": "1.2.1",
-  "description": "OKF-compatible memory for AI coding agents — identity, work-ledger and kanban in one plain-markdown bundle, git-native, zero-infra.",
+  "description": "One memory for every AI coding agent — plain markdown in your git. Decisions, projects, ledger & board together; recall@5 0.925; 12 engines via install.",
   "license": "MIT",
   "type": "module",
   "repository": {
