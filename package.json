@@ -1,6 +1,6 @@
 {
   "name": "samemind",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "OKF-compatible memory for AI coding agents — identity, work-ledger and kanban in one plain-markdown bundle, git-native, zero-infra.",
   "license": "MIT",
   "type": "module",

@@ -15,6 +15,9 @@ import { tmpdir } from 'node:os';
 
 import { runInit } from './init.mjs';
 import { DEFAULT_PROTOCOL_VERSION } from './lib/mcp.mjs';
+import { load } from './lib/okf.mjs';
+import { openVecStore, syncVecStore, closeVecStore } from './lib/sqlite-index.mjs';
+import { fetchEmbedding } from './lib/recall.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MCP_SERVER = join(HERE, 'mcp-server.mjs');
@@ -772,6 +775,178 @@ describe('MCP stdio — unknown tool', () => {
       const res = await client.request('tools/call', { name: 'not_a_real_tool', arguments: {} });
       assert.equal(res.result.isError, true);
       assert.match(res.result.content[0].text, /Unknown tool/);
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+// Д1 (1.2.1 fix) — the MCP layer was blind to the sqlite-vec index: memorySearch()/memoryHealth()
+// in lib/mcp.mjs only ever consulted loadIdx() (the flat-JSON tools/.index/embeddings.json
+// backend), never openBackend()'s sqlite-vec store (tools/.index/index.db) that the CLI
+// (okf-recall.mjs query()) already tries first. `okf-recall.mjs index` with the default
+// OKF_INDEX_BACKEND=auto writes ONLY index.db — so a bundle indexed the normal way had a fully
+// working semantic index that `memory_health` reported as bm25 (searchMode: 'bm25 (no semantic
+// index...)'), because the JSON file it was checking never existed. These fixtures reproduce that
+// exact shape: a real sqlite-vec store built directly via lib/sqlite-index.mjs, with NO
+// embeddings.json anywhere near it — the same on-disk shape `okf-recall.mjs index` produces.
+//
+// Skip-reason probes run at MODULE TOP LEVEL (not inside before()): describe()'s own it(...) calls
+// register synchronously as the describe() body runs, before any before() hook fires, so an
+// availability flag only assigned inside before() would still read as its initial (falsy) value
+// at the moment `{ skip }` is evaluated below — same trap documented in gde-sqlite.test.mjs.
+async function probeSqliteVecForMcp() {
+  let DatabaseSync;
+  try {
+    ({ DatabaseSync } = await import('node:sqlite'));
+  } catch (e) {
+    return `node:sqlite unavailable (${e.message})`;
+  }
+  let sqliteVec;
+  try {
+    sqliteVec = await import('sqlite-vec');
+  } catch (e) {
+    return `sqlite-vec unavailable (${e.message})`;
+  }
+  try {
+    const db = new DatabaseSync(':memory:', { allowExtension: true });
+    sqliteVec.load(db);
+    db.close();
+  } catch (e) {
+    return `sqlite-vec load failed (${e.message})`;
+  }
+  return false;
+}
+const sqliteVecSkipReason = await probeSqliteVecForMcp();
+
+// The memory_search leg additionally needs a real OKF-compatible embeddings endpoint (default
+// http://127.0.0.1:8000/v1/embeddings, model bge-m3 — see recall.mjs DEFAULT_EMBED_URL/MODEL) to
+// actually rank via vecSearch(); the memory_health leg above does not (openBackend()+vecStoreCount
+// alone decide hasIndex, no embedding call). Probes with a short timeout and skips cleanly rather
+// than hanging/failing the whole suite on a machine with no local embedder running.
+async function probeEmbedEndpointForMcp(url) {
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'bge-m3', input: 'samemind-mcp-test-probe' }),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!r.ok) return `embeddings endpoint returned HTTP ${r.status}`;
+    return false;
+  } catch (e) {
+    return `embeddings endpoint unreachable (${e.message})`;
+  }
+}
+const EMBED_URL_FOR_TEST = process.env.OKF_EMBED_URL || 'http://127.0.0.1:8000/v1/embeddings';
+const embedSkipReason = await probeEmbedEndpointForMcp(EMBED_URL_FOR_TEST);
+
+describe('MCP stdio — memory_health sees the sqlite-vec index (Д1)', () => {
+  let SQLITE_BUNDLE_DIR;
+
+  before(async () => {
+    if (sqliteVecSkipReason) return;
+    SQLITE_BUNDLE_DIR = mkdtempSync(join(tmpdir(), 'samemind-mcp-sqlite-'));
+    const result = runInit({ targetDir: SQLITE_BUNDLE_DIR, demo: true });
+    assert.equal(result.ok, true, 'test bundle scaffold failed');
+
+    const docs = load({ includeSecret: false, includeMirror: false }, SQLITE_BUNDLE_DIR).filter(d => !d.reserved);
+    assert.ok(docs.length > 0, 'demo scaffold must produce at least one concept to index');
+    const dbPath = join(SQLITE_BUNDLE_DIR, 'tools', '.index', 'index.db');
+    // model must match what the MCP subprocess resolves to by default (bge-m3, see
+    // recall.mjs DEFAULT_MODEL / okf-recall.mjs's own MODEL const) — openVecStore wipes the
+    // store on a model MISMATCH (different embedding space, see sqlite-index.mjs openVecStore),
+    // so a mismatched fixture model would self-sabotage this test by deleting its own fixture
+    // the moment the subprocess reopens the store. The stub vector's actual content/dim is
+    // irrelevant to what's under test — only the store's presence and row count are.
+    const store = await openVecStore({ dbPath, model: 'bge-m3' });
+    assert.equal(store.ok, true, `sqlite-vec probe said available but openVecStore failed: ${store.reason}`);
+    const stubEmbed = async () => [1, 0, 0]; // content of the vector is irrelevant — only its presence is under test
+    await syncVecStore(store, docs, stubEmbed, {});
+    closeVecStore(store);
+
+    assert.ok(!existsSync(join(SQLITE_BUNDLE_DIR, 'tools', '.index', 'embeddings.json')),
+      'fixture must be sqlite-only — an embeddings.json here would mask the bug this test targets');
+    assert.ok(existsSync(dbPath), 'fixture sqlite index must exist on disk');
+  });
+
+  after(() => {
+    if (SQLITE_BUNDLE_DIR) rmSync(SQLITE_BUNDLE_DIR, { recursive: true, force: true });
+  });
+
+  it('memory_health reports semantic search mode from index.db alone (no embeddings.json)', { skip: sqliteVecSkipReason }, async () => {
+    const client = startClient({ OKF_ROOT: SQLITE_BUNDLE_DIR });
+    try {
+      await initialized(client);
+      const res = await client.request('tools/call', { name: 'memory_health', arguments: {} });
+      const payload = toolPayload(res);
+      // Anchored at the start: the bm25 fallback string itself contains the substring "semantic"
+      // ("bm25 (no semantic index — ...)"), so a bare /semantic/ would false-pass on either value.
+      assert.match(payload.searchMode, /^semantic\b/, `expected semantic search mode, got: ${payload.searchMode}`);
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+describe('MCP stdio — memory_health honest bm25 fallback with no index at all (Д1 regression guard)', () => {
+  it('reports bm25, not semantic, when neither index.db nor embeddings.json exists', async () => {
+    const NO_INDEX_DIR = mkdtempSync(join(tmpdir(), 'samemind-mcp-noindex-'));
+    try {
+      const result = runInit({ targetDir: NO_INDEX_DIR, demo: true });
+      assert.equal(result.ok, true, 'test bundle scaffold failed');
+      assert.ok(!existsSync(join(NO_INDEX_DIR, 'tools', '.index')), 'fixture must have no index dir at all');
+
+      const client = startClient({ OKF_ROOT: NO_INDEX_DIR });
+      try {
+        await initialized(client);
+        const res = await client.request('tools/call', { name: 'memory_health', arguments: {} });
+        const payload = toolPayload(res);
+        assert.match(payload.searchMode, /^bm25\b/, `expected bm25 fallback, got: ${payload.searchMode}`);
+      } finally {
+        await client.close();
+      }
+    } finally {
+      rmSync(NO_INDEX_DIR, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('MCP stdio — memory_search runs semantic against index.db alone (Д1, live embedder integration)', () => {
+  let SEARCH_BUNDLE_DIR;
+  const skip = sqliteVecSkipReason || embedSkipReason;
+
+  before(async () => {
+    if (skip) return;
+    SEARCH_BUNDLE_DIR = mkdtempSync(join(tmpdir(), 'samemind-mcp-sqlite-search-'));
+    const result = runInit({ targetDir: SEARCH_BUNDLE_DIR, demo: true });
+    assert.equal(result.ok, true, 'test bundle scaffold failed');
+    const docs = load({ includeSecret: false, includeMirror: false }, SEARCH_BUNDLE_DIR).filter(d => !d.reserved);
+    const dbPath = join(SEARCH_BUNDLE_DIR, 'tools', '.index', 'index.db');
+    const store = await openVecStore({ dbPath, model: 'bge-m3' });
+    assert.equal(store.ok, true, `sqlite-vec probe said available but openVecStore failed: ${store.reason}`);
+    const embed = text => fetchEmbedding(text, { url: EMBED_URL_FOR_TEST, model: 'bge-m3' });
+    await syncVecStore(store, docs, embed, {});
+    closeVecStore(store);
+    assert.ok(!existsSync(join(SEARCH_BUNDLE_DIR, 'tools', '.index', 'embeddings.json')),
+      'fixture must be sqlite-only');
+  });
+
+  after(() => {
+    if (SEARCH_BUNDLE_DIR) rmSync(SEARCH_BUNDLE_DIR, { recursive: true, force: true });
+  });
+
+  it('memory_search reports mode: semantic, hits come from index.db alone', { skip }, async () => {
+    const client = startClient({ OKF_ROOT: SEARCH_BUNDLE_DIR, OKF_EMBED_URL: EMBED_URL_FOR_TEST, OKF_EMBED_MODEL: 'bge-m3' });
+    try {
+      await initialized(client);
+      const res = await client.request('tools/call', {
+        name: 'memory_search',
+        arguments: { query: 'industrial park planning', no_global: true },
+      });
+      const payload = toolPayload(res);
+      assert.equal(payload.mode, 'semantic', `expected semantic mode, got: ${JSON.stringify(payload)}`);
+      assert.ok(payload.count > 0, 'expected at least one hit');
     } finally {
       await client.close();
     }

@@ -31,7 +31,8 @@ import {
 } from './recall.mjs';
 import { scanForInjection } from './injection.mjs';
 import { buildHeatIndex, heatScore, heatTier } from './hygiene.mjs';
-import { loadIdx } from '../okf-recall.mjs';
+import { loadIdx, openBackend } from '../okf-recall.mjs';
+import { closeVecStore, searchVecStore, vecStoreCount } from './sqlite-index.mjs';
 import { resolveGlobalRoot, searchGlobalHalf, mergeWithGlobal } from './compose-roots.mjs';
 import { buildHandoff, DEFAULT_DAYS as HANDOFF_DEFAULT_DAYS } from '../handoff.mjs';
 import { appendEvent, readEvents, summarizeLedger, PHASES, STATUSES } from './ledger.mjs';
@@ -178,6 +179,22 @@ export const TOOLS = [
   },
 ];
 
+/**
+ * Д1 (1.2.1 fix): opens the SAME sqlite-vec backend `okf-recall.mjs query()` tries first (DI
+ * primitives from lib/sqlite-index.mjs, via the shared openBackend() — no logic duplicated), so
+ * the MCP layer stops being blind to an index built the normal way (`okf-recall.mjs index` with
+ * the default OKF_INDEX_BACKEND=auto writes ONLY index.db, never embeddings.json). Falls back to
+ * the flat-JSON index (loadIdx()) only when the sqlite backend is genuinely unavailable — never a
+ * silent "no index" when one exists in either form. Caller must closeVecStore(store) when
+ * `store` is non-null once done with it (recallSearch/vecStoreCount calls happen in between).
+ */
+async function openSemanticBackend() {
+  const store = await openBackend();
+  if (store) return { store, idx: null, hasIndex: vecStoreCount(store) > 0 };
+  const idx = loadIdx();
+  return { store: null, idx, hasIndex: !!(idx && idx.items && Object.keys(idx.items).length > 0) };
+}
+
 async function memorySearch({
   query, k = 5, mode = 'auto', exclude_source, no_global, expand, expand_budget,
   include_superseded,
@@ -198,12 +215,14 @@ async function memorySearch({
   const includeSuperseded = !!include_superseded;
   const docs = readableDocs();
   const docById = new Map(docs.map(d => [d.id, d]));
-  const idx = loadIdx();
+  const { store, idx } = await openSemanticBackend(); // Д1: sqlite-vec first, JSON fallback — same as CLI query()
   const events = readEvents(ROOT); // Ф5: ledger-derived heat, folded into the same hygiene pass
   const projectResult = await recallSearch({
-    docs, query, mode, embed, idx, k: kk, includeSecret: false, includeMirror: true, excludeSource, events,
+    docs, query, mode, embed, idx: idx || { items: {} }, k: kk, includeSecret: false, includeMirror: true, excludeSource, events,
     includeSuperseded,
+    vecStore: store, vecSearch: store ? searchVecStore : null, vecCount: store ? vecStoreCount : null,
   });
+  if (store) closeVecStore(store);
 
   // U5/G-B: "Same mind" — fold in the optional global personal bundle. no_global truthy, or no
   // bundle at $HOME/.samemind/bundle (or OKF_GLOBAL_ROOT) on disk → mergeWithGlobal passes
@@ -368,8 +387,8 @@ async function memoryHandoff({ project, days } = {}) {
 
 async function memoryHealth() {
   const docs = readableDocs();
-  const idx = loadIdx();
-  const hasIndex = !!(idx && idx.items && Object.keys(idx.items).length > 0);
+  const { store, hasIndex } = await openSemanticBackend(); // Д1: sqlite-vec first, JSON fallback
+  if (store) closeVecStore(store);
   // Ф5: tiered heat — hot/warm/cold counts over the same ledger-derived heatIndex recall uses
   // (see tools/lib/hygiene.mjs), so `memory_health` gives a bundle-wide read of what's actively
   // being touched vs. sitting cold, without a second ranking pass.
