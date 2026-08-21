@@ -73,8 +73,10 @@ const embed = text => fetchEmbedding(text, { url: EMBED_URL, model: MODEL });
 
 /** Opens the sqlite-vec store unless OKF_INDEX_BACKEND=json, migrating an existing embeddings.json
  *  in on first use. Returns null (with an honest one-line stderr note) on ANY unavailability —
- *  callers then use the unchanged JSON loadIdx()/saveIdx() path below. Never throws. */
-async function openBackend() {
+ *  callers then use the unchanged JSON loadIdx()/saveIdx() path below. Never throws.
+ *  Exported (1.2.1, Д1 fix) so lib/mcp.mjs can open the SAME backend query() does instead of
+ *  only ever seeing the flat-JSON index — see its own openSemanticBackend() helper. */
+export async function openBackend() {
   if (INDEX_BACKEND === 'json') return null;
   const store = await openVecStore({ dbPath: IDX_DB, model: MODEL });
   if (!store.ok) {

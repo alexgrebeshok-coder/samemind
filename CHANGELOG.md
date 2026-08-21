@@ -3,6 +3,37 @@
 All notable changes to this project are documented in this file.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.1] — 2026-08-21
+
+A patch. Fixes `memory_search`/`memory_health` (MCP) being blind to the
+sqlite-vec index.
+
+### Fixed
+
+- **MCP layer didn't see the sqlite-vec index.** `memory_search` and
+  `memory_health` only ever checked the flat-JSON index
+  (`tools/.index/embeddings.json`), never the sqlite-vec store
+  (`tools/.index/index.db`) that `okf-recall.mjs index` writes by default
+  (`OKF_INDEX_BACKEND=auto`). A bundle indexed the normal way had a fully
+  working semantic index, but `memory_health` reported `bm25 (no semantic
+  index...)` and `memory_search` silently degraded to BM25 — the CLI
+  (`okf-recall.mjs query()`) was unaffected, since it already opened the
+  sqlite backend first. Both MCP tools now open the same backend the CLI
+  does (`openBackend()`, exported from `okf-recall.mjs`), falling back to
+  the flat-JSON index only when sqlite-vec is genuinely unavailable.
+- **Side effect: MCP can now write `tools/.index/index.db`.** On a bundle that has
+  `embeddings.json` but no `index.db` yet, the first `memory_health`/`memory_search`
+  call migrates the JSON index into a new `index.db` on disk (a few MB, same
+  idempotent migration `okf-recall.mjs` already did) — previously only the CLI
+  triggered this; an MCP tool that looked read-only now writes a file the first
+  time it runs against such a bundle.
+
+### Internal
+
+- +3 tests (tools/mcp.test.mjs): semantic health/search reported from a
+  sqlite-only index (no embeddings.json), and an honest bm25 fallback
+  regression guard when no index exists at all.
+
 ## [1.2.0] — 2026-08-19
 
 A minor. Adds the `samemind review` command — a weekly memory review that
