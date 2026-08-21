@@ -21,6 +21,12 @@ sqlite-vec index.
   sqlite backend first. Both MCP tools now open the same backend the CLI
   does (`openBackend()`, exported from `okf-recall.mjs`), falling back to
   the flat-JSON index only when sqlite-vec is genuinely unavailable.
+- **Side effect: MCP can now write `tools/.index/index.db`.** On a bundle that has
+  `embeddings.json` but no `index.db` yet, the first `memory_health`/`memory_search`
+  call migrates the JSON index into a new `index.db` on disk (a few MB, same
+  idempotent migration `okf-recall.mjs` already did) — previously only the CLI
+  triggered this; an MCP tool that looked read-only now writes a file the first
+  time it runs against such a bundle.
 
 ### Internal
 
